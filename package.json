@@ -1,0 +1,20 @@
+{
+  "name": "mobile-manufacturer",
+  "version": "0.6.0",
+  "private": true,
+  "type": "module",
+  "description": "《手机开发商》浏览器原型：3D 手机设计与深度经营模拟",
+  "scripts": {
+    "start": "node tools/serve.cjs 8124",
+    "serve": "node tools/serve.cjs 8124",
+    "test": "node tests/sim.test.mjs",
+    "test:ui": "node tests/playthrough.mjs http://127.0.0.1:8124/index.html .tmp/pt",
+    "test:panels": "node tests/panels.mjs http://127.0.0.1:8124/index.html .tmp/pn",
+    "test:designer": "node tests/designer-shots.mjs http://127.0.0.1:8124/index.html .tmp/dz",
+    "test:features": "node tests/newfeatures.mjs",
+    "test:systems": "node tests/newsystems.mjs",
+    "test:eras": "node tests/eras.mjs",
+    "test:save": "node tests/saveload.mjs http://127.0.0.1:8124/index.html",
+    "test:long": "node tests/longrun.mjs"
+  }
+}
