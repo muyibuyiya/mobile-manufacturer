@@ -2596,13 +2596,13 @@ export function renderGame(root, state, opts = {}) {
       let form = '';
       if (id === 'chip') {
         form = `
-          <div class="tiny dim" style="margin:4px 0">CPU 核心构成（参考现实：旗舰 = 1 超大核 + 5 大核 + 2 小核）</div>
+          <div class="tiny dim" style="margin:4px 0">CPU 核心构成（参考现实：旗舰 = 1 超大核 + 5 大核 + 2 小核）。同代芯片需用相近世代的架构；自研核不与公版核混排；小核可选「无」（骁龙 8 至尊版 = Oryon 2+6）</div>
           <div class="report-grid">
             <div class="line"><span>超大核架构</span><select id="rn-prime-arch"><option value="">无</option>${archOpts('prime')}</select></div>
             <div class="line"><span>超大核数量 / 主频</span><span class="row" style="gap:4px"><input id="rn-prime-n" type="number" min="0" max="2" value="1" style="width:52px" /> <input id="rn-prime-ghz" type="number" min="2" max="4.3" step="0.05" value="3.2" style="width:70px" /> GHz</span></div>
             <div class="line"><span>大核架构</span><select id="rn-big-arch">${archOpts('big')}</select></div>
             <div class="line"><span>大核数量 / 主频</span><span class="row" style="gap:4px"><input id="rn-big-n" type="number" min="1" max="6" value="4" style="width:52px" /> <input id="rn-big-ghz" type="number" min="1.6" max="3.2" step="0.05" value="2.8" style="width:70px" /> GHz</span></div>
-            <div class="line"><span>小核架构</span><select id="rn-little-arch">${archOpts('little')}</select></div>
+            <div class="line"><span>小核架构</span><select id="rn-little-arch"><option value="">无</option>${archOpts('little')}</select></div>
             <div class="line"><span>小核数量 / 主频</span><span class="row" style="gap:4px"><input id="rn-little-n" type="number" min="1" max="6" value="4" style="width:52px" /> <input id="rn-little-ghz" type="number" min="1.2" max="2.4" step="0.05" value="2.0" style="width:70px" /> GHz</span></div>
             <div class="line"><span>GPU 架构</span><select id="rn-gpu-arch">${GPU_ARCHS.map((g) => `<option value="${g.id}">${g.name}${g.year > year ? `（${g.year} 年）` : ''}</option>`).join('')}</select></div>
             <div class="line"><span>GPU 核心</span><input id="rn-gpu-cores" type="number" min="1" max="24" value="10" style="width:70px" /></div>

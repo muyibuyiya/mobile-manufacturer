@@ -220,7 +220,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
         </div>
         <div class="dz-canvas-wrap" id="dz-stage-body">
           <canvas id="dz-2d"></canvas>
-          <div class="dz-hint" id="dz-hint">滚轮缩放 · 拖动平移（2D 视图会自动适配）</div>
+          <div class="dz-hint" id="dz-hint">滚轮缩放 · 拖动平移 · 后视图可直接拖拽镜头与闪光灯</div>
           <div class="dz-legend" id="dz-legend">
             <span><i style="background:#8fd0ff"></i>屏幕总成</span>
             <span><i style="background:#7de3b0"></i>主板</span>
@@ -466,6 +466,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
         <select data-k="body.coverScreen.notch">
           <option value="none" ${(body.coverScreen?.notch || 'none') === 'none' ? 'selected' : ''}>无开孔</option>
           <option value="punch" ${body.coverScreen?.notch === 'punch' ? 'selected' : ''}>单孔（前置摄像头）</option>
+          <option value="udc" ${body.coverScreen?.notch === 'udc' ? 'selected' : ''} ${d.parts.extras.includes('x_udc') ? '' : 'disabled'}>屏下摄像头${d.parts.extras.includes('x_udc') ? '' : '（需屏下摄像头技术）'}</option>
         </select>
       </label>
       ${body.coverScreen?.notch === 'punch' ? sliderRow('外屏挖孔位置（0=居中）', 'body.coverScreen.holeX', body.coverScreen?.holeX || 0, -40, 40, 1, '%') : ''}
@@ -855,6 +856,115 @@ export function renderDesigner(container, state, model, hooks = {}) {
       drawGridView(ctx, cx, cy, cw, ch, v, design2, scale);
     });
   }
+
+  // ---------- 2D 画布拖拽：后视图直接拖动镜头 / 闪光灯（deco 内 mm 坐标） ----------
+  // 坐标换算与 drawGridView 背视图分支同源：px = ox + (rect.cx+l.x)*scale，py = oy - (rect.cy+l.y)*scale
+  let drag2d = null;
+  function backViewMap2D() {
+    const d = model.design, b = d.body;
+    const folded = foldView === 'folded' && b.fold !== 'none';
+    const w = canvas2d.clientWidth, h = canvas2d.clientHeight;
+    if (!w || !h) return null;
+    const cols = 3, rows = 2, cw = w / cols, ch = h / rows;
+    const fpW = b.fold === 'fold' && !folded ? b.width * 2 : b.width;
+    const fpL = b.fold === 'flip' && !folded ? b.length * 2 : b.length;
+    const scale = Math.min((cw - 46) / fpW, (ch - 52) / fpL, 3.2);
+    const i = VIEWS.findIndex((v) => v.id === 'back');
+    const x0 = (i % cols) * cw, y0 = Math.floor(i / cols) * ch;
+    const openFold = !folded && b.fold !== 'none';
+    let realW = b.width, realH = b.length;
+    if (openFold) { if (b.fold === 'fold') realW = b.width * 2; else realH = b.length * 2; }
+    const W = realW * scale, H = realH * scale;
+    const x = x0 + (cw - W) / 2, y = y0 + (ch - H) / 2;
+    const camHalfDX = openFold && b.fold === 'fold' ? -W / 4 : 0;
+    const camHalfDY = openFold && b.fold === 'flip' ? -H / 4 : 0;
+    const rect = cameraModuleRect(d);
+    if (!rect) return null;
+    return { scale, ox: x + W / 2 + camHalfDX, oy: y + H / 2 + camHalfDY, rect };
+  }
+  function hit2D(mx, my) {
+    const m = backViewMap2D();
+    if (!m) return null;
+    const d = model.design;
+    ensureLenses(d);
+    const fl = d.camera.flash;
+    if (fl && !fl.offDeco) { // offDeco 闪光灯位置由布局推导，不响应拖拽
+      const style = fl.style || 'round';
+      const wide = style === 'rounded' || style === 'slot';
+      const hw = (wide ? (fl.w || 4) / 2 : Math.max(1, fl.r || 1.5)) * m.scale + 3;
+      const hh = (wide ? (fl.l || 6) / 2 : Math.max(1, fl.r || 1.5)) * m.scale + 3;
+      const fx = m.ox + (m.rect.cx + (fl.x || 0)) * m.scale;
+      const fy = m.oy - (m.rect.cy + (fl.y || 0)) * m.scale;
+      if (Math.abs(mx - fx) <= hw && Math.abs(my - fy) <= hh) {
+        return { kind: 'flash', m, gx: (mx - fx) / m.scale, gy: (fy - my) / m.scale };
+      }
+    }
+    for (let i = d.camera.lenses.length - 1; i >= 0; i--) {
+      const l = d.camera.lenses[i];
+      const sn = l.sensor === 'sn_own' ? d.parts.ownCmr : sensorById(l.sensor);
+      const rad = lensRadiusMm(sn ? sn.format : '1/2.4″') * (l.size || 1) * m.scale * 0.82;
+      const hitR = Math.max(rad * (l.type === 'periscope' ? 1.6 : 1.15), 9);
+      const lx = m.ox + (m.rect.cx + l.x) * m.scale;
+      const ly = m.oy - (m.rect.cy + l.y) * m.scale;
+      if ((mx - lx) * (mx - lx) + (my - ly) * (my - ly) <= hitR * hitR) {
+        return { kind: 'lens', idx: i, m, gx: (mx - lx) / m.scale, gy: (ly - my) / m.scale };
+      }
+    }
+    return null;
+  }
+  canvas2d.style.touchAction = 'none'; // 拖镜头优先于页面滚动（与 3D 画布一致）
+  canvas2d.addEventListener('pointerdown', (e) => {
+    if (viewMode !== '2d') return;
+    const r = canvas2d.getBoundingClientRect();
+    const hit = hit2D(e.clientX - r.left, e.clientY - r.top);
+    if (!hit) return;
+    e.preventDefault();
+    drag2d = hit;
+    try { canvas2d.setPointerCapture(e.pointerId); } catch (err) { /* 已释放则忽略 */ }
+    canvas2d.style.cursor = 'grabbing';
+  });
+  canvas2d.addEventListener('pointermove', (e) => {
+    if (viewMode !== '2d') return;
+    const r = canvas2d.getBoundingClientRect();
+    const mx = e.clientX - r.left, my = e.clientY - r.top;
+    if (!drag2d) { // 悬停高亮：可拖拽目标显示抓手
+      canvas2d.style.cursor = hit2D(mx, my) ? 'grab' : '';
+      return;
+    }
+    const { m } = drag2d;
+    const bx = (mx - m.ox) / m.scale - m.rect.cx; // deco 内 mm（+x 朝右）
+    const by = (m.oy - my) / m.scale - m.rect.cy; // deco 内 mm（+y 朝上）
+    const d = model.design, deco = d.camera.deco;
+    if (drag2d.kind === 'lens') {
+      const l = d.camera.lenses[drag2d.idx];
+      const sn = l.sensor === 'sn_own' ? d.parts.ownCmr : sensorById(l.sensor);
+      const rmm = lensRadiusMm(sn ? sn.format : '1/2.4″') * (l.size || 1) * (l.type === 'periscope' ? 1.25 : 1);
+      const limX = Math.max(0, deco.w / 2 - rmm), limY = Math.max(0, deco.h / 2 - rmm);
+      l.x = Math.round(clamp(bx - drag2d.gx, -limX, limX) * 2) / 2; // 0.5mm 步进与滑杆一致
+      l.y = Math.round(clamp(by - drag2d.gy, -limY, limY) * 2) / 2;
+      syncSliderUI(`camera.lenses.${drag2d.idx}.x`, l.x);
+      syncSliderUI(`camera.lenses.${drag2d.idx}.y`, l.y);
+    } else {
+      const fl = d.camera.flash;
+      const wide = (fl.style === 'rounded' || fl.style === 'slot');
+      const ex = wide ? (fl.w || 4) / 2 : (fl.r || 1.5);
+      const ey = wide ? (fl.l || 6) / 2 : (fl.r || 1.5);
+      const limX = Math.max(0, deco.w / 2 - ex), limY = Math.max(0, deco.h / 2 - ey);
+      fl.x = Math.round(clamp(bx - drag2d.gx, -limX, limX) * 2) / 2;
+      fl.y = Math.round(clamp(by - drag2d.gy, -limY, limY) * 2) / 2;
+      syncSliderUI('camera.flash.x', fl.x);
+      syncSliderUI('camera.flash.y', fl.y);
+    }
+    draw2D();
+  });
+  const endDrag2D = () => {
+    if (!drag2d) return;
+    drag2d = null;
+    canvas2d.style.cursor = '';
+    renderAssessment(); // 装配检查随落点刷新
+  };
+  canvas2d.addEventListener('pointerup', endDrag2D);
+  canvas2d.addEventListener('pointercancel', endDrag2D);
 
   function roundRect(ctx, x, y, w, h, r) {
     const rr = Math.min(r, w / 2, h / 2);
