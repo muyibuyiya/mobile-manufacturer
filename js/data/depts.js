@@ -9,6 +9,7 @@ export const DEPT_DEFS = [
   { id: 'sales', name: '销售部', icon: '¥', color: '#e0c14a', desc: '提升渠道覆盖与终端销量。' },
   { id: 'fin', name: '财务部', icon: '▤', color: '#7f8fa6', desc: '影响融资成本与预算效率。' },
   { id: 'hr', name: '人力资源部', icon: '☺', color: '#9b8cff', desc: '影响招聘质量与员工满意度。' },
+  { id: 'sw', name: '软件部', icon: '❖', color: '#6fd3e0', desc: '驱动自研系统技术树研发与 OS 流行度运营，降低软件故障。' },
 ];
 
 export const ROLE_BY_DEPT = {
@@ -21,5 +22,6 @@ export const ROLE_BY_DEPT = {
   sales: ['销售代表', '区域经理', '销售总监'],
   fin: ['会计', '财务经理', '财务总监'],
   hr: ['人事专员', '招聘经理', '人事总监'],
+  sw: ['软件工程师', '高级软件工程师', '系统架构师'],
   exec: ['CEO', 'CTO', 'COO', 'CFO', 'CMO'],
 };

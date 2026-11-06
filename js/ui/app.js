@@ -11,9 +11,12 @@ import {
 import { newModel, derive, validate, bomCost } from '../core/design.js';
 import { phoneBackDataUrl, phoneFrontDataUrl } from './designer.js';
 import { openFloorplanPlanner } from './floorplan2d.js';
+import { openScreenDesign } from './screendesign.js';
+import { openPosterStudio } from './poster.js';
 import { TECHS, TECH_MAP, TECH_CATS, techState } from '../data/tech.js';
 import { MARKETS, MARKET_MAP, COUNTRIES, eraFactor, expectedPrice, SEGMENTS, SEGMENT_MAP, LINEUPS, LINEUP_MAP, marketMix, suggestModelName } from '../data/world.js';
-import { DIVISION_DEFS, DIVISION_IDS, buildDivision, startUpgrade, upgradeCost, computeCustomSpec, ownCpuSpec, ownCmrSpec, ownOsSpec, ownPanelSpec, releaseOsVersion, toggleOsLicense, osReleaseCost } from '../core/divisions.js';
+import { DIVISION_DEFS, DIVISION_IDS, buildDivision, startUpgrade, upgradeCost, computeCustomSpec, ownCpuSpec, ownCmrSpec, ownOsSpec, ownPanelSpec, releaseOsVersion, toggleOsLicense, osReleaseCost, startOsTech, osTechBonuses } from '../core/divisions.js';
+import { OS_TECHS, OS_TECH_BRANCHES, osTechState } from '../data/os-tech.js';
 import { CPU_CORES, GPU_ARCHS, OS_BASES, RES_TIERS, LENS_TYPES } from '../data/hardware.js';
 import { MILESTONES, milestoneProgress } from '../core/milestones.js';
 import {
@@ -87,6 +90,7 @@ const PAGES = [
   { id: 'overview', name: '公司总览', icon: '▦' },
   { id: 'product', name: '设计与产品', icon: '▭' },
   { id: 'tech', name: '研发中心', icon: '⌬' },
+  { id: 'selfrnd', name: '自研部门', icon: '⚗' },
   { id: 'supply', name: '生产供应链', icon: '⚒' },
   { id: 'market', name: '市场与销售', icon: '◎' },
   { id: 'company', name: '组织与员工', icon: '☺' },
@@ -261,6 +265,7 @@ export function renderGame(root, state, opts = {}) {
   }
 
   function paintTopbar() {
+    const unreadNews = (state.news || []).filter((n) => !n.read).length;
     const c = state.company;
     const rep = lastReport;
     const share = avgShare(state);
@@ -285,6 +290,7 @@ export function renderGame(root, state, opts = {}) {
         <button data-act="speed" data-v="8" class="${speed === 8 ? 'on' : ''}">8×</button>
       </div>
       <button class="btn small" data-act="advance">下个月 ▸</button>
+      <button class="btn small ghost" data-act="open-news" title="通知与新闻">🔔${unreadNews ? ` <b style="color:#f56b6b">${unreadNews}</b>` : ''}</button>
       <button class="btn small ghost" data-act="save" data-slot="1">存档</button>
       <button class="btn small ghost audio-btn ${audioEnabled() ? '' : 'off'}" data-act="toggle-audio"
         title="${audioEnabled() ? '关闭音效' : '开启音效'}">${audioEnabled() ? '🔊' : '🔇'}</button>`;
@@ -299,6 +305,7 @@ export function renderGame(root, state, opts = {}) {
       saveGame(state, Number(el.dataset.slot));
       opts.onToast?.('已保存到槽位 ' + el.dataset.slot, 'good');
     }
+    if (el.dataset.act === 'open-news') { openNewsPanel(); return; }
     if (el.dataset.act === 'toggle-audio') {
       unlockAudio();
       const on = setAudioEnabled(!audioEnabled());
@@ -551,6 +558,13 @@ export function renderGame(root, state, opts = {}) {
         render();
         openFloorplan();
         break;
+      case 'open-screendesign':
+        tab = 'hq';
+        render();
+        openScreenDesignUI();
+        break;
+      case 'open-poster': openPoster(ds.id); break;
+      case 'open-news': openNewsPanel(); break;
       case 'rival-chart':
         rivalChart = ds.v;
         render();
@@ -576,12 +590,23 @@ export function renderGame(root, state, opts = {}) {
         openRndModal(ds.id);
         break;
       }
-      case 'os-release': {
-        const r = releaseOsVersion(state);
+      case 'os-release': openOsReleaseModal(); break;
+      case 'os-release-confirm': {
+        const inp = document.getElementById('os-ver-name');
+        const r = releaseOsVersion(state, inp ? inp.value : '');
+        if (r.ok) { activeModal?.close(); sfx('good'); addLog(state, 'tech', r.msg); }
         opts.onToast?.(r.msg, r.ok ? 'good' : 'bad');
         render();
         break;
       }
+      case 'os-tech-start': {
+        const r = startOsTech(state, ds.id);
+        opts.onToast?.(r.msg, r.ok ? 'good' : 'bad');
+        if (r.ok) sfx('build');
+        render();
+        break;
+      }
+      case 'emp-filter': empFilter = ds.v; render(); break;
       case 'os-license': {
         const r = toggleOsLicense(state);
         opts.onToast?.(r.msg, r.ok ? 'good' : 'bad');
@@ -857,6 +882,7 @@ export function renderGame(root, state, opts = {}) {
     // 各页面内容
     const fn = {
       overview: pageOverview, product: pageProducts, tech: pageTech, supply: pageSupply,
+      selfrnd: pageSelfRnd,
       market: pageMarket, company: pageCompany, finance: pageFinance, rivals: pageRivals,
       hq: pageHQ, settings: pageSettings,
     }[tab];
@@ -1181,6 +1207,9 @@ export function renderGame(root, state, opts = {}) {
               <div class="between"><span class="dim">整机成本</span><b class="warn">¥${fmtNum(unitCost(state, m))}</b></div>
               <div class="between"><span class="dim">建议零售</span><b>¥${fmtNum(m.price.cn || suggestedPrice(state, m, 'cn'))}</b></div>
               ${m.status === 'production' ? `<div class="between"><span class="dim">上月销量 / 库存</span><b>${fmtNum(m.lastSold || 0)} / ${fmtNum(m.inventory)}</b></div>` : ''}
+              ${m.status === 'production' ? `<div class="between"><span class="dim">产品热度</span>
+                <div class="bar" style="width:52%;height:8px"><div style="width:${m.heat === undefined ? 100 : Math.round(m.heat)}%;height:100%;background:${(m.heat === undefined ? 100 : m.heat) > 60 ? '#37c9a5' : (m.heat === undefined ? 100 : m.heat) > 30 ? '#f5a542' : '#f56b6b'}"></div></div>
+                <b class="mono tiny">${Math.round(m.heat === undefined ? 100 : m.heat)}</b></div>` : ''}
               ${(m.design?.variants || []).length ? `<div class="between" style="align-items:flex-start"><span class="dim">配置版本</span><span class="tiny" style="text-align:right;line-height:1.7">${m.design.variants.map((v) => {
                 const r = RAMS.find((x) => x.id === v.ram), st = STORAGES.find((x) => x.id === v.stg);
                 const gb = (g) => g >= 1 ? `${Math.round(g * 10) / 10}G` : `${Math.round(g * 1024)}M`;
@@ -1524,6 +1553,96 @@ export function renderGame(root, state, opts = {}) {
       </div>` : `<div class="card"><div class="empty">还没有在售机型，先去设计并量产一款手机。<br/><button class="btn small primary" data-act="goto" data-tab="product">去设计</button></div></div>`}`;
   }
 
+  // ---------- 自研部门（独立页）：部门卡片 + 自研 OS 生态 + 系统科技树 ----------
+  function pageSelfRnd() {
+    const os = state.osPop || { pop: 0, version: 0, versionName: '1.0', licensed: false, licIncome: 0 };
+    const osdLv = state.divisions?.osd?.level || 0;
+    const hasOs = osdLv > 0;
+    const hasOsDesign = !!(state.divisions?.osd?.latest && state.divisions.osd.latest.ok)
+      || (state.divisions?.osd?.products || []).some((p2) => p2.status === 'completed');
+    const ot = state.osTech || { unlocked: [], proj: null };
+    const tb = osTechBonuses(state);
+    const osCard = `<div class="card" style="margin-bottom:12px" id="os-pop-card">
+        <div class="card-title">自研 OS 生态 <span class="right">流行度由装机量驱动 · 版本迭代抬升上限 · 可授权收费</span></div>
+        <div class="row" style="gap:14px;align-items:center;flex-wrap:wrap">
+          <div><div class="tiny dim">流行度</div><b class="mono" style="font-size:20px;color:#8fd0ff">${os.pop.toFixed(1)}</b></div>
+          <div><div class="tiny dim">当前版本</div><b class="mono">${hasOs ? esc(String(os.versionName)) : '—'}</b></div>
+          <div><div class="tiny dim">授权状态</div><b>${os.licensed ? '<span class="chip good">开放授权</span>' : '<span class="chip">未开放</span>'}</b></div>
+          ${os.licensed ? `<div><div class="tiny dim">上月授权收入</div><b class="mono">+${fmtMoney(os.licIncome || 0)}</b></div>` : ''}
+          <div style="margin-left:auto" class="row">
+            ${!hasOs ? '<span class="tiny dim">成立系统开发部后可用</span>'
+              : !hasOsDesign ? '<span class="tiny dim">尚无自研系统：先在下方部门卡「＋ 设计新产品」完成一款自研系统</span>'
+              : `<button class="btn small primary" data-act="os-release" ${state.company.cash < osReleaseCost(state) ? 'disabled' : ''}>发布新版本（${fmtMoney(osReleaseCost(state))}）</button>
+              <button class="btn small ${os.licensed ? 'ghost' : ''}" data-act="os-license">${os.licensed ? '停止授权' : '开放授权'}</button>`}
+          </div>
+        </div>
+        <div class="bar" style="height:8px;margin-top:8px"><div style="width:${Math.min(100, os.pop)}%;height:100%;background:linear-gradient(90deg,#4aa3ff,#8fd0ff)"></div></div>
+        <div class="tiny dim" style="margin-top:5px">流行度 ≥ 12 才有厂商愿意签约授权；授权收入 ≈ 流行度 × 部门等级系数。搭载自研系统的机型销量会持续推高流行度。</div>
+      </div>`;
+    const techCard = `<div class="card" style="margin-bottom:12px">
+        <div class="card-title">系统科技树 <span class="right">系统开发部专属技术路线 · 软件部人力驱动研发</span></div>
+        <div class="tiny dim" style="margin-bottom:8px">当前加成：评分 +${tb.scoreBonus} · 生态 +${tb.appsBonus} · 流行度上限 +${tb.popCap} · 流行度增速 +${tb.popGrowth}% · 授权收入 +${tb.licRate}%</div>
+        ${ot.proj ? `<div class="tiny" style="color:#8fd0ff;margin-bottom:6px">🔧 「${esc(OS_TECHS.find((t) => t.id === ot.proj.id)?.name || '')}」研发中 — 预计还需 ${Math.max(1, Math.ceil(ot.proj.monthsLeft))} 个月</div>` : ''}
+        ${OS_TECH_BRANCHES.map((br) => `
+          <div class="tech-cat">
+            <h3><span style="width:8px;height:8px;border-radius:2px;background:${br.color};display:inline-block"></span>${br.name}</h3>
+            <div class="tech-grid">
+              ${OS_TECHS.filter((t) => t.branch === br.id).map((t) => {
+                const st = osTechState(t, state.date.year, ot.unlocked, ot.proj);
+                const label = { done: '已掌握', doing: '研发中', future: `${t.year} 年`, locked: '需前置', ready: `研发 ${fmtMoney(t.cost)}` }[st];
+                return `<div class="tech-node ${st}" ${st === 'ready' ? `data-act="os-tech-start" data-id="${t.id}" title="${esc(t.desc)}（${t.months} 个月）"` : `title="${esc(t.desc)}"`}>
+                  <div class="tname">${t.name}</div>
+                  <div class="tmeta"><span>${t.year}</span><span>${label}</span></div>
+                  ${st === 'doing' ? `<div class="prog" style="width:${Math.round((1 - ot.proj.monthsLeft / ot.proj.monthsTotal) * 100)}%"></div>` : ''}
+                </div>`;
+              }).join('')}
+            </div>
+          </div>`).join('')}
+      </div>`;
+    return `
+      ${head('自研部门', '成立部门后可设计多款产品并行研发，等级限制品质上限；系统开发部产出自研 OS')}
+      <div class="card" style="margin-bottom:12px">
+        <div class="card-title">自研部门 <span class="right">自研部件供自家机型使用，也可对外供货赚取收入</span></div>
+        <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:10px">
+          ${DIVISION_IDS.map((id) => {
+            const def = DIVISION_DEFS[id];
+            const div = state.divisions?.[id] || { level: 0, supplyOn: false };
+            const lv = div.level;
+            const spec = id === 'chip' ? ownCpuSpec(state) : id === 'optics' ? ownCmrSpec(state)
+              : id === 'osd' ? ownOsSpec(state) : ownPanelSpec(state);
+            const specText = id === 'chip' && spec ? `自研 SoC ${spec.gen}.0 · 性能 ${Math.round(spec.perf)}` : '';
+            const specText2 = id === 'optics' && spec ? `影像模组评分 ${Math.round(spec.score)} · ${spec.sensor} ${spec.aperture}` : '';
+            const specText3 = id === 'osd' && spec ? `自研系统等级 ${spec.level} · 评分加成 +${spec.scoreBonus}` : '';
+            const specText4 = id === 'panel' && spec ? `面板品质 ${Math.round(spec.quality)}（自产成本 -28%）` : '';
+            return `<div class="org-exec filled" style="border-color:${def.color}44">
+              <div class="between"><b><span style="color:${def.color}">${def.icon}</span> ${def.name}</b>
+                ${lv > 0 ? `<span class="chip good">Lv.${lv}${div.supplyOn ? ' · 供货中' : ''}</span>` : '<span class="chip">未成立</span>'}</div>
+              <div class="tiny dim" style="margin:4px 0 6px">${def.desc}</div>
+              ${div.proj ? `<div class="tiny" style="color:${def.color};margin-bottom:4px">🔧 研发升级 Lv.${div.proj.target} 中 — 进度 ${Math.round(div.proj.progress / div.proj.work * 100)}%（研发部人力越强越快）</div>
+              <div class="bar" style="height:6px;margin-bottom:8px"><div style="width:${Math.round(div.proj.progress / div.proj.work * 100)}%;height:100%;background:${def.color}"></div></div>`
+                : ''}
+              ${lv > 0 && !div.proj ? `<div class="tiny" style="color:${def.color};margin-bottom:6px">${specText || specText2 || specText3 || specText4}
+                ${lv < 5 ? ` · 下级升级费用 ${fmtMoney(upgradeCost(id, lv))}` : ' · 已满级'}</div>
+              <div class="row" style="gap:6px">
+                ${lv < 5 ? `<button class="btn small" data-act="div-upgrade" data-id="${id}">部门升级 Lv.${lv + 1}（${fmtMoney(upgradeCost(id, lv))}）</button>` : ''}
+                <button class="btn small primary" data-act="div-design" data-id="${id}">＋ 设计新产品</button>
+                <button class="btn small ${div.supplyOn ? 'primary' : 'ghost'}" data-act="div-supply" data-id="${id}">${div.supplyOn ? '停止对外供货' : '开始对外供货'}</button>
+                <span class="tiny dim" style="margin-left:auto">月维护 ${fmtMoney(def.upkeep * lv)}${div.supplyOn ? ` · 供货收入约 ${fmtMoney(def.supplyRate * lv * eraFactor(state.date.year))}/月` : ''}</span>
+              </div>
+              ${(div.products || []).length ? `<div class="tiny dim" style="margin-top:4px">产品池（${(div.products || []).filter((p2) => p2.status === 'completed').length} 款可用）：</div>
+              ${(div.products || []).map((p2) => `<div class="between tiny" style="padding:2px 0"><span>${p2.status === 'designing' ? `⏳ ${p2.name}（剩 ${Math.ceil(p2.monthsLeft)} 月）` : `✓ ${p2.name} · ${p2.specs?.perf ? `性能 ${p2.specs.perf}` : p2.specs?.score ? `评分 ${Math.round(p2.specs.score)}` : p2.specs?.quality ? `品质 ${Math.round(p2.specs.quality)}` : ''}`}</span></div>`).join('')}` : ''}`
+              : !div.proj ? `<div class="row" style="gap:6px">
+                <button class="btn small primary" data-act="div-build" data-id="${id}">成立（${fmtMoney(def.buildCost)}）</button>
+                <span class="tiny dim">${def.unlockText}</span>
+              </div>` : ''}
+            </div>`;
+          }).join('')}
+        </div>
+      </div>
+      ${osCard}
+      ${techCard}`;
+  }
+
   function pageCompany() {
     const depts = DEPT_DEFS;
     if (!state.hiringPool) state.hiringPool = genPool(state);
@@ -1588,65 +1707,6 @@ export function renderGame(root, state, opts = {}) {
       </div>
 
       <div class="card" style="margin-bottom:12px">
-        <div class="card-title">自研部门 <span class="right">自研部件供自家机型使用，也可对外供货赚取收入</span></div>
-        <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:10px">
-          ${DIVISION_IDS.map((id) => {
-            const def = DIVISION_DEFS[id];
-            const div = state.divisions?.[id] || { level: 0, supplyOn: false };
-            const lv = div.level;
-            const spec = id === 'chip' ? ownCpuSpec(state) : id === 'optics' ? ownCmrSpec(state)
-              : id === 'osd' ? ownOsSpec(state) : ownPanelSpec(state);
-            const specText = id === 'chip' && spec ? `自研 SoC ${spec.gen}.0 · 性能 ${Math.round(spec.perf)}` : '';
-            const specText2 = id === 'optics' && spec ? `影像模组评分 ${Math.round(spec.score)} · ${spec.sensor} ${spec.aperture}` : '';
-            const specText3 = id === 'osd' && spec ? `自研系统等级 ${spec.level} · 评分加成 +${spec.scoreBonus}` : '';
-            const specText4 = id === 'panel' && spec ? `面板品质 ${Math.round(spec.quality)}（自产成本 -28%）` : '';
-            return `<div class="org-exec filled" style="border-color:${def.color}44">
-              <div class="between"><b><span style="color:${def.color}">${def.icon}</span> ${def.name}</b>
-                ${lv > 0 ? `<span class="chip good">Lv.${lv}${div.supplyOn ? ' · 供货中' : ''}</span>` : '<span class="chip">未成立</span>'}</div>
-              <div class="tiny dim" style="margin:4px 0 6px">${def.desc}</div>
-              ${div.proj ? `<div class="tiny" style="color:${def.color};margin-bottom:4px">🔧 研发升级 Lv.${div.proj.target} 中 — 进度 ${Math.round(div.proj.progress / div.proj.work * 100)}%（研发部人力越强越快）</div>
-              <div class="bar" style="height:6px;margin-bottom:8px"><div style="width:${Math.round(div.proj.progress / div.proj.work * 100)}%;height:100%;background:${def.color}"></div></div>`
-                : ''}
-              ${lv > 0 && !div.proj ? `<div class="tiny" style="color:${def.color};margin-bottom:6px">${specText || specText2 || specText3 || specText4}
-                ${lv < 5 ? ` · 下级升级费用 ${fmtMoney(upgradeCost(id, lv))}` : ' · 已满级'}</div>
-              <div class="row" style="gap:6px">
-                ${lv < 5 ? `<button class="btn small" data-act="div-upgrade" data-id="${id}">部门升级 Lv.${lv + 1}（${fmtMoney(upgradeCost(id, lv))}）</button>` : ''}
-                <button class="btn small primary" data-act="div-design" data-id="${id}">＋ 设计新产品</button>
-                <button class="btn small ${div.supplyOn ? 'primary' : 'ghost'}" data-act="div-supply" data-id="${id}">${div.supplyOn ? '停止对外供货' : '开始对外供货'}</button>
-                <span class="tiny dim" style="margin-left:auto">月维护 ${fmtMoney(def.upkeep * lv)}${div.supplyOn ? ` · 供货收入约 ${fmtMoney(def.supplyRate * lv * eraFactor(state.date.year))}/月` : ''}</span>
-              </div>
-              ${(div.products || []).length ? `<div class="tiny dim" style="margin-top:4px">产品池（${(div.products || []).filter((p2) => p2.status === 'completed').length} 款可用）：</div>
-              ${(div.products || []).map((p2) => `<div class="between tiny" style="padding:2px 0"><span>${p2.status === 'designing' ? `⏳ ${p2.name}（剩 ${Math.ceil(p2.monthsLeft)} 月）` : `✓ ${p2.name} · ${p2.specs?.perf ? `性能 ${p2.specs.perf}` : p2.specs?.score ? `评分 ${Math.round(p2.specs.score)}` : p2.specs?.quality ? `品质 ${Math.round(p2.specs.quality)}` : ''}`}</span></div>`).join('')}` : ''}`
-              : !div.proj ? `<div class="row" style="gap:6px">
-                <button class="btn small primary" data-act="div-build" data-id="${id}">成立（${fmtMoney(def.buildCost)}）</button>
-                <span class="tiny dim">${def.unlockText}</span>
-              </div>` : ''}
-            </div>`;
-          }).join('')}
-        </div>
-      </div>
-
-      <div class="card" style="margin-bottom:12px" id="os-pop-card">
-        <div class="card-title">自研 OS 生态 <span class="right">流行度由装机量驱动 · 版本迭代抬升上限 · 可授权收费</span></div>
-        ${(() => {
-          const os = state.osPop || { pop: 0, version: 0, versionName: '1.0', licensed: false, licIncome: 0 };
-          const hasOs = (state.divisions?.osd?.level || 0) > 0;
-          return `<div class="row" style="gap:14px;align-items:center;flex-wrap:wrap">
-            <div><div class="tiny dim">流行度</div><b class="mono" style="font-size:20px;color:#8fd0ff">${os.pop.toFixed(1)}</b></div>
-            <div><div class="tiny dim">当前版本</div><b class="mono">${hasOs ? `v${os.versionName}` : '—'}</b></div>
-            <div><div class="tiny dim">授权状态</div><b>${os.licensed ? '<span class="chip good">开放授权</span>' : '<span class="chip">未开放</span>'}</b></div>
-            ${os.licensed ? `<div><div class="tiny dim">上月授权收入</div><b class="mono">+${fmtMoney(os.licIncome || 0)}</b></div>` : ''}
-            <div style="margin-left:auto" class="row">
-              ${hasOs ? `<button class="btn small primary" data-act="os-release" ${state.company.cash < osReleaseCost(state) ? 'disabled' : ''}>发布新版本（${fmtMoney(osReleaseCost(state))}）</button>
-              <button class="btn small ${os.licensed ? 'ghost' : ''}" data-act="os-license">${os.licensed ? '停止授权' : '开放授权'}</button>` : '<span class="tiny dim">成立系统开发部后可用</span>'}
-            </div>
-          </div>
-          <div class="bar" style="height:8px;margin-top:8px"><div style="width:${Math.min(100, os.pop)}%;height:100%;background:linear-gradient(90deg,#4aa3ff,#8fd0ff)"></div></div>
-          <div class="tiny dim" style="margin-top:5px">流行度 ≥ 12 才有厂商愿意签约授权；授权收入 ≈ 流行度 × 部门等级系数。搭载自研系统的机型销量会持续推高流行度。</div>`;
-        })()}
-      </div>
-
-      <div class="card" style="margin-bottom:12px">
         <div class="between">
           <div class="card-title" style="margin:0">职级结构</div>
           <span class="tiny dim">职级由能力决定，能力达到 56 / 68 / 80 / 90 自动晋级，薪资期望同步上调</span>
@@ -1689,18 +1749,15 @@ export function renderGame(root, state, opts = {}) {
       <div class="two-col">
         <div class="card">
           <div class="card-title">员工名册 <span class="right">${state.employees.length} 人</span></div>
-      <div class="row" style="gap:4px;margin:6px 0;flex-wrap:wrap">
-        <button class="btn tiny ${empFilter === 'all' ? 'primary' : ''}" data-emp-f="all">全部</button>
-        ${DEPT_DEFS.map((d2) => `<button class="btn tiny ${empFilter === d2.id ? 'primary' : ''}" data-emp-f="${d2.id}">${d2.name}</button>`).join('')}
-      </div>      <div class="row" style="gap:5px;margin:8px 0;flex-wrap:wrap">
+      <div class="row" style="gap:5px;margin:8px 0;flex-wrap:wrap">
         <span class="tiny dim">按部门：</span>
-        <button class="btn tiny primary" data-emp-f="all">全部</button>
-        ${DEPT_DEFS.map((d2) => `<button class="btn tiny" data-emp-f="${d2.id}">${d2.name}</button>`).join('')}
+        <button class="btn tiny ${empFilter === 'all' ? 'primary' : ''}" data-act="emp-filter" data-v="all">全部</button>
+        ${DEPT_DEFS.map((d2) => `<button class="btn tiny ${empFilter === d2.id ? 'primary' : ''}" data-act="emp-filter" data-v="${d2.id}">${d2.name}</button>`).join('')}
       </div>          <div style="max-height:520px;overflow:auto">
             <table class="tbl">
               <thead><tr><th>姓名</th><th>部门</th><th>岗位</th><th class="num">能力</th><th class="num">满意</th><th class="num">月薪</th><th></th></tr></thead>
               <tbody>
-                ${[...state.employees].sort((a, b) => b.skill - a.skill).map((e) => {
+                ${[...state.employees].filter((e) => empFilter === 'all' || e.deptId === empFilter).sort((a, b) => b.skill - a.skill).map((e) => {
                   const rk = rankOf(e.skill);
                   return `
                   <tr>
@@ -2153,6 +2210,7 @@ export function renderGame(root, state, opts = {}) {
       ${head('公司园区', `${util.owned} 块地块 · ${util.used} 栋建筑 · 工位 ${officeCapacity(state)}`,
         `<button class="btn small" data-act="open-layout">3D 布局编辑</button>
          <button class="btn small" data-act="open-floorplan">平面规划</button>
+         <button class="btn small" data-act="open-screendesign">屏幕设计</button>
          <button class="btn small" data-act="expand-office">租用临时工位（${fmtMoney(2000000 * o.level)}）</button>`)}
       <div class="two-col" style="grid-template-columns:1.25fr 1fr">
         <div class="card" style="padding:8px">
@@ -2568,6 +2626,85 @@ export function renderGame(root, state, opts = {}) {
 
   // 收购谈判弹窗：多轮出价，显示对方要价/情绪/回合
   // 研发立项弹窗：命名 + 规格设计（芯片核心构成/GPU、传感器底大小/像素、OS 底层、面板类型/分辨率）
+  // ---------- 屏幕设计 / 宣传图 / 通知与新闻 / OS 发版 ----------
+  let screenDesignUI = null;
+  function openScreenDesignUI() {
+    if (screenDesignUI) return;
+    screenDesignUI = openScreenDesign(document.body, state, {
+      onClose: () => { screenDesignUI = null; },
+      onToast: (m, k) => opts.onToast?.(m, k),
+    });
+  }
+
+  let posterUI = null;
+  function openPoster(modelId) {
+    const m2 = state.models.find((x) => x.id === modelId);
+    if (!m2) return;
+    if (posterUI) { try { posterUI.destroy?.(); } catch (e) { /* 忽略 */ } posterUI = null; }
+    posterUI = openPosterStudio(document.body, state, m2, {
+      onClose: () => { posterUI = null; },
+      onToast: (m3, k) => opts.onToast?.(m3, k),
+    });
+  }
+
+  function openNewsPanel() {
+    const news = state.news || [];
+    const unread = news.filter((n) => !n.read).length;
+    const hist = (state.history || []).slice(-12).reverse();
+    const mask = document.createElement('div');
+    mask.className = 'modal-mask';
+    mask.innerHTML = `<div class="modal" style="width:min(640px,94vw);max-height:80vh;display:flex;flex-direction:column">
+      <div class="between"><h2 style="margin:0">通知与新闻</h2><button class="btn small ghost" data-close>关闭</button></div>
+      <div class="modal-sub">${unread ? `${unread} 条未读` : '全部已读'}</div>
+      <div style="flex:1;overflow-y:auto;padding:0 2px">
+        ${news.length ? news.map((n, i) => `
+          <div data-news="${i}" style="border-left:3px solid ${n.type === 'competitor' ? '#f56b6b' : n.type === 'award' ? '#f5a542' : '#4aa3ff'};margin-bottom:6px;border-radius:6px;padding:8px 10px;${n.read ? 'opacity:.5' : 'background:rgba(74,163,255,.06)'}">
+            <div class="between"><b class="tiny">${esc(n.title)}</b><span class="tiny dim">${esc(n.time)}</span></div>
+            ${n.text ? `<div class="tiny dim" style="margin-top:2px">${esc(n.text)}</div>` : ''}
+          </div>`).join('') : '<div class="empty">暂无消息</div>'}
+        ${hist.length ? `<div class="tiny dim" style="margin:10px 0 4px">月度报告归档</div>
+        ${hist.map((h) => `<div class="between tiny" style="padding:4px 8px;border-bottom:1px solid rgba(255,255,255,.05)"><span>${h.y}/${h.m + 1} 月度报告</span><span class="dim">净利 ${fmtMoney(h.net || 0)}</span></div>`).join('')}` : ''}
+      </div>
+      <div class="row" style="margin-top:10px;justify-content:flex-end">
+        <button class="btn small" data-news-read>全部标为已读</button>
+      </div>
+    </div>`;
+    document.body.appendChild(mask);
+    const close = () => mask.remove();
+    mask.querySelector('[data-close]').onclick = close;
+    mask.addEventListener('click', (e) => {
+      const item = e.target.closest('[data-news]');
+      if (item) {
+        const n = news[Number(item.dataset.news)];
+        if (n) { n.read = true; item.style.opacity = '.5'; paintTopbar(); }
+        return;
+      }
+      if (e.target.closest('[data-news-read]')) {
+        news.forEach((n) => { n.read = true; });
+        paintTopbar();
+        close();
+        render();
+        return;
+      }
+      if (e.target === mask) close();
+    });
+  }
+
+  function openOsReleaseModal() {
+    const os = state.osPop || { version: 0 };
+    const cost = osReleaseCost(state);
+    const body = `
+      <div class="tiny dim" style="margin:4px 0 8px">大版本迭代：提升系统流行度上限与评分加成。可自行为版本命名（如 StarOS ${os.version + 1}、HyperUI 5），留空则自动编号 v${os.version + 1}.0。</div>
+      <div class="report-grid">
+        <div class="line"><span>版本名称</span><input id="os-ver-name" maxlength="16" placeholder="v${os.version + 1}.0（留空自动编号）" style="flex:1" /></div>
+      </div>
+      <div class="row" style="margin-top:12px;justify-content:flex-end;gap:8px;align-items:center">
+        <span class="tiny dim" style="margin-right:auto">发布费用 ${fmtMoney(cost)}</span>
+        <button class="btn small primary" data-act="os-release-confirm" ${state.company.cash < cost ? 'disabled' : ''}>确认发布</button>
+      </div>`;
+    modalShell('发布自研系统新版本', '系统开发部 · 自研 OS 生态', body, '');
+  }
+
   function openRndModal(id, mode = 'upgrade') {
     const def = DIVISION_DEFS[id];
     const lv = state.divisions?.[id]?.level || 0;

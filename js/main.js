@@ -1,5 +1,5 @@
 // 启动器：主菜单、开局配置、读档、进入游戏
-import { createGame, saveSlots, loadGame, GENES, autoSave, peekAutoSave } from './core/state.js';
+import { createGame, saveSlots, loadGame, GENES, autoSave, peekAutoSave, GAME_VERSION } from './core/state.js';
 import { ERAS, COUNTRIES } from './data/world.js';
 import { renderGame } from './ui/app.js';
 import { sfx, unlockAudio, startAmbient } from './core/audio.js';
@@ -64,7 +64,7 @@ function menu() {
           </div>
           <div class="spacer"></div>
           <div class="tiny dim" style="text-align:right;line-height:1.7">
-            原型版本 0.7<br/>纯前端 · three.js · 本地存档
+            原型版本 ${GAME_VERSION}<br/>纯前端 · three.js · 本地存档
           </div>
         </div>
 
