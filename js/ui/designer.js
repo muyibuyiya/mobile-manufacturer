@@ -1830,11 +1830,11 @@ export function renderDesigner(container, state, model, hooks = {}) {
         const lensR = lensRadiusMm(sn ? sn.format : '1/2.4″') * (l.size || 1);
         const lx = rect.cx + l.x, ly = rect.cy + l.y;
         const zBase = modTopZ; // 模组表面（无凸台时=后壳表面）
-        // 潜望长焦：立式棱镜模组——竖长深盒（真实潜望结构：镜组横置、棱镜折转光路），
-        // 镜筒开在盒体上部正面，下端另有镀膜棱镜反光窗；镜组整体前移贴到盒体表面
+        // 潜望长焦：真实潜望结构靠棱镜在机身内部折转光路，外部只露浅凸台——
+        // 竖长浅盒（镜组横置），镜圈开在盒体正面；不再画外露棱镜片（会凸出盒缘）
         let periShift = 0;
         if (look.plate !== null) {
-          const pd = Math.max(2.2, lensR * 2.1);
+          const pd = Math.max(1.5, lensR * 0.65);
           const bw = lensR * 2.35, bh = lensR * 3.4;
           const boxGeo = new THREE.ExtrudeGeometry(roundedShape(bw, bh, lensR * 0.6), {
             depth: pd, bevelEnabled: true, bevelThickness: 0.22, bevelSize: 0.22, bevelSegments: 2, curveSegments: 8,
@@ -1845,13 +1845,6 @@ export function renderDesigner(container, state, model, hooks = {}) {
           box.position.set(lx, ly - lensR * 0.35, zBase + 0.02);
           box.castShadow = true;
           g.add(box);
-          const prism = new THREE.Mesh(new THREE.CircleGeometry(lensR * 0.55, 20), new THREE.MeshStandardMaterial({
-            color: 0x2b4a74, metalness: 0.8, roughness: 0.15, emissive: 0x14283f, emissiveIntensity: 0.4,
-          }));
-          prism.userData.part = 'camera';
-          prism.rotation.y = Math.PI;
-          prism.position.set(lx, ly + lensR * 1.15, zBase - pd - 0.02);
-          g.add(prism);
           periShift = pd + 0.25;
         }
         const zL = zBase - periShift;
@@ -2318,7 +2311,8 @@ export function renderDesigner(container, state, model, hooks = {}) {
         // 潜望：立式棱镜模组（与主机型一致，镜组前移贴到盒体表面）
         let periShift = 0;
         if (look.plate !== null) {
-          const pd = Math.max(2.2, lensR * 2.1);
+          // 与主机型一致：浅凸台（棱镜反射在机身内部），不画外露棱镜片
+          const pd = Math.max(1.5, lensR * 0.65);
           const bw = lensR * 2.35, bh = lensR * 3.4;
           const boxGeo = new THREE.ExtrudeGeometry(roundedShape(bw, bh, lensR * 0.6), {
             depth: pd, bevelEnabled: true, bevelThickness: 0.22, bevelSize: 0.22, bevelSegments: 2, curveSegments: 8,
@@ -2329,13 +2323,6 @@ export function renderDesigner(container, state, model, hooks = {}) {
           box.position.set(lx, ly - lensR * 0.35, modTopZ + 0.02);
           box.castShadow = true;
           halfA.add(box);
-          const prism = new THREE.Mesh(new THREE.CircleGeometry(lensR * 0.55, 20), new THREE.MeshStandardMaterial({
-            color: 0x2b4a74, metalness: 0.8, roughness: 0.15, emissive: 0x14283f, emissiveIntensity: 0.4,
-          }));
-          prism.userData.part = 'camera';
-          prism.rotation.y = Math.PI;
-          prism.position.set(lx, ly + lensR * 1.15, modTopZ - pd - 0.02);
-          halfA.add(prism);
           periShift = pd + 0.25;
         }
         const zL = modTopZ - periShift;
