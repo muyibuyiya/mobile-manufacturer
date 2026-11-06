@@ -24,6 +24,13 @@ const LENS_LOOK = {
   macro:     { ring: 0x9aa7b4, glass: 0x121820, inner: 0x080b10, barrel: 0x0d1117, plate: null },
 };
 
+// 屏幕圆角（mm）：screen.corner>0 用用户值，否则默认贴合机身圆角（同心缩进 bezel×0.8）
+function screenCornerMm(design) {
+  const b = design.body || {};
+  const c = Number(design.screen?.corner) || 0;
+  return c > 0 ? c : Math.max(0.5, (b.corner || 0) - (design.screen?.bezel || 2.2) * 0.8);
+}
+
 // ---------- 程序化镜头玻璃贴图 ----------
 // 法线/粗糙度/颜色三张 256² 画布：中央凸弧 + 三道同心元件棱（镜片组层次）+ 细放射波纹，
 // 供最外层玻璃的 MeshPhysicalMaterial 使用；clearcoat + 场景环境反射产生自然高光
@@ -260,6 +267,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
       <span class="tiny dim" style="display:block;margin-bottom:6px">调机身时屏幕自动贴合</span>
       ${sliderRow('屏幕尺寸', 'screen.inch', d.screen.inch, 1, 8.2, 0.1, '″')}
       ${sliderRow('边框宽度', 'screen.bezel', d.screen.bezel, 0.6, 12, 0.1, 'mm')}
+      ${sliderRow('屏幕圆角（0=贴合机身）', 'screen.corner', d.screen.corner || 0, 0, 15, 0.1, 'mm')}
       <label class="field"><span>比例预设</span>
         <select data-k="screen.aspect">
           ${Object.keys(SCREEN_ASPECTS).map((a) => `<option ${d.screen.aspect === a ? 'selected' : ''}>${a}</option>`).join('')}
@@ -452,6 +460,13 @@ export function renderDesigner(container, state, model, hooks = {}) {
       ${sliderRow('外屏比例（高/宽）', 'body.coverScreen.ratio', cvRatio, 0.5, 2.4, 0.05, '')}
       ${sliderRow('外屏位置 · 横', 'body.coverScreen.x', body.coverScreen?.x || 0, -(body.width / 2 - 3), body.width / 2 - 3, 0.5, 'mm')}
       ${sliderRow('外屏位置 · 纵', 'body.coverScreen.y', body.coverScreen?.y || 0, -(body.length / 2 - 3), body.length / 2 - 3, 0.5, 'mm')}
+      <label class="field"><span>外屏开孔</span>
+        <select data-k="body.coverScreen.notch">
+          <option value="none" ${(body.coverScreen?.notch || 'none') === 'none' ? 'selected' : ''}>无开孔</option>
+          <option value="punch" ${body.coverScreen?.notch === 'punch' ? 'selected' : ''}>单孔（前置摄像头）</option>
+        </select>
+      </label>
+      ${body.coverScreen?.notch === 'punch' ? sliderRow('外屏挖孔位置（0=居中）', 'body.coverScreen.holeX', body.coverScreen?.holeX || 0, -40, 40, 1, '%') : ''}
       <label class="field"><span>外屏供应商</span>
         <select data-k="body.coverScreen.panelVendor">
           <option value="" ${!body.coverScreen?.panelVendor ? 'selected' : ''}>公版</option>
@@ -960,6 +975,13 @@ export function renderDesigner(container, state, model, hooks = {}) {
           ctx.fillStyle = cg;
           roundRect(ctx, ccx - cvW / 2, ccy - cvH / 2, cvW, cvH, Math.max(2, d.body.corner * scale * 0.5));
           ctx.fill();
+          if (b.coverScreen?.notch === 'punch') { // 外屏前置挖孔（位置可调）
+            const hf = (b.coverScreen?.holeX || 0) / 100;
+            ctx.fillStyle = '#05080c';
+            ctx.beginPath();
+            ctx.arc(ccx + cvW * hf, ccy - cvH / 2 + Math.max(3, 4 * scale), Math.max(1.5, 2 * scale * 0.7), 0, Math.PI * 2);
+            ctx.fill();
+          }
           ctx.fillStyle = 'rgba(255,255,255,.4)';
           ctx.fillText(`外屏 ${cv}″`, ccx, ccy - cvH / 2 - 5);
         } else {
@@ -973,7 +995,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
       const maxSh = (openFold && b.fold === 'flip' ? b.length * 2 : b.length) - d.screen.bezel * 2 - 0.6;
       const sw = Math.min(scr.w, maxSw) * scale, sh = Math.min(scr.h, maxSh) * scale;
       const sx = x + (W - sw) / 2, sy = y + (H - sh) / 2;
-      const sr = Math.max(2, d.body.corner * scale * 0.7);
+      const sr = Math.max(2, screenCornerMm(d) * scale);
       if (openFold) {
         // 折叠机展开态：专用宽幅内屏壁纸（铺满整个展开面），后续再叠加折痕
         drawWideWallpaper(ctx, sx, sy, sw, sh, sr, b.fold);
@@ -1003,7 +1025,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
       // 展开态折叠机：屏幕中缝折痕（垂直折线 fold / 水平折线 flip）
       if (openFold) {
         ctx.save();
-        roundRect(ctx, sx, sy, sw, sh, Math.max(2, d.body.corner * scale * 0.7));
+        roundRect(ctx, sx, sy, sw, sh, Math.max(2, screenCornerMm(d) * scale));
         ctx.clip();
         ctx.strokeStyle = 'rgba(255,255,255,.09)';
         ctx.lineWidth = Math.max(1, 0.7 * scale);
@@ -1079,6 +1101,13 @@ export function renderDesigner(container, state, model, hooks = {}) {
           ctx.fillStyle = cg;
           roundRect(ctx, ccx - cw / 2, ccy - chh / 2, cw, chh, Math.max(2, Math.min(cw, chh) * 0.16));
           ctx.fill();
+          if (b.coverScreen?.notch === 'punch') { // 外屏前置挖孔（展开背面透视）
+            const hf = (b.coverScreen?.holeX || 0) / 100;
+            ctx.fillStyle = '#05080c';
+            ctx.beginPath();
+            ctx.arc(ccx + cw * hf, ccy - chh / 2 + Math.max(2, 3 * scale), Math.max(1.2, 1.8 * scale * 0.7), 0, Math.PI * 2);
+            ctx.fill();
+          }
           if (cw > 44) {
             ctx.fillStyle = 'rgba(255,255,255,.4)';
             ctx.font = '10px -apple-system, sans-serif';
@@ -1774,7 +1803,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
     // 屏幕
     const scr = screenSize(d);
     const sw = Math.min(scr.w, W - 1), sh = Math.min(scr.h, L - 1);
-    const screenShape = roundedShape(sw, sh, Math.max(0.8, b.corner * 0.65));
+    const screenShape = roundedShape(sw, sh, Math.max(0.8, screenCornerMm(d)));
     const screenGeo = new THREE.ShapeGeometry(screenShape, 12);
     normalizeUV(screenGeo);
     const screenTex = makeWallpaper();
@@ -2271,7 +2300,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
     if (!folded) {
       const fullW = isFlip ? Math.min(scr.w, halfW - 1) : Math.min(scr.w, halfW * 2 - 1.4);
       const fullH = isFlip ? Math.min(scr.h, halfL * 2 - 1.4) : Math.min(scr.h, halfL - 1);
-      const sShape = roundedShape(fullW, fullH, Math.max(0.8, b.corner * 0.55));
+      const sShape = roundedShape(fullW, fullH, Math.max(0.8, screenCornerMm(d)));
       const sGeo = new THREE.ShapeGeometry(sShape, 12);
       normalizeUV(sGeo);
       // 折叠机展开态用宽幅桌面贴图（与 2D 一致），普通机型用竖版壁纸
@@ -2307,6 +2336,17 @@ export function renderDesigner(container, state, model, hooks = {}) {
         (isFlip ? -halfL / 2 : 0) + (b.coverScreen?.y || 0),
         -(T / 2 + 0.72));
       halfB.add(cvMesh);
+      if (b.coverScreen?.notch === 'punch') { // 外屏前置挖孔（3D 折叠态正面可见）
+        const hf = (b.coverScreen?.holeX || 0) / 100;
+        const cvHole = new THREE.Mesh(new THREE.CircleGeometry(0.9, 16), new THREE.MeshBasicMaterial({ color: 0x000000 }));
+        cvHole.userData.part = 'screen';
+        cvHole.rotation.y = Math.PI;
+        cvHole.position.set(
+          (isFlip ? 0 : -halfW / 2) + (b.coverScreen?.x || 0) + cvW * hf,
+          (isFlip ? -halfL / 2 : 0) + (b.coverScreen?.y || 0) + cvH / 2 - 2.2,
+          -(T / 2 + 0.74));
+        halfB.add(cvHole);
+      }
     }
 
     // 铰链圆柱
@@ -2663,7 +2703,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
     // 比例预设切到「自由」时需重建控件，出现长宽比滑杆；充电口切自定义时出现形状编辑；
     // 折叠结构/外屏开关切换时出现外屏编辑组；闪光灯样式切换时出现宽/长或大小滑杆；
     // 勾选背面 Logo/文字时出现位置、颜色与材质编辑；开孔样式切单孔时出现挖孔位置滑杆
-    if (key === 'screen.aspect' || key === 'screen.panelVendor' || key === 'body.ports.charge' || key === 'body.ports.micStyle' || key === 'body.fold' || key === 'camera.flash.style' || key === 'logoOnBack' || key === 'brandText' || key === 'body.coverOn' || key === 'screen.notch'
+    if (key === 'screen.aspect' || key === 'screen.panelVendor' || key === 'body.ports.charge' || key === 'body.ports.micStyle' || key === 'body.fold' || key === 'camera.flash.style' || key === 'logoOnBack' || key === 'brandText' || key === 'body.coverOn' || key === 'screen.notch' || key === 'body.coverScreen.notch'
       || (key.startsWith('camera.lenses.') && key.endsWith('.type'))) { // 镜头类型切换时出现潜望凸台厚度/方向控件
       renderControls();
       syncFoldToggle();
@@ -3106,7 +3146,7 @@ export function phoneFrontDataUrl(design, thumbW = 92) {
   // 屏幕（按 bezel 内缩）；折叠机型缩略图=折叠态正面：有外屏画外屏，无外屏画熄屏面板
   const cvInch = b.fold && b.fold !== 'none' ? (b.coverScreen?.inch || 0) : 0;
   const bez = Math.max(1.2, (design.screen.bezel || 2.2) * scale * 0.9);
-  const sr = Math.max(1, (rMm - (design.screen.bezel || 2.2)) * scale * 0.8);
+  const sr = Math.max(1, screenCornerMm(design) * scale);
   let sx = x + bez, sy = y + bez, sw = W - bez * 2, sh = H - bez * 2;
   if (b.fold && b.fold !== 'none' && cvInch > 0) {
     const cvRatio = b.coverScreen?.ratio || (b.fold === 'flip' ? 1.05 : 1.42);
@@ -3146,11 +3186,20 @@ export function phoneFrontDataUrl(design, thumbW = 92) {
   // 开孔：挖孔 / 刘海（屏下摄像头不画）
   const udc = (design.parts.extras || []).includes('x_udc');
   if (design.screen.notch === 'punch' && !udc) {
-    const holeFrac = (design.screen.holeX ?? (b.fold && b.fold !== 'none' ? 25 : 0)) / 100;
-    ctx.fillStyle = '#02040a';
-    ctx.beginPath();
-    ctx.arc(sx + sw / 2 + sw * holeFrac, sy + Math.max(5, sh * 0.045), Math.max(1.3, sh * 0.014), 0, Math.PI * 2);
-    ctx.fill();
+    const onCover = b.fold && b.fold !== 'none' && cvInch > 0; // 折叠缩略图正面=外屏：画外屏挖孔（可选）
+    if (onCover && b.coverScreen?.notch === 'punch') {
+      const hf = (b.coverScreen?.holeX || 0) / 100;
+      ctx.fillStyle = '#02040a';
+      ctx.beginPath();
+      ctx.arc(sx + sw / 2 + sw * hf, sy + Math.max(5, sh * 0.045), Math.max(1.3, sh * 0.014), 0, Math.PI * 2);
+      ctx.fill();
+    } else if (!onCover) {
+      const holeFrac = (design.screen.holeX ?? (b.fold && b.fold !== 'none' ? 25 : 0)) / 100;
+      ctx.fillStyle = '#02040a';
+      ctx.beginPath();
+      ctx.arc(sx + sw / 2 + sw * holeFrac, sy + Math.max(5, sh * 0.045), Math.max(1.3, sh * 0.014), 0, Math.PI * 2);
+      ctx.fill();
+    }
   } else if (design.screen.notch === 'notch') {
     ctx.fillStyle = '#02040a';
     const nw = sw * 0.34, nh = Math.max(4, sh * 0.028);

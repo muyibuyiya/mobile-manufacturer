@@ -94,13 +94,15 @@ export function defaultDesign(year = 2020, unlocked = []) {
       ports: { dualSpeaker: modern, topMic: !modern, charge: modern ? 'typec' : (year >= 2005 ? 'micro' : 'custom'), chargeShape: { style: 'round', w: 6, h: 3 }, speakerStyle: 'dot5' },
       fold: 'none',
       // 折叠外屏（cover screen）：inch=0 为无（开关在 UI 的 body.coverOn，切换时记忆 last）；
-      // ratio 高/宽比（0=按折叠结构默认）、x/y 半区内偏移 mm——外屏不默认占满、可精准调节
-      coverScreen: { inch: 0, last: 2.6, ratio: 0, x: 0, y: 0 },
+      // ratio 高/宽比（0=按折叠结构默认）、x/y 半区内偏移 mm——外屏不默认占满、可精准调节；
+      // notch 外屏开孔（none/punch，可选前置摄像头）+ holeX 挖孔位置（%外屏宽）
+      coverScreen: { inch: 0, last: 2.6, ratio: 0, x: 0, y: 0, notch: 'none', holeX: 0 },
     },
     screen: {
       inch,
       aspect: year >= 2019 ? '19.5:9' : (year >= 2010 ? '16:9' : '4:3'),
       bezel,
+      corner: 0, // 屏幕圆角 mm（0=默认贴合机身圆角，同心缩进 bezel）
       panel: pickTech(SCREENS),
       notch: modern ? 'punch' : 'none',
       // 面板供应商与分辨率档位：按年代选当时最合适的档
