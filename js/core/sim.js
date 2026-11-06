@@ -369,8 +369,27 @@ function stepProduction(state, report) {
 
 function stepSales(state, report) {
   const year = state.date.year;
+  // ---- 产品生命周期：热度（上市 100 → 逐月衰减；营销与系列粉丝减缓；竞品发布会重击）----
+  const mktSpend = channelTotal(state);
+  for (const p of state.models) {
+    if (p.status !== 'production') continue;
+    if (p.heat === undefined) p.heat = 100;
+    let decay = 3;
+    if (mktSpend > 500000) decay -= 1;
+    if (mktSpend > 2000000) decay -= 1;
+    const series = p.series || String(p.name || '').trim().split(/\s+/)[0];
+    const seriesSales = state.models.reduce((s2, m2) => s2 + (((m2.series || String(m2.name || '').trim().split(/\s+/)[0]) === series && m2.status === 'production') ? (m2.sold || 0) : 0), 0);
+    if (seriesSales > 100000) decay -= 0.5;
+    if (seriesSales > 500000) decay -= 0.5;
+    p.heat = clamp(p.heat - decay, 0, 100);
+    if (p.heat < 20 && !p._staleWarned) {
+      p._staleWarned = true;
+      report.notes.push(`${p.name} 产品热度已低于 20，建议降价清仓或推出新版本。`);
+    }
+    if (p.heat >= 30) p._staleWarned = false;
+  }
+  for (const c of state.competitors) { c.lastSold = 0; c.revenueEst = 0; delete c._launchedNoted; }
   for (const p of state.models) p.lastSold = 0; // 上月销量按月度重置，不能累计
-  for (const c of state.competitors) { c.lastSold = 0; c.revenueEst = 0; }
   const hypeMul = state.hype && state.hype.months > 0 ? state.hype.mul : 1;
   const demandMul = activeMul(state, 'demandMul') * policyMul(state, 'demandMul') * hypeMul;
   for (const market of state.markets) {
@@ -382,11 +401,32 @@ function stepSales(state, report) {
       const units = potential * (rv.ratio || 0);
       rv.competitor.lastSold = (rv.competitor.lastSold || 0) + units;
       rv.competitor.revenueEst = (rv.competitor.revenueEst || 0) + units * (rv.phone.price || 0);
+      // 竞品旗舰发布会：推送新闻 + 同价位自家产品热度 -8（每家每月至多一次）
+      if (rv.phone.price > expectedPrice(year) * 1.1 && !rv.competitor._launchedNoted) {
+        rv.competitor._launchedNoted = true;
+        state.news = state.news || [];
+        state.news.unshift({
+          time: `${year}/${state.date.month + 1}`, type: 'competitor',
+          title: `${rv.competitor.name} 发布 ${rv.phone.name}`,
+          text: `定价 ¥${fmtNum(rv.phone.price)}，主打高端市场，同价位产品热度受冲击。`, read: false,
+        });
+        if (state.news.length > 100) state.news.length = 100;
+        for (const p of state.models) {
+          if (p.status !== 'production') continue;
+          const myPrice = p.price[market.id] || p.price.cn || 0;
+          if (myPrice > rv.phone.price * 0.8 && myPrice < rv.phone.price * 1.2) {
+            p.heat = clamp((p.heat === undefined ? 100 : p.heat) - 8, 0, 100);
+          }
+        }
+      }
     }
     for (const op of shareInfo.own) {
       const model = op.model;
       const ratio = op.ratio || 0;
       let demand = potential * ratio;
+      // 热度影响有效需求（heat 100 = 全额需求，heat 0 = 30% 基础需求）
+      const heatMul = 0.3 + ((model.heat === undefined ? 100 : model.heat) / 100) * 0.7;
+      demand *= heatMul;
       const price = op.price || model.price[market.id] || 0;
       const take = Math.min(demand, model.inventory);
       model.inventory -= take;
@@ -465,6 +505,9 @@ function stepBrand(state, report, extraBrand = 0) {
         state.company.brand = clamp(state.company.brand + 2.5, 0, 100);
         report.notes.push(`${p.name} 获得${name}，设计实力获行业认可。`);
         addLog(state, 'product', `${p.name} 获得${name}。`);
+        state.news = state.news || [];
+        state.news.unshift({ time: `${awYear}/${state.date.month + 1}`, type: 'award', title: `${p.name} 获得${name}`, text: '设计实力获行业认可，品牌 +2.5。', read: false });
+        if (state.news.length > 100) state.news.length = 100;
       }
     }
   }

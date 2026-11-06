@@ -6,6 +6,7 @@ import { eraFactor } from '../data/world.js';
 import { CPUS, CAMERAS, SCREENS } from '../data/parts.js';
 import { CPU_CORES, GPU_ARCHS, OS_BASES, PANEL_VENDORS, RES_TIERS, LENS_TYPES, formatFactor, lensThicknessMm } from '../data/hardware.js';
 import { staffPower as staffPowerRef, addLog } from './state.js';
+import { OS_TECH_MAP } from '../data/os-tech.js';
 
 export const DIVISION_DEFS = {
   optics: {
@@ -53,6 +54,8 @@ export function ensureDivisions(state) {
   if (!state.osPop) {
     state.osPop = { pop: 0, level: 0, version: 0, versionName: '1.0', licensed: false, licIncome: 0, totalInstall: 0 };
   }
+  // 系统科技树（独立于通用科技树）
+  if (!state.osTech) state.osTech = { unlocked: [], proj: null };
   return state.divisions;
 }
 
@@ -93,20 +96,52 @@ export function osReleaseCost(state) {
   return Math.round((60 + v * 55) * 1e6);
 }
 
-export function releaseOsVersion(state) {
+export function releaseOsVersion(state, customName = '') {
   ensureDivisions(state);
   const osd = state.divisions.osd;
   if (!osd || osd.level < 1) return { ok: false, msg: '需要先成立系统开发部' };
+  // 必须真正设计过一款自研系统（产品池完工或最近完工快照）才能发版
+  const hasDesign = (osd.latest && osd.latest.ok) || (osd.products || []).some((p2) => p2.status === 'completed');
+  if (!hasDesign) return { ok: false, msg: '还没有自研系统：请先在系统开发部「设计新产品」完成一款自研系统' };
   if (osd.proj) return { ok: false, msg: '部门升级研发中，无法发版' };
   const cost = osReleaseCost(state);
   if (state.company.cash < cost) return { ok: false, msg: '资金不足' };
   state.company.cash -= cost;
   const os = state.osPop;
   os.version += 1;
-  os.versionName = `${os.version}.0`;
+  const name = String(customName || '').trim().slice(0, 16);
+  os.versionName = name || `${os.version}.0`;
   os.level = clamp(os.level + 3 + os.version, 0, 100);
-  addLog(state, 'tech', `发布自研 OS ${os.versionName}，系统流行度 +${3 + os.version}`);
-  return { ok: true, msg: `自研 OS ${os.versionName} 已发布` };
+  addLog(state, 'tech', `发布自研系统 ${os.versionName}（内核 v${os.version}），系统流行度 +${3 + os.version}`);
+  return { ok: true, msg: `自研系统 ${os.versionName} 已发布` };
+}
+
+// ---------- 系统科技树：软件部人力驱动研发 ----------
+export function startOsTech(state, techId) {
+  const t = OS_TECH_MAP[techId];
+  if (!t) return { ok: false, msg: '未知系统技术' };
+  const ot = state.osTech;
+  if (ot.unlocked.includes(techId)) return { ok: false, msg: '已掌握该技术' };
+  if (ot.proj) return { ok: false, msg: '已有系统技术在研，请等待完工' };
+  if (t.year > state.date.year) return { ok: false, msg: `${t.name} 需要 ${t.year} 年及以后的技术环境` };
+  if (t.prereq.some((p2) => !ot.unlocked.includes(p2))) return { ok: false, msg: '前置技术未满足' };
+  if ((state.divisions?.osd?.level || 0) < 1) return { ok: false, msg: '需要先成立系统开发部' };
+  if (state.company.cash < t.cost) return { ok: false, msg: '资金不足' };
+  state.company.cash -= t.cost;
+  ot.proj = { id: techId, monthsLeft: t.months, monthsTotal: t.months, startedAt: { ...state.date } };
+  addLog(state, 'tech', `系统技术「${t.name}」立项（${t.months} 个月，软件部人力越强越快）`);
+  return { ok: true, msg: `系统技术「${t.name}」已立项` };
+}
+
+// 已掌握系统技术的加成汇总
+export function osTechBonuses(state) {
+  const out = { scoreBonus: 0, appsBonus: 0, popCap: 0, popGrowth: 0, licRate: 0 };
+  for (const id of (state.osTech && state.osTech.unlocked) || []) {
+    const t = OS_TECH_MAP[id];
+    if (!t || !t.effect) continue;
+    for (const [k, v] of Object.entries(t.effect)) out[k] = (out[k] || 0) + v;
+  }
+  return out;
 }
 
 export function toggleOsLicense(state) {
@@ -343,11 +378,12 @@ export function ownCmrSpec(state) {
 export function ownOsSpec(state) {
   const lv = state.divisions?.osd?.level || 0;
   if (lv < 1) return null;
+  const tb = osTechBonuses(state);
   const latest = state.divisions?.osd?.latest;
   if (latest && latest.ok) {
-    return { level: lv, scoreBonus: lv * 2 * latest.scoreMul, appsBonus: lv * 3 * latest.appsMul, baseName: latest.baseName, desc: latest.desc };
+    return { level: lv, scoreBonus: lv * 2 * latest.scoreMul + tb.scoreBonus, appsBonus: lv * 3 * latest.appsMul + tb.appsBonus, baseName: latest.baseName, desc: latest.desc };
   }
-  return { level: lv, scoreBonus: lv * 2, appsBonus: lv * 3 };
+  return { level: lv, scoreBonus: lv * 2 + tb.scoreBonus, appsBonus: lv * 3 + tb.appsBonus };
 }
 
 export function ownPanelSpec(state) {
@@ -419,6 +455,20 @@ export function stepDivisions(state, report) {
       supply += rate;
     }
   }
+  // 系统科技树研发推进：软件部人力驱动（硬件类走 rnd，这里走 sw）
+  const ot = state.osTech;
+  if (ot && ot.proj) {
+    const swPower = Math.max(0.3, staffPowerRef(state, 'sw'));
+    const rate = clamp(swPower * 8, 3, 25);
+    ot.proj.monthsLeft -= Math.max(0.3, rate / 12);
+    if (ot.proj.monthsLeft <= 0) {
+      const t = OS_TECH_MAP[ot.proj.id];
+      ot.unlocked.push(t.id);
+      ot.proj = null;
+      addLog(state, 'tech', `系统技术「${t.name}」研发完成！`);
+      if (report) report.notes.push(`系统技术「${t.name}」研发完成`);
+    }
+  }
   // OS 流行度：装机量（搭载自研 OS 的机型累计销量）驱动增长 + 自然遗忘
   const os = state.osPop;
   if (state.divisions.osd && state.divisions.osd.level > 0) {
@@ -431,15 +481,16 @@ export function stepDivisions(state, report) {
       if (usingOwn) install += p.lastSold || 0;
     }
     os.totalInstall += install;
-    const growth = install / 40000 + (osdLv - 1) * 0.05 + (os.licensed ? 0.25 : 0);
+    const tb = osTechBonuses(state);
+    const growth = (install / 40000 + (osdLv - 1) * 0.05 + (os.licensed ? 0.25 : 0)) * (1 + tb.popGrowth / 100);
     const decay = os.pop * 0.012;
     os.pop = clamp(os.pop + growth - decay, 0, 100);
-    // 流行度封顶受 OS 版本与部门等级影响
-    const cap = 12 + os.version * 14 + osdLv * 6;
+    // 流行度封顶受 OS 版本 / 部门等级 / 系统科技影响
+    const cap = 12 + os.version * 14 + osdLv * 6 + tb.popCap;
     if (os.pop > cap) os.pop = clamp(os.pop - (os.pop - cap) * 0.3, 0, 100);
     // 授权收入：流行度越高，越多家厂商付费
     if (os.licensed && os.pop > 8) {
-      const lic = Math.round(os.pop * 1e6 * (0.55 + osdLv * 0.14) * era);
+      const lic = Math.round(os.pop * 1e6 * (0.55 + osdLv * 0.14) * (1 + osTechBonuses(state).licRate / 100) * era);
       supply += lic;
       os.licIncome = lic;
     } else {

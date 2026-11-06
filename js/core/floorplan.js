@@ -26,7 +26,7 @@ export const MAX_SEATS_PER_DEPT = 12;        // 每部门内置工位上限（�
 export const ENTRANCE_RECT = { cx: 14, cy: FLOOR_H - 2, w: 4, h: 2 };
 export const ENTRANCE_CELL = { cx: ENTRANCE_RECT.cx + 1, cy: ENTRANCE_RECT.cy - 1 }; // 入口步行点（区北侧）
 
-const DEPT_IDS = DEPT_DEFS.slice(0, 9).map((d) => d.id);
+const DEPT_IDS = DEPT_DEFS.map((d) => d.id); // 全部职能部门（含 v1.2 新增软件部）
 export const DEPT_IDS_9 = DEPT_IDS;
 
 // ---------- 坐标换算 ----------
@@ -70,7 +70,7 @@ export function defaultRooms() {
   DEPT_IDS.forEach((id, i) => {
     rooms[id] = i < 5
       ? { cx: i * 6, cy: 2, w: 6, h: 6, door: { side: 'S', t: 2 } }
-      : { cx: 4 + (i - 5) * 6, cy: 14, w: 6, h: 6, door: { side: 'N', t: 2 } };
+      : { cx: 1 + (i - 5) * 6, cy: 14, w: 6, h: 6, door: { side: 'N', t: 2 } };
   });
   return rooms;
 }
@@ -86,6 +86,30 @@ export function migrateV1(old) {
   return normalizeLayout(layout);
 }
 
+// 老存档新增部门时补房间：避开已占房间与入口区，优先默认位
+function fitsAt(rooms, id, cx, cy, w, h) {
+  for (const [oid, r] of Object.entries(rooms)) {
+    if (oid === id || !r) continue;
+    if (cx < r.cx + r.w && r.cx < cx + w && cy < r.cy + r.h && r.cy < cy + h) return false;
+  }
+  return true;
+}
+function placeNewRoom(out, id) {
+  const def = defaultRooms()[id];
+  if (def && fitsAt(out.rooms, id, def.cx, def.cy, def.w, def.h)) { out.rooms[id] = { ...def }; autoDoor(out, id); return; }
+  const w = 4, h = 6;
+  const fb = { cx: FLOOR_W - w, cy: 14, w, h };
+  if (fitsAt(out.rooms, id, fb.cx, fb.cy, w, h)) { out.rooms[id] = { ...fb }; autoDoor(out, id); return; }
+  for (let cy = FLOOR_H - h; cy >= 0; cy--) {
+    for (let cx = 0; cx <= FLOOR_W - w; cx++) {
+      const inEnt = cx + w > ENTRANCE_RECT.cx && cx < ENTRANCE_RECT.cx + ENTRANCE_RECT.w
+        && cy + h > ENTRANCE_RECT.cy && cy < ENTRANCE_RECT.cy + ENTRANCE_RECT.h;
+      if (!inEnt && fitsAt(out.rooms, id, cx, cy, w, h)) { out.rooms[id] = { cx, cy, w, h }; autoDoor(out, id); return; }
+    }
+  }
+  out.rooms[id] = { ...def };
+}
+
 // sanitize 过滤：非法 type / 越界 / 坏 dept / 坏 door 全部剔除或修正
 export function normalizeLayout(layout) {
   const out = {
@@ -96,7 +120,7 @@ export function normalizeLayout(layout) {
   };
   for (const id of DEPT_IDS) {
     const r = out.rooms[id];
-    if (!r || !Number.isFinite(r.cx) || !Number.isFinite(r.cy)) { out.rooms[id] = defaultRooms()[id]; continue; }
+    if (!r || !Number.isFinite(r.cx) || !Number.isFinite(r.cy)) { placeNewRoom(out, id); continue; }
     r.w = Math.max(ROOM_MIN, Math.min(ROOM_MAX, Math.round(r.w) || 6));
     r.h = Math.max(ROOM_MIN, Math.min(ROOM_MAX, Math.round(r.h) || 6));
     r.cx = Math.max(0, Math.min(FLOOR_W - r.w, Math.round(r.cx) || 0));
