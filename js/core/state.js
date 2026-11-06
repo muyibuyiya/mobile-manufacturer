@@ -349,6 +349,11 @@ export function sanitizeState(s) {
     s.tech.all = s.mode === 'sandbox' && Array.isArray(s.tech.unlocked)
       && (TECHS.length === 0 || s.tech.unlocked.length >= TECHS.length);
   }
+  // 全解锁存档补齐：tech.all=true 时 unlocked 只是建档当时的全量科技，
+  // 之后版本新增的科技（新快充档/新材料等）不在其中会显示「未解锁」——每次加载都补齐到当前全量
+  if (s.tech.all && Array.isArray(s.tech.unlocked)) {
+    s.tech.unlocked = [...new Set([...s.tech.unlocked, ...TECHS.map((t) => t.id)])];
+  }
   // 配色方案库
   if (!Array.isArray(s.colorSchemes)) s.colorSchemes = [];
   // 旧档机型设计补齐第七轮外观字段（三区配色 / 侧键样式 / 顶底开孔）

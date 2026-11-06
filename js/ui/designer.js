@@ -3,6 +3,7 @@ import * as THREE from '../../vendor/three.module.js';
 import { derive, validate, bomCost, screenSize, SCREEN_ASPECTS, defaultDesign, maxScreenInch, cameraModuleRect, lensSpecs, ensureLenses, ensureBranding, speakerRowSpec, PORT_OPENINGS, layoutPos, makeLens } from '../core/design.js';
 import { CPUS, RAMS, STORAGES, SCREENS, CAMERAS, BATTERIES, SYSTEMS, EXTRAS, MATERIALS, FINISHES, CHARGERS, BODY_COLORS } from '../data/parts.js';
 import { IMAGE_SENSORS, LENS_TYPES, DECO_SHAPES, PANEL_VENDORS, RES_TIERS, lensTypeById, sensorById, lensRadiusMm } from '../data/hardware.js';
+import { TECHS } from '../data/tech.js';
 import { ownCpuSpec, ownCmrSpec, ownOsSpec, ownPanelSpec } from '../core/divisions.js';
 import { fmtNum, fmtMoney, clamp, esc } from '../core/util.js';
 import { suggestedPrice } from '../core/sim.js';
@@ -131,10 +132,11 @@ function lensGlassMaterial(look) {
 
 export function renderDesigner(container, state, model, hooks = {}) {
   const year = state.date.year;
-  const unlocked = state.tech.unlocked;
-  // 沙盒全解锁：元器件/传感器的年代门槛（x.year <= year）按「全部可用」处理，
+  // 沙盒全解锁：年代门槛（x.year <= year）按「全部可用」处理（availYear=9999），
+  // 科技解锁门槛（unlocked.includes(x.tech)）同样绕过——给全部科技 id；
   // 校验跳过年代合理性错误（validate opts.ignoreEra）
   const sandboxAll = state.mode === 'sandbox' && !!state.tech.all;
+  const unlocked = sandboxAll ? TECHS.map((t) => t.id) : state.tech.unlocked;
   const availYear = sandboxAll ? 9999 : year;
   const VOPT = sandboxAll ? { ignoreEra: true } : {};
   const orig = JSON.parse(JSON.stringify(model.design));
@@ -520,7 +522,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
       + section('extras', '附加功能', `
       <div class="grid" style="grid-template-columns:1fr 1fr;gap:5px">
         ${EXTRAS.map((x) => {
-          const ok = unlocked.includes(x.tech) && (x.year || 0) <= year;
+          const ok = unlocked.includes(x.tech) && (x.year || 0) <= availYear;
           const on = model.design.parts.extras.includes(x.id);
           return `<label class="opt ${on ? 'on' : ''} ${ok ? '' : 'disabled'}" style="text-align:left;padding:6px 8px;display:flex;gap:6px;align-items:center">
             <input type="checkbox" data-x="${x.id}" ${on ? 'checked' : ''} ${ok ? '' : 'disabled'} style="width:auto" />
@@ -1619,7 +1621,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
       lx = e.clientX; ly = e.clientY; dom.setPointerCapture(e.pointerId); dom.style.cursor = 'grabbing';
     });
     dom.addEventListener('pointerup', (e) => { dragging = false; panning = false; dom.style.cursor = 'grab'; });
-    dom.addEventListener('contextmenu', (e) => { if (dragging) e.preventDefault(); });
+    dom.addEventListener('contextmenu', (e) => e.preventDefault()); // 右键保留给平移，始终屏蔽浏览器菜单（pointerup 已把 dragging 置 false，不能按 dragging 判断）
     dom.addEventListener('pointermove', (e) => {
       if (!dragging) return;
       const dx = e.clientX - lx, dy = e.clientY - ly;
@@ -2872,7 +2874,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
       const c = d.camera;
       const n = c.lenses.length;
       const [x, y] = layoutPos(n, n + 1, c.layout || 'vertical', c.deco.w, c.deco.h);
-      c.lenses.push(makeLens(n === 0 ? 'main' : (n === 1 ? 'ultrawide' : (n === 2 ? 'tele' : 'depth')), year, unlocked, x, y, true));
+      c.lenses.push(makeLens(n === 0 ? 'main' : (n === 1 ? 'ultrawide' : (n === 2 ? 'tele' : 'depth')), availYear, unlocked, x, y, true));
       c.count = c.lenses.length;
       renderControls();
       renderAssessment();
