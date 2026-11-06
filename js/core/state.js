@@ -247,18 +247,24 @@ export function createGame(opts) {
 }
 
 export function makeCompetitors(year) {
-  return COMPETITORS.map((c) => {
+  const active = COMPETITORS.filter((c) => (c.foundedYear || 1980) <= year);
+  return active.map((c) => {
     const scale = 1 + (year - 2000) / 90;
+    const cashMul = c.cashMul || 1;
+    const isDeclining = c.declineYear && year >= c.declineYear;
     const comp = {
       ...c,
       name: c.nameZh || c.name,
       nameEn: c.nameEn || '',
       brand: Math.round(clamp(c.brand * (0.72 + (year - 1980) / 240), 20, 98)),
       techLevel: clamp(0.62 + (year - 1980) / 90 * 0.4, 0.5, 1.25) * c.tech,
-      cash: 2e8 * scale,
+      cash: 2e8 * scale * cashMul,
       lineup: [],
       lastRelease: 0,
       share: 0,
+      isDeclining: !!isDeclining,
+      declineYear: c.declineYear || null,
+      exitYear: c.exitYear || null,
     };
     // 开局即有两款在售机型，市场不是真空
     for (let i = 0; i < 2; i++) {
