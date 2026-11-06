@@ -285,6 +285,13 @@ export function renderDesigner(container, state, model, hooks = {}) {
         </select>
       </label>
       ${d.screen.notch === 'punch' && !d.parts.extras.includes('x_udc') ? sliderRow('挖孔位置（0=居中，折叠机默认右半屏）', 'screen.holeX', d.screen.holeX ?? (d.body.fold !== 'none' ? 25 : 0), -45, 45, 1, '%') : ''}
+      ${d.body.fold && d.body.fold !== 'none' ? `<label class="field"><span>折叠盖板（技术路线）</span>
+        <select data-k="parts.foldGlass">
+          <option value="" ${!d.parts.foldGlass ? 'selected' : ''}>未指定（常规工艺，无加成）</option>
+          ${unlocked.includes('fold_cpi') ? `<option value="cpi" ${d.parts.foldGlass === 'cpi' ? 'selected' : ''}>CPI 聚合物盖板（评分 +1 · 成本 +¥35）</option>` : ''}
+          ${unlocked.includes('fold_utg') ? `<option value="utg" ${d.parts.foldGlass === 'utg' ? 'selected' : ''}>UTG 超薄玻璃（评分 +3 · 成本 +¥110）</option>` : ''}
+        </select>
+      </label>` : ''}
       <label class="field"><span>屏幕面板</span>
         <select data-k="screen.panel">
           ${panelOptions(d)}

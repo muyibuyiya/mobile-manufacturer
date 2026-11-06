@@ -514,7 +514,10 @@ function rawBom(design) {
   if (ports.micStyle && ports.micStyle !== 'hole') {
     mechanical += 3 + ((ports.micStyle === 'slot2' || ports.micStyle === 'slot3') ? 2 : 0);
   }
-  return Math.round(parts + extras + mechanical);
+  // 折叠盖板：UTG 玻璃贵、CPI 便宜
+  const foldGlassCost = design.body.fold && design.body.fold !== 'none'
+    ? (design.parts.foldGlass === 'utg' ? 110 : design.parts.foldGlass === 'cpi' ? 35 : 0) : 0;
+  return Math.round(parts + extras + mechanical + foldGlassCost);
 }
 
 export function derive(design, year, opts = {}) {
@@ -567,7 +570,10 @@ export function derive(design, year, opts = {}) {
     materialScore * 0.12 + finishBonus + resFit * 0.16 + Math.min(5, (hz - 60) * 0.05), 0, 100);
   const eraFit = techEraFit(design, year, opts);
 
-  const designScore = clamp(craft * 0.78 + eraFit * 0.22, 0, 100);
+  // 折叠盖板技术路线：UTG 折痕更浅（+3 分），CPI 经济之选（+1 分），未指定不加分
+  const foldGlassBonus = design.body.fold && design.body.fold !== 'none'
+    ? (design.parts.foldGlass === 'utg' ? 3 : design.parts.foldGlass === 'cpi' ? 1 : 0) : 0;
+  const designScore = clamp(craft * 0.78 + eraFit * 0.22 + foldGlassBonus, 0, 100);
 
   // 逐镜重量：传感器格式越大越重；厚度取最厚镜头（潜望更高）
   let camWeight = 0, camThick = 0;

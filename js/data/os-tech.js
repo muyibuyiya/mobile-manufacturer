@@ -51,3 +51,11 @@ export function osTechState(t, year, unlocked, proj) {
   if (t.prereq.some((p) => !unlocked.includes(p))) return 'locked';
   return 'ready';
 }
+
+// ---------- 系统路线（三选一，互斥不可更换）：OS 光谱分化 ----------
+export const OS_ROUTES = [
+  { id: 'light', name: '轻量内核', year: 2010, cost: 60000000, osdLv: 2, effect: { scoreBonus: 3, popGrowth: 12 }, desc: '小而美：极致流畅省电，系统科技研发速度 +15%。' },
+  { id: 'full', name: '全场景 OS', year: 2015, cost: 140000000, osdLv: 3, effect: { popCap: 12, licRate: 15 }, desc: '手机/平板/穿戴统一生态：流行度上限 +12、授权收入 +15%。' },
+  { id: 'ai', name: 'AI 原生系统', year: 2020, cost: 240000000, osdLv: 4, effect: { appsBonus: 6, scoreBonus: 4 }, desc: '系统级 AI 底座：应用生态 +6、评分 +4。' },
+];
+export const OS_ROUTE_MAP = Object.fromEntries(OS_ROUTES.map((r) => [r.id, r]));

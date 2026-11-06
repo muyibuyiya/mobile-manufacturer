@@ -2,6 +2,7 @@
 import {
   tick, marketShare, suggestedPrice, unitCost, capacityOf, FOUNDRIES, factoryCapacity,
   startResearch, researchBudget, avgShare, bomUnit, assemblyUnit, ownFactoryCount,
+  suggestTargets, techOffers, buyTech,
 } from '../core/sim.js';
 import {
   saveGame, loadGame, saveSlots, deleteSave, staffPower, deptCost, generateEmployee,
@@ -15,8 +16,8 @@ import { openScreenDesign } from './screendesign.js';
 import { openPosterStudio } from './poster.js';
 import { TECHS, TECH_MAP, TECH_CATS, techState } from '../data/tech.js';
 import { MARKETS, MARKET_MAP, COUNTRIES, eraFactor, expectedPrice, SEGMENTS, SEGMENT_MAP, LINEUPS, LINEUP_MAP, marketMix, suggestModelName } from '../data/world.js';
-import { DIVISION_DEFS, DIVISION_IDS, buildDivision, startUpgrade, upgradeCost, computeCustomSpec, ownCpuSpec, ownCmrSpec, ownOsSpec, ownPanelSpec, releaseOsVersion, toggleOsLicense, osReleaseCost, startOsTech, osTechBonuses } from '../core/divisions.js';
-import { OS_TECHS, OS_TECH_BRANCHES, osTechState } from '../data/os-tech.js';
+import { DIVISION_DEFS, DIVISION_IDS, buildDivision, startUpgrade, upgradeCost, computeCustomSpec, ownCpuSpec, ownCmrSpec, ownOsSpec, ownPanelSpec, releaseOsVersion, toggleOsLicense, osReleaseCost, startOsTech, osTechBonuses, chooseOsRoute } from '../core/divisions.js';
+import { OS_TECHS, OS_TECH_BRANCHES, osTechState, OS_ROUTES } from '../data/os-tech.js';
 import { CPU_CORES, GPU_ARCHS, OS_BASES, RES_TIERS, LENS_TYPES } from '../data/hardware.js';
 import { MILESTONES, milestoneProgress } from '../core/milestones.js';
 import {
@@ -43,9 +44,10 @@ import {
   ensureCapital, valuationOf, raiseRound, raiseLimit, founderPct, ipoRequirements, canIPO,
   listIPO, marketCap, acquisitionCost, acquire, annualRevenue, annualProfit,
   openNegotiation, negotiateOffer, walkAway, foundSubsidiary, sellSubsidiary, SUB_POSITIONS,
+  acceptSubTech, declineSubTech, acceptSubEmployee, declineSubEmployee,
 } from '../core/capital.js';
 import { computeReview, defectRate } from '../core/reviews.js';
-import { channelTotal, channelSummary, setChannel } from '../core/marketing.js';
+import { channelTotal, channelSummary, setChannel, SALES_CHANNELS, ensureSalesChannels, channelInvest, channelSalesMul } from '../core/marketing.js';
 import { WARRANTY_POLICIES, warrantyOf, setWarrantyPolicy } from '../core/aftermarket.js';
 import { advanceGuide, skipGuide, restartGuide, GUIDE_STEPS, advanceHints, markHint } from '../core/guide.js';
 import { industryRating } from '../core/rating.js';
@@ -607,6 +609,48 @@ export function renderGame(root, state, opts = {}) {
         break;
       }
       case 'emp-filter': empFilter = ds.v; render(); break;
+      case 'channel-invest': {
+        const r = channelInvest(state, ds.id);
+        opts.onToast?.(r.msg, r.ok ? 'good' : 'bad');
+        if (r.ok) sfx('good');
+        render();
+        break;
+      }
+      case 'auto-production': {
+        const sug = suggestTargets(state);
+        let changed = 0;
+        for (const t of sug.targets) {
+          const m = state.models.find((x) => x.id === t.id);
+          if (m && m.productionTarget !== t.to) { m.productionTarget = t.to; changed++; }
+        }
+        if (sug.qualityRisk && changed) {
+          for (const m of state.models) if (m.status === 'production') m.quality = clamp((m.quality ?? 65) - 1.5, 5, 100);
+          opts.onToast?.(`已按销量匹配 ${changed} 款机型排产（生产部人力不足，品质小幅波动）`, 'warn');
+        } else {
+          opts.onToast?.(`已按上月销量与热度匹配 ${changed} 款机型排产`, 'good');
+        }
+        if (changed) { addLog(state, 'product', `智能排产：${changed} 款机型按销量匹配调整。`); sfx('good'); }
+        render();
+        break;
+      }
+      case 'buy-tech': {
+        const r = buyTech(state, ds.id);
+        opts.onToast?.(r.msg, r.ok ? 'good' : 'bad');
+        if (r.ok) sfx('good');
+        render();
+        break;
+      }
+      case 'os-route': {
+        const r = chooseOsRoute(state, ds.id);
+        opts.onToast?.(r.msg, r.ok ? 'good' : 'bad');
+        if (r.ok) sfx('build');
+        render();
+        break;
+      }
+      case 'sub-tech-yes': { const r = acceptSubTech(state); opts.onToast?.(r.msg, r.ok ? 'good' : 'bad'); if (r.ok) sfx('good'); render(); break; }
+      case 'sub-tech-no': { const r = declineSubTech(state); opts.onToast?.(r.msg, ''); render(); break; }
+      case 'sub-emp-yes': { const r = acceptSubEmployee(state); opts.onToast?.(r.msg, r.ok ? 'good' : 'bad'); if (r.ok) sfx('good'); render(); break; }
+      case 'sub-emp-no': { const r = declineSubEmployee(state); opts.onToast?.(r.msg, ''); render(); break; }
       case 'os-license': {
         const r = toggleOsLicense(state);
         opts.onToast?.(r.msg, r.ok ? 'good' : 'bad');
@@ -1171,7 +1215,13 @@ export function renderGame(root, state, opts = {}) {
         `<button class="btn primary small" data-act="open-lineup">+ 新建机型</button>`)}
       ${lineOverview}
       ${models.length ? `<div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(320px,1fr))">
-        ${models.map((m) => {
+        ${(() => {
+          const serOf = (mm) => mm.series || String(mm.name || '').trim().split(/\s+/)[0] || '其他';
+          const firstIdx = new Map();
+          models.forEach((mm, ii) => { const s2 = serOf(mm); if (!firstIdx.has(s2)) firstIdx.set(s2, ii); });
+          const multi = new Set(models.map(serOf)).size > 1;
+          return models.map((m, gi) => {
+            const ser = serOf(m);
           const d = derive(m.design, state.date.year);
           const v = validate(m.design, state.date.year,
             (state.mode === 'sandbox' && state.tech.all) ? { ignoreEra: true } : {});
@@ -1179,7 +1229,8 @@ export function renderGame(root, state, opts = {}) {
           const st = statusMap[m.status] || ['未知', ''];
           const bw = 58, bh = Math.round(clamp(58 * (m.design.body.length / m.design.body.width), 96, 150));
           const camOn = (CAMERAS.find((c) => c.id === m.design.camera.part) || {}).mp > 0;
-          return `<div class="card">
+          return `${firstIdx.get(ser) === gi && multi ? `<div class="card" style="grid-column:1/-1;padding:7px 12px;background:rgba(74,163,255,.05);border-color:rgba(143,208,255,.25)"><b class="tiny" style="color:#8fd0ff">系列 · ${esc(ser)}</b><span class="tiny dim" style="margin-left:8px">${models.filter((mm) => serOf(mm) === ser).length} 款机型</span></div>` : ''}
+            <div class="card">
             <div class="row" style="gap:12px;align-items:flex-start;margin-bottom:10px">
               <img class="phone-thumb" alt="外观" src="${phoneFrontDataUrl(m.design, bw)}" style="width:${bw}px;height:${bh}px;object-fit:cover;border-radius:12px;background:#0b0f15;border:1px solid rgba(255,255,255,.08)" />
               <div style="flex:1;min-width:0">
@@ -1208,7 +1259,8 @@ export function renderGame(root, state, opts = {}) {
               <div class="between"><span class="dim">建议零售</span><b>¥${fmtNum(m.price.cn || suggestedPrice(state, m, 'cn'))}</b></div>
               ${m.status === 'production' ? `<div class="between"><span class="dim">上月销量 / 库存</span><b>${fmtNum(m.lastSold || 0)} / ${fmtNum(m.inventory)}</b></div>` : ''}
               ${m.status === 'production' ? `<div class="between"><span class="dim">产品热度</span>
-                <div class="bar" style="width:52%;height:8px"><div style="width:${m.heat === undefined ? 100 : Math.round(m.heat)}%;height:100%;background:${(m.heat === undefined ? 100 : m.heat) > 60 ? '#37c9a5' : (m.heat === undefined ? 100 : m.heat) > 30 ? '#f5a542' : '#f56b6b'}"></div></div>
+                <div class="bar" style="width:42%;height:8px"><div style="width:${m.heat === undefined ? 100 : Math.round(m.heat)}%;height:100%;background:${(m.heat === undefined ? 100 : m.heat) > 60 ? '#37c9a5' : (m.heat === undefined ? 100 : m.heat) > 30 ? '#f5a542' : '#f56b6b'}"></div></div>
+                ${(() => { const h = m.heat === undefined ? 100 : m.heat; const st = h >= 78 ? '上市爆发' : h >= 55 ? '高峰期' : h >= 35 ? '稳定期' : h >= 20 ? '衰退期' : '过时清仓'; const col = h > 55 ? '#37c9a5' : h > 30 ? '#f5a542' : '#f56b6b'; return `<span class="chip" style="border-color:${col}55;color:${col}">${st}</span>`; })()}
                 <b class="mono tiny">${Math.round(m.heat === undefined ? 100 : m.heat)}</b></div>` : ''}
               ${(m.design?.variants || []).length ? `<div class="between" style="align-items:flex-start"><span class="dim">配置版本</span><span class="tiny" style="text-align:right;line-height:1.7">${m.design.variants.map((v) => {
                 const r = RAMS.find((x) => x.id === v.ram), st = STORAGES.find((x) => x.id === v.stg);
@@ -1234,7 +1286,8 @@ export function renderGame(root, state, opts = {}) {
               ${m.status === 'draft' ? `<button class="btn small ghost danger" data-act="delete-model" data-id="${m.id}">删除</button>` : ''}
             </div>
           </div>`;
-        }).join('')}
+        }).join('');
+        })()}
       </div>` : `<div class="card"><div class="empty">
         还没有任何机型。<br/>
         设计系统支持：机身尺寸 / 屏幕 / 摄像头 / 材质 / 部件配置 / 内部空间校验。<br/><br/>
@@ -1258,6 +1311,19 @@ export function renderGame(root, state, opts = {}) {
           <span>累计投入 ${fmtMoney(r.spent)}</span>
         </div>
       </div>` : ''}
+      <div class="card" style="margin-bottom:12px">
+        <div class="card-title">技术引进 <span class="right">直接购买竞品成熟技术 · 立即到手 · 价格高于自研</span></div>
+        ${(() => {
+          const offs = techOffers(state);
+          if (!offs.length) return '<div class="tiny dim">当前没有可引进的技术（都已掌握或前置未满足）。</div>';
+          return offs.map((o) => `
+            <div class="between" style="padding:7px 0;border-bottom:1px solid rgba(255,255,255,.06);gap:10px">
+              <div style="min-width:0"><b class="tiny">${o.name}</b> <span class="tiny dim">${o.year} 年 · ${o.seller} 出售</span>
+                <div class="tiny dim">${o.desc}</div></div>
+              <button class="btn small" data-act="buy-tech" data-id="${o.techId}" ${state.company.cash < o.price ? 'disabled' : ''}>引进（${fmtMoney(o.price)}）</button>
+            </div>`).join('');
+        })()}
+      </div>
       <div class="kpi-row">
         <div class="kpi"><div class="k">已掌握技术</div><div class="v">${state.tech.unlocked.length}<span class="tiny dim"> / ${TECHS.length}</span></div></div>
         <div class="kpi"><div class="k">研发人力</div><div class="v">${staffPower(state, 'rnd').toFixed(1)}</div><div class="d dim">${state.employees.filter((e) => e.deptId === 'rnd').length} 人</div></div>
@@ -1280,7 +1346,7 @@ export function renderGame(root, state, opts = {}) {
           <div class="tech-grid">
             ${TECHS.filter((x) => x.cat === cat.id).map((x) => {
               const st = techState(x, state.date.year, state.tech.unlocked, state.tech.researching);
-              const label = { done: '已掌握', doing: '研发中', future: `${x.year} 年`, locked: '需前置', ready: `研发 ${fmtMoney(x.cost)}` }[st];
+              const label = { done: '已掌握', doing: '研发中', future: `${x.year} 年`, locked: '需前置', route: '已选另一路线', ready: `研发 ${fmtMoney(x.cost)}` }[st];
               return `<div class="tech-node ${st}" ${st === 'ready' ? `data-act="research" data-id="${x.id}"` : ''}>
                 <div class="tname">${x.name}</div>
                 <div class="tmeta"><span>${x.year}</span><span>${label}</span></div>
@@ -1314,7 +1380,8 @@ export function renderGame(root, state, opts = {}) {
     const spotCost = lastReport?.spotCost || 0;
     return `
       ${head('生产供应链', `当前产能 ${fmtUnit(cap)}（${state.production.mode === 'own' ? '自建产线' : '委托代工'}）· 已排产 ${fmtUnit(used)}`,
-        `<button class="btn small" data-act="goto" data-tab="hq">园区与产线</button>`)}
+        `<button class="btn small primary" data-act="auto-production">智能匹配排产</button>
+         <button class="btn small" data-act="goto" data-tab="hq">园区与产线</button>`)}
       <div class="kpi-row">
         <div class="kpi"><div class="k">自有产能</div><div class="v">${fmtUnit(factoryCapacity(state))}</div><div class="d dim">${ownFactoryCount(state)} 座生产基地</div></div>
         <div class="kpi"><div class="k">元器件覆盖</div><div class="v ${health.tone}">${fmtUnit(cover.units)}</div><div class="d dim">${health.label}${cover.bottleneck ? ` · 瓶颈 ${COMPONENT_MAP[cover.bottleneck].name}` : ''}</div></div>
@@ -1469,6 +1536,26 @@ export function renderGame(root, state, opts = {}) {
       ${head('市场与销售', `全球份额 ${(totalShare * 100).toFixed(2)}% · ${models.length} 款在售`,
         `<button class="btn small" data-act="goto" data-tab="rivals">竞争格局</button>
          <button class="btn small primary" data-act="open-stage" data-model="${models[0] ? models[0].id : ''}" ${models.length ? '' : 'disabled'}>举办发布会（¥500万）</button>`)}
+      <div class="card" style="margin-bottom:12px">
+        <div class="card-title">渠道关系 <span class="right">三渠道平均关系影响全局销量 ×${channelSalesMul(state).toFixed(2)} · 每月自然滑落</span></div>
+        <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px">
+          ${SALES_CHANNELS.map((c) => {
+            const sc = ensureSalesChannels(state)[c.id];
+            const rel = Math.round(sc.rel);
+            const col = rel > 70 ? '#37c9a5' : rel > 40 ? '#f5a542' : '#f56b6b';
+            const cost = Math.round(600000 * (1 + rel / 40));
+            return `<div class="org-exec filled" style="border-color:${col}44">
+              <div class="between"><b>${c.name}</b><span class="chip" style="border-color:${col}66;color:${col}">${rel >= 78 ? '推广位中' : rel <= 22 ? '有下架风险' : `关系 ${rel}`}</span></div>
+              <div class="tiny dim" style="margin:4px 0 6px">${c.desc}</div>
+              <div class="bar" style="height:8px"><div style="width:${rel}%;height:100%;background:${col}"></div></div>
+              <div class="row" style="gap:6px;margin-top:8px">
+                <button class="btn small" data-act="channel-invest" data-id="${c.id}" ${state.company.cash < cost ? 'disabled' : ''}>关系投入（${fmtMoney(cost)}）</button>
+              </div>
+            </div>`;
+          }).join('')}
+        </div>
+        <div class="tiny dim" style="margin-top:6px">关系 &lt;22 有下架/曝光下滑风险，&gt;78 渠道会安排推广位（品牌 +）。投入费用随关系升高而变贵。</div>
+      </div>
       ${state.hype && state.hype.months > 0 ? `<div class="card" style="margin-bottom:12px;border-color:rgba(74,163,255,.4)">
         <div class="between"><b>新品热度期</b><span class="chip accent">全市场需求 +${Math.round((state.hype.mul - 1) * 100)}%</span></div>
         <div class="tiny dim" style="margin-top:5px">发布会带来的媒体关注还会持续 ${state.hype.months} 个月。</div>
@@ -1583,6 +1670,20 @@ export function renderGame(root, state, opts = {}) {
         <div class="card-title">系统科技树 <span class="right">系统开发部专属技术路线 · 软件部人力驱动研发</span></div>
         <div class="tiny dim" style="margin-bottom:8px">当前加成：评分 +${tb.scoreBonus} · 生态 +${tb.appsBonus} · 流行度上限 +${tb.popCap} · 流行度增速 +${tb.popGrowth}% · 授权收入 +${tb.licRate}%</div>
         ${ot.proj ? `<div class="tiny" style="color:#8fd0ff;margin-bottom:6px">🔧 「${esc(OS_TECHS.find((t) => t.id === ot.proj.id)?.name || '')}」研发中 — 预计还需 ${Math.max(1, Math.ceil(ot.proj.monthsLeft))} 个月</div>` : ''}
+        <div class="tiny" style="margin:8px 0 4px"><b>系统路线</b> <span class="tiny dim">三选一 · 互斥不可更换 · 选定即长期生效</span></div>
+        <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px;margin-bottom:10px">
+          ${OS_ROUTES.map((r) => {
+            const chosen = (state.osTech && state.osTech.route) === r.id;
+            const taken = !!(state.osTech && state.osTech.route) && !chosen;
+            const okYear = r.year <= state.date.year;
+            const okLv = (state.divisions?.osd?.level || 0) >= r.osdLv;
+            const canGo = !chosen && !taken && okYear && okLv;
+            return `<div class="tech-node ${chosen ? 'done' : taken ? 'locked' : canGo ? 'ready' : 'future'}" ${canGo ? `data-act="os-route" data-id="${r.id}" title="${esc(r.desc)}"` : `title="${esc(r.desc)}"`}>
+              <div class="tname">${r.name}${chosen ? ' ✓' : ''}</div>
+              <div class="tmeta"><span>${r.year} 年 · 系统部 Lv.${r.osdLv}</span><span>${chosen ? '当前路线' : taken ? '互斥锁定' : canGo ? `选定 ${fmtMoney(r.cost)}` : `${r.year} 年 / Lv.${r.osdLv}`}</span></div>
+            </div>`;
+          }).join('')}
+        </div>
         ${OS_TECH_BRANCHES.map((br) => `
           <div class="tech-cat">
             <h3><span style="width:8px;height:8px;border-radius:2px;background:${br.color};display:inline-block"></span>${br.name}</h3>
@@ -1761,7 +1862,7 @@ export function renderGame(root, state, opts = {}) {
                   const rk = rankOf(e.skill);
                   return `
                   <tr>
-                    <td><b>${esc(e.name)}</b><div class="tiny dim">${e.age}岁 · ${e.edu} · ${e.field}</div></td>
+                    <td>${e.star ? '<span title="行业明星：产出 +12%，品牌 +，注意被挖角">⭐</span> ' : ''}<b>${esc(e.name)}</b><div class="tiny dim">${e.age}岁 · ${e.edu} · ${e.field}</div></td>
                     <td>
                       <select data-field="emp-dept" data-id="${e.id}" style="padding:3px 4px;font-size:11.5px">
                         <option value="">待分配</option>
@@ -2023,6 +2124,14 @@ export function renderGame(root, state, opts = {}) {
                 <span class="chip">${sub.source === 'acquired' ? '收购' : '自创'}</span></div>
               <div class="tiny dim" style="margin:4px 0">${sub.nameEn || ''} · 品牌力 ${sub.brand.toFixed(0)} · 在售 ${(sub.lineup || []).length} 款</div>
               <div class="between tiny"><span class="dim">上月利润上缴</span><b class="mono good">+${fmtMoney(sub.lastProfit || 0)}</b></div>
+              ${state.subTechOffer && state.subTechOffer.subId === sub.id ? `<div class="tiny" style="margin-top:6px;padding:6px 8px;background:rgba(74,163,255,.08);border-radius:6px">
+                <b>技术转让要约</b>：「${esc(state.subTechOffer.techName)}」· ${fmtMoney(state.subTechOffer.price)}（剩 ${state.subTechOffer.months} 月）
+                <div class="row" style="gap:6px;margin-top:4px"><button class="btn tiny primary" data-act="sub-tech-yes">接受</button><button class="btn tiny ghost" data-act="sub-tech-no">婉拒</button></div>
+              </div>` : ''}
+              ${state.subEmployeeOffer && state.subEmployeeOffer.subId === sub.id ? `<div class="tiny" style="margin-top:6px;padding:6px 8px;background:rgba(55,201,165,.08);border-radius:6px">
+                <b>员工推荐</b>：${esc(state.subEmployeeOffer.emp.name)}（${state.subEmployeeOffer.emp.role} · 能力 ${state.subEmployeeOffer.emp.skill}）免入职费入职（剩 ${state.subEmployeeOffer.months} 月）
+                <div class="row" style="gap:6px;margin-top:4px"><button class="btn tiny primary" data-act="sub-emp-yes">接受</button><button class="btn tiny ghost" data-act="sub-emp-no">婉拒</button></div>
+              </div>` : ''}
               <div class="row" style="gap:6px;margin-top:7px">
                 <button class="btn small ghost" data-act="sell-sub" data-id="${sub.id}">出售（约 ${(0.5 + Math.pow(Math.max(sub.brand, 8), 1.6) * 1e-5).toFixed(1)} 亿）</button>
               </div>

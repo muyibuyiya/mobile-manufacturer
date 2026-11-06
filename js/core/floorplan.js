@@ -13,7 +13,7 @@
 import { DEPT_DEFS } from '../data/depts.js';
 
 export const CELL = 4;                       // 网格边长（世界单位）
-export const FLOOR_W = 32;                   // 楼层宽（格）= 128 世界单位
+export const FLOOR_W = 36;                   // 楼层宽（格）= 144 世界单位（v1.3 由 32 加宽，容纳第 10 部门并保留双侧环路）
 export const FLOOR_H = 22;                   // 楼层深（格）= 88 世界单位
 export const FLOOR_X = FLOOR_W * CELL;       // 128
 export const FLOOR_Z = FLOOR_H * CELL;       // 88
@@ -23,7 +23,7 @@ export const WALL_H = 7.2;
 export const MAX_SEATS_PER_DEPT = 12;        // 每部门内置工位上限（与旧版一致，超出共用工位）
 
 // 入口区（南中 4×2 格）：不可建造，员工进出通道
-export const ENTRANCE_RECT = { cx: 14, cy: FLOOR_H - 2, w: 4, h: 2 };
+export const ENTRANCE_RECT = { cx: 16, cy: FLOOR_H - 2, w: 4, h: 2 };
 export const ENTRANCE_CELL = { cx: ENTRANCE_RECT.cx + 1, cy: ENTRANCE_RECT.cy - 1 }; // 入口步行点（区北侧）
 
 const DEPT_IDS = DEPT_DEFS.map((d) => d.id); // 全部职能部门（含 v1.2 新增软件部）
@@ -68,9 +68,12 @@ const inFloor = (cx, cy) => cx >= 0 && cy >= 0 && cx < FLOOR_W && cy < FLOOR_H;
 export function defaultRooms() {
   const rooms = {};
   DEPT_IDS.forEach((id, i) => {
-    rooms[id] = i < 5
-      ? { cx: i * 6, cy: 2, w: 6, h: 6, door: { side: 'S', t: 2 } }
-      : { cx: 1 + (i - 5) * 6, cy: 14, w: 6, h: 6, door: { side: 'N', t: 2 } };
+    // 软件部（第 10 间）放东南 6×6：楼宽 36 后南排 4 间(4..27) + sw(28..33)，右侧仍留 2 格环廊
+    rooms[id] = id === 'sw'
+      ? { cx: 28, cy: 14, w: 6, h: 6, door: { side: 'N', t: 2 } }
+      : i < 5
+        ? { cx: i * 6, cy: 2, w: 6, h: 6, door: { side: 'S', t: 2 } }
+        : { cx: 4 + (i - 5) * 6, cy: 14, w: 6, h: 6, door: { side: 'N', t: 2 } };
   });
   return rooms;
 }

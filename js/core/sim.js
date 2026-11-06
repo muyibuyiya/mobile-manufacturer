@@ -12,7 +12,7 @@ import { stepTraining } from './staff.js';
 import { stepPolicies, policyMul, policyAdd, ensurePolicies, triggerPolicy } from './policy.js';
 import { stepDivisions } from './divisions.js';
 import { overseasUpkeep, ensureOverseas } from './overseas.js';
-import { stepMarketing, channelTotal, ensureMarketing } from './marketing.js';
+import { stepMarketing, channelTotal, ensureMarketing, stepChannels, channelSalesMul } from './marketing.js';
 import { warrantyCost, warrantyRatingAdd, returnsCutOf, ensureWarranty } from './aftermarket.js';
 import { stepSubsidiaries, ensureSubsidiaries } from './capital.js';
 import { marketShare as layeredShare, utilityFor, marketPotential, salesScores } from './market.js';
@@ -180,6 +180,7 @@ export function tick(state) {
   // 营销费 = 各媒体渠道投放之和（渠道细分版）
   const marketing = channelTotal(state);
   // 子公司利润上缴
+  stepChannels(state, report);
   const subIncome = stepSubsidiaries(state, report);
   const rnd = report.rnd;
   // 财务部专注度与 CFO 席位影响融资成本
@@ -391,7 +392,7 @@ function stepSales(state, report) {
   for (const c of state.competitors) { c.lastSold = 0; c.revenueEst = 0; delete c._launchedNoted; }
   for (const p of state.models) p.lastSold = 0; // 上月销量按月度重置，不能累计
   const hypeMul = state.hype && state.hype.months > 0 ? state.hype.mul : 1;
-  const demandMul = activeMul(state, 'demandMul') * policyMul(state, 'demandMul') * hypeMul;
+  const demandMul = activeMul(state, 'demandMul') * policyMul(state, 'demandMul') * hypeMul * channelSalesMul(state);
   for (const market of state.markets) {
     const shareInfo = marketShare(state, market.id);
     const potential = marketPotential(state, market, demandMul);
@@ -515,6 +516,15 @@ function stepBrand(state, report, extraBrand = 0) {
   report.brand = Math.round(state.company.brand);
 }
 
+const LIFE_EVENTS = [
+  { text: '{n} 过生日，团队一起庆祝，满意度 +4。', fx: (e) => { e.satisfaction = clamp(e.satisfaction + 4, 0, 100); } },
+  { text: '{n} 休完婚假归来，满意度 +6，薪资期望 +5%。', fx: (e) => { e.satisfaction = clamp(e.satisfaction + 6, 0, 100); e.expectSalary = Math.round(e.expectSalary * 1.05 / 100) * 100; } },
+  { text: '{n} 因健康问题请假两周，压力有所缓解。', fx: (e) => { e.stress = clamp(e.stress - 6, 0, 100); e.satisfaction = clamp(e.satisfaction - 2, 0, 100); } },
+  { text: '{n} 最近家庭事务缠身，压力 +8。', fx: (e) => { e.stress = clamp(e.stress + 8, 0, 100); } },
+  { text: '{n} 与同事发生争执，效率暂降 1 点。', fx: (e) => { e.eff = clamp(e.eff - 1, 10, 100); } },
+  { text: '{n} 自费参加了行业研讨会，能力 +0.4。', fx: (e) => { e.skill = clamp(e.skill + 0.4, 1, 99); } },
+];
+
 function stepEmployees(state, report) {
   const diff = DIFFICULTY[state.company.difficulty] || DIFFICULTY.normal;
   const country = COUNTRIES.find((c) => c.id === state.company.country) || COUNTRIES[0];
@@ -540,6 +550,30 @@ function stepEmployees(state, report) {
       e.expectSalary = Math.round(e.salary * 1.12 / 100) * 100;
       report.notes.push(`${e.name} 提出加薪，期望 ${fmtMoney(e.expectSalary)}/月。`);
     }
+    // ---- 明星员工：高能力+高满意度员工成名（品牌影响力+部门产出+，但被挖风险大）----
+    if (!e.star && e.skill >= 85 && e.satisfaction > 62 && chance(0.05)) {
+      e.star = true;
+      report.notes.push(`${e.name} 已成为行业明星${e.role}，品牌影响力上升，但被挖角风险加大。`);
+      addLog(state, 'hr', `${e.name} 成为行业明星。`);
+      state.news = state.news || [];
+      state.news.unshift({ time: `${state.date.year}/${state.date.month + 1}`, type: 'star', title: `${e.name} 成为行业明星`, text: `${e.role} · 能力 ${Math.round(e.skill)}。部门产出 +12%，品牌 +，注意加薪留人。`, read: false });
+      if (state.news.length > 100) state.news.length = 100;
+    }
+    if (e.star) {
+      state.company.brand = clamp(state.company.brand + 0.06, 0, 100);
+      // 明星被挖：薪酬没给够时风险显著
+      if (payRatio < 1.15 && chance(0.012)) {
+        leaving.push(e);
+        report.notes.push(`明星员工 ${e.name} 被对手高薪挖走！`);
+        addLog(state, 'hr', `明星员工 ${e.name} 离职。`);
+      }
+    }
+    // ---- 员工个人小事件：让名册有"人味" ----
+    if (chance(0.02) && !leaving.includes(e)) {
+      const ev = LIFE_EVENTS[Math.floor(Math.random() * LIFE_EVENTS.length)];
+      ev.fx(e);
+      report.notes.push(ev.text.replace('{n}', e.name));
+    }
   }
   for (const e of leaving) {
     state.employees = state.employees.filter((x) => x.id !== e.id);
@@ -553,6 +587,11 @@ function stepEmployees(state, report) {
 
 function stepCompetitors(state, report) {
   const yr = state.date.year;
+  const pushNews = (title, text) => {
+    state.news = state.news || [];
+    state.news.unshift({ time: `${yr}/${state.date.month + 1}`, type: 'attack', title, text, read: false });
+    if (state.news.length > 100) state.news.length = 100;
+  };
   // 新竞品入场
   const activeIds = new Set(state.competitors.map((c) => c.id));
   for (const def of COMPETITORS) {
@@ -647,17 +686,20 @@ function stepCompetitors(state, report) {
         for (const p of c.lineup) p.price = Math.round(p.price * rand(0.8, 0.88));
         addLog(state, 'rival', `${c.name} 发起价格战：全系机型直降，正面刚 ${state.company.name}。`);
         report.notes.push(`${c.name} 发起价格战，同价位机型竞争加剧。`);
+        pushNews(`${c.name} 发起价格战`, '对方全系直降，同价位机型竞争加剧，考虑跟进降价或强调差异点。');
         c.brand = clamp(c.brand + 1.5, 10, 99);
       } else if (c.style === 'ecosystem' || c.style === 'tech') {
         // 技术流提前亮旗舰：研发周期清零直接发新机
         c.lastRelease = cycle;
         addLog(state, 'rival', `${c.name} 宣布提前举行发布会，被解读为针对 ${state.company.name} 的势头。`);
         report.notes.push(`${c.name} 将提前发布新机，小心正面撞档期。`);
+        pushNews(`${c.name} 提前举行发布会`, '新旗舰将正面撞你的档期，同价位产品热度将受冲击。');
       } else {
         // 营销流砸钱抢声量
         c.brand = clamp(c.brand + rand(2, 4), 10, 99);
         addLog(state, 'rival', `${c.name} 加大广告投放，品牌声量明显上升。`);
         report.notes.push(`${c.name} 营销攻势凶猛，你的品牌曝光被分走。`);
+        pushNews(`${c.name} 发起营销攻势`, '对方大规模投放广告，你的品牌曝光被分走，可加大营销预算应对。');
         for (const m of state.markets) if (m.launched) m.awareness = clamp((m.awareness || 0) - 1.5, 0, 100);
       }
     }
@@ -670,6 +712,22 @@ function stepCompetitors(state, report) {
     if (state.events.some((e) => e.id === 'trend-fold') && !c.lineup.some((p) => p.foldable) && c.brand > 50 && chance(0.25)) {
       const p = c.lineup[0];
       if (p) { p.foldable = true; p.price = Math.round(p.price * 1.25); addLog(state, 'rival', `${c.name} 跟进折叠屏形态，${p.name} 折叠版曝光。`); }
+    }
+    // 5) 策略性挖人：强势对手挖角你的高技能员工（HR 人力 / 满意度 / 忠诚度是防御）
+    if (c.brand > 50 && chance(clamp(0.045 + Math.min(0.05, Math.max(0, shareGrowth) * 2), 0, 0.09))) {
+      const tgt = [...state.employees].filter((e) => e.skill >= 70).sort((a, b) => b.skill - a.skill)[0];
+      if (tgt) {
+        const hrDef = staffPower(state, 'hr') * 6 + (tgt.loyalty - 50) * 0.4 + (tgt.satisfaction - 50) * 0.3 + (tgt.star ? -18 : 0);
+        if (chance(clamp(0.75 - hrDef / 100, 0.08, 0.75))) {
+          state.employees = state.employees.filter((x) => x.id !== tgt.id);
+          const title = `${c.name} 挖走了 ${tgt.name}`;
+          report.notes.push(`${c.name} 高薪挖走你的${tgt.role} ${tgt.name}！提高薪酬/满意度/HR 人力可降低被挖风险。`);
+          addLog(state, 'hr', `${title}（${tgt.role}，能力 ${tgt.skill}）。`);
+          pushNews(title, `${tgt.role} · 能力 ${tgt.skill}。高技能与明星员工是主要被挖目标。`);
+        } else {
+          report.notes.push(`${tgt.name} 拒绝了 ${c.name} 的挖角，选择留下。`);
+        }
+      }
     }
     // 资产演化：需求与成本宏观联动（政策/事件也影响它们），断供月成本恶化
     const drain = 2.2e6 * (1 + c.lineup.length) * costMul;
@@ -789,3 +847,53 @@ export function evaluateModel(state, model) {
 }
 
 export { derive };
+
+// ---------- 智能排产：按上月销量 × 热度 × 增长缓冲，扣除一半库存 ----------
+export function suggestTargets(state) {
+  const prodPower = staffPower(state, 'prod');
+  return {
+    prodPower,
+    qualityRisk: prodPower < 0.6, // 生产部人力不足时急调排产会有品质波动
+    targets: state.models.filter((p) => p.status === 'production').map((p) => {
+      const heat = p.heat === undefined ? 100 : p.heat;
+      const heatMul = heat > 70 ? 1.18 : heat > 40 ? 1.0 : 0.72;
+      const want = Math.round((p.lastSold || 0) * 1.12 * heatMul);
+      return { id: p.id, name: p.name, from: p.productionTarget || 0, to: Math.max(0, want - Math.floor((p.inventory || 0) * 0.5)) };
+    }),
+  };
+}
+
+// ---------- 技术引进：直接购买竞品成熟技术（贵但即时），子公司转让另有折扣 ----------
+export function techOffers(state) {
+  const year = state.date.year;
+  const seed = year * 12 + state.date.month;
+  const pool = TECHS.filter((t) => t.year <= year && !state.tech.unlocked.includes(t.id) && t.prereq.every((p) => state.tech.unlocked.includes(p)));
+  const picks = [];
+  const used = new Set();
+  for (let i = 0; i < pool.length && picks.length < 3; i++) {
+    const idx = (seed * 7 + i * 13) % pool.length;
+    if (used.has(idx)) continue;
+    used.add(idx);
+    picks.push(pool[idx]);
+  }
+  const seller = [...state.competitors].sort((a, b) => b.techLevel - a.techLevel)[0];
+  return picks.map((t) => ({
+    techId: t.id, name: t.name, year: t.year, desc: t.desc,
+    seller: seller ? seller.name : '国际技术供应商',
+    price: Math.round(t.cost * 2.4),
+  }));
+}
+
+export function buyTech(state, techId) {
+  const t = TECH_MAP[techId];
+  if (!t) return { ok: false, msg: '未知技术' };
+  if (state.tech.unlocked.includes(techId)) return { ok: false, msg: '已掌握该技术' };
+  if (t.prereq.some((p) => !state.tech.unlocked.includes(p))) return { ok: false, msg: '前置技术未满足，对方拒绝转让' };
+  const offer = techOffers(state).find((o) => o.techId === techId);
+  const price = offer ? offer.price : Math.round(t.cost * 2.4);
+  if (state.company.cash < price) return { ok: false, msg: '资金不足' };
+  state.company.cash -= price;
+  state.tech.unlocked.push(techId);
+  addLog(state, 'tech', `从 ${offer ? offer.seller : '外部供应商'} 引进技术「${t.name}」，支出 ${fmtMoney(price)}。`);
+  return { ok: true, msg: `技术「${t.name}」引进完成，立即生效` };
+}
