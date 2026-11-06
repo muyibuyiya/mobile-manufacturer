@@ -86,7 +86,7 @@ function POLICY_EFFECT_TEXT(effects) {
 const PAGES = [
   { id: 'overview', name: '公司总览', icon: '▦' },
   { id: 'product', name: '设计与产品', icon: '▭' },
-  { id: 'tech', name: '科技研发', icon: '⌬' },
+  { id: 'tech', name: '研发中心', icon: '⌬' },
   { id: 'supply', name: '生产供应链', icon: '⚒' },
   { id: 'market', name: '市场与销售', icon: '◎' },
   { id: 'company', name: '组织与员工', icon: '☺' },
@@ -550,6 +550,11 @@ export function renderGame(root, state, opts = {}) {
         opts.onToast?.(r.msg, r.ok ? 'good' : 'bad');
         if (r.ok) { sfx('build'); addLog(state, 'company', r.msg); }
         render();
+        break;
+      }
+      case 'div-design': {
+        const divId2 = ds.id;
+        openRndModal(divId2, 'design');
         break;
       }
       case 'div-upgrade': {
@@ -1670,7 +1675,11 @@ export function renderGame(root, state, opts = {}) {
       <div class="two-col">
         <div class="card">
           <div class="card-title">员工名册 <span class="right">${state.employees.length} 人</span></div>
-          <div style="max-height:520px;overflow:auto">
+      <div class="row" style="gap:5px;margin:8px 0;flex-wrap:wrap">
+        <span class="tiny dim">按部门：</span>
+        <button class="btn tiny primary" data-emp-f="all">全部</button>
+        ${DEPT_DEFS.map((d2) => `<button class="btn tiny" data-emp-f="${d2.id}">${d2.name}</button>`).join('')}
+      </div>          <div style="max-height:520px;overflow:auto">
             <table class="tbl">
               <thead><tr><th>姓名</th><th>部门</th><th>岗位</th><th class="num">能力</th><th class="num">满意</th><th class="num">月薪</th><th></th></tr></thead>
               <tbody>
@@ -1741,6 +1750,7 @@ export function renderGame(root, state, opts = {}) {
       ${activePol.length ? `
       <div class="card" style="margin-bottom:12px">
         <div class="card-title">宏观政策 <span class="right tiny dim">${activePol.length} 项生效中</span></div>
+      <div class="card" style="padding:10px;margin-bottom:12px"><div class="card-title">收支图表（近 24 月）</div><div id="fin-svg"></div></div>
         <div class="cap-grid">
           ${activePol.map((p) => `
           <div class="cap-card">
@@ -1813,6 +1823,37 @@ export function renderGame(root, state, opts = {}) {
       </div>
       ${capitalCard()}`;
   }
+
+  function drawFinChartSVG() {
+    const el2 = document.getElementById('fin-svg');
+    if (!el2) return;
+    const hist = (state.history || []).slice(-24);
+    if (!hist.length) { el2.innerHTML = '<div class="tiny dim" style="padding:20px">推进时间后显示图表</div>'; return; }
+    const w = el2.clientWidth || 600, h = 220;
+    const padL = 50, padR = 16, padT = 16, padB = 36;
+    const iw = w - padL - padR, ih = h - padT - padB;
+    const maxV = Math.max(...hist.map(h2 => Math.abs(h2.revenue || 0)), 1);
+    const barW = Math.max(4, iw / hist.length * 0.35);
+    let bars = '', labels = '', grid = '';
+    for (let g = 0; g <= 4; g++) {
+      const gy = padT + ih - (g / 4) * ih;
+      const val = Math.round(maxV * g / 4);
+      grid += `<line x1="${padL}" y1="${gy}" x2="${w - padR}" y2="${gy}" stroke="rgba(128,128,128,.12)" width="1"/>`;
+      labels += `<text x="${padL - 6}" y="${gy + 4}" text-anchor="end" font-size="10" fill="rgba(128,128,128,.5)">${val >= 1e8 ? (val / 1e8).toFixed(1) + '亿' : val >= 1e4 ? Math.round(val / 1e4) + '万' : val}</text>`;
+    }
+    hist.forEach((h2, i) => {
+      const cx = padL + (i + 0.5) * (iw / hist.length);
+      const revH = Math.abs(h2.revenue || 0) / maxV * ih;
+      const netH = Math.abs(h2.net || 0) / maxV * ih;
+      bars += `<rect x="${cx - barW - 1}" y="${padT + ih - revH}" width="${barW}" height="${Math.max(1, revH)}" fill="rgba(74,163,255,.75)" rx="1"><title>收入</title></rect>`;
+      bars += `<rect x="${cx + 1}" y="${padT + ih - netH}" width="${barW}" height="${Math.max(1, netH)}" fill="rgba(55,201,165,.75)" rx="1"><title>净利</title></rect>`;
+      if (i % 3 === 0) labels += `<text x="${cx}" y="${h - 6}" text-anchor="middle" font-size="9" fill="rgba(128,128,128,.5)">${h2.y}/${h2.m + 1}</text>`;
+    });
+    el2.innerHTML = '<svg width="100%" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '">' + grid + labels + bars +
+      '<text x="' + padL + '" y="12" font-size="11" fill="#4aa3ff">■ 收入</text>' +
+      '<text x="' + (padL + 60) + '" y="12" font-size="11" fill="#37c9a5">■ 净利</text></svg>';
+  }
+  setTimeout(drawFinChartSVG, 60);
 
   function capitalCard() {
     const cap = ensureCapital(state);
