@@ -215,26 +215,79 @@ export function ensureLenses(design) {
   const unlocked = design._unlocked || TECHS.filter((t) => t.year <= year).map((t) => t.id);
   const n = clamp(c.count || 1, 1, 4);
   const roles = ['main', 'ultrawide', 'tele', 'periscope'];
-  const w = c.deco.w, h = c.deco.h;
   c.lenses = [];
   for (let i = 0; i < n; i++) {
-    const [x, y] = layoutPos(i, n, c.layout || 'vertical', w, h);
-    c.lenses.push(makeLens(roles[i] || 'depth', year, unlocked, x, y, true));
+    c.lenses.push(makeLens(roles[i] || 'depth', year, unlocked, 0, 0, true));
   }
   c.count = n;
-  // 按镜头实际尺寸自动放大 deco（只放不下时扩大，不缩小用户尺寸）
-  let needW = w, needH = h;
+  arrangeLenses(c); // 半径感知布阵（含 deco 尺寸自适应）
+  return design;
+}
+
+// 半径感知镜头布阵：按每颗镜头的传感器底大小计算间距，杜绝重叠（v0.9.0 根修）。
+// layout 模式参考真机海报语法：vertical 竖排胶囊 / square 2×2 / dual 横排双摄 / horizontal 横排 / ring 环绕。
+// deco 尺寸 = 阵列内容 + 均匀 padding（只放不下时扩大，不缩小用户尺寸）。
+export function arrangeLenses(camera) {
+  const c = camera;
+  if (!c || !Array.isArray(c.lenses) || !c.lenses.length) return c;
+  const GAP = 2.2, PAD = 2.5, PAD_PERI = 3.4;
+  const radii = c.lenses.map((l) => {
+    let r = lensRadiusMm((sensorById(l.sensor) || {}).format) * (l.size || 1);
+    if (l.type === 'periscope') r *= 1.15; // 潜望方形基座
+    return r;
+  });
+  const maxR = Math.max(...radii);
+  const n = c.lenses.length;
+  const lay = c.layout || 'vertical';
+  const place = (positions) => {
+    c.lenses.forEach((l, i) => { l.x = Math.round(positions[i][0] * 10) / 10; l.y = Math.round(positions[i][1] * 10) / 10; });
+  };
+  if (n === 1) {
+    place([[0, 0]]);
+  } else if (lay === 'square' && n >= 2) {
+    // 2×2：主摄占左上大格，其余按序
+    const cell = 2 * maxR + GAP;
+    const pos = [[-cell / 2, cell / 2], [cell / 2, cell / 2], [-cell / 2, -cell / 2], [cell / 2, -cell / 2]];
+    place(pos.slice(0, n).map((p, i) => (n === 3 && i === 2 ? [0, -cell / 2] : p)));
+  } else if (lay === 'dual' && n === 2) {
+    place([[-(maxR + GAP / 2), 0], [maxR + GAP / 2, 0]]);
+  } else if (lay === 'horizontal' || (lay === 'dual' && n > 2)) {
+    // 横排：小镜在主摄右侧
+    let cursor = 0;
+    const pos = [];
+    for (let i = 0; i < n; i++) {
+      pos.push(i === 0 ? [0, 0] : [cursor + radii[0] + GAP / 2 + radii[i], 0]);
+      cursor = pos[i][0] + radii[i];
+    }
+    place(pos);
+  } else if (lay === 'ring' && n >= 3) {
+    const ringR = Math.max(maxR * 1.5, maxR + GAP);
+    const pos = [];
+    for (let i = 0; i < n; i++) {
+      const ang = Math.PI / 2 + (i / n) * Math.PI * 2;
+      pos.push([Math.cos(ang) * ringR, Math.sin(ang) * ringR * 0.92]);
+    }
+    place(pos);
+  } else {
+    // vertical（默认）：居中竖排，间距 = 相邻半径和 + 间隙
+    const pitch = 2 * maxR + GAP;
+    const pos = [];
+    for (let i = 0; i < n; i++) pos.push([0, ((n - 1) / 2 - i) * pitch]);
+    place(pos);
+  }
+  // deco 尺寸 = 阵列包围盒 + padding（只扩大）
+  let needW = c.deco.w || 8, needH = c.deco.h || 8;
   for (const l of c.lenses) {
-    const r = lensRadiusMm((sensorById(l.sensor) || {}).format) * (l.size || 1);
-    // 潜望镜头外圈是方形基座，占位比圆镜更宽
-    const margin = l.type === 'periscope' ? 3.4 : 2.5;
+    const i2 = c.lenses.indexOf(l);
+    const r = radii[i2];
+    const margin = l.type === 'periscope' ? PAD_PERI : PAD;
     needW = Math.max(needW, Math.ceil(Math.abs(l.x) * 2 + r * 2 + margin));
     needH = Math.max(needH, Math.ceil(Math.abs(l.y) * 2 + r * 2 + margin));
   }
   if (c.deco.shape === 'circle') { const m = Math.max(needW, needH); needW = needH = m; }
-  c.deco.w = clamp(needW, 8, Math.max(12, design.body?.width ? design.body.width - 6 : 60));
-  c.deco.h = clamp(needH, 8, Math.max(14, design.body?.length ? design.body.length * 0.7 : 80));
-  return design;
+  c.deco.w = clamp(needW, 8, Math.max(12, 60));
+  c.deco.h = clamp(needH, 8, Math.max(14, 80));
+  return c;
 }
 
 // 每颗镜头的成像分（0~110）
@@ -436,7 +489,9 @@ function rawBom(design) {
   }, 0);
   let mechanical = 12 + design.body.corner * 0.8 + (design.body.fold !== 'none' ? 260 : 0)
     + (design.screen.bezel < 1.2 ? 26 : 0)
-    + (design.camera.step ? 14 : 0) + 8; // 凸台模具 + 闪光灯
+  mechanical += (design.camera.step ? 14 : 0) + 8; // 凸台模具 + 闪光灯
+  mechanical += design.screen.notch === 'popup' ? 32 : 0; // 升降前摄机构
+  if (design.backWindow?.on) mechanical += Math.round(260 + (design.backWindow.inch || 1) * 180); // 背部智窗
   // 配色工艺成本：盖板非黑色需加镀膜工序；后盖与中框异色需双色注塑/阳极氧化
   const colors = design.body.colors || { frame: design.body.color, back: design.body.color, cover: '#05070a' };
   const coverDark = isDarkHex(colors.cover);
@@ -607,6 +662,7 @@ function techEraFit(design, year, opts = {}) {
   s -= Math.abs(design.screen.bezel - expected.bezel) * 3.2;
   if (year < 2008 && !design.keyboard) s -= 18; // 没有实体键盘的早期直板机很奇怪
   if (year < 2015 && design.screen.notch !== 'none') s -= 25;
+  if (year >= 2022 && design.screen.notch === 'popup') s -= 10; // 升降结构在防水时代已淘汰
   if (year < 2020 && design.body.fold !== 'none') s -= 40;
   if (year >= 2016 && design.screen.inch < 4.5) s -= 15;
   if (year >= 2022 && design.parts.extras.includes('x_udc') && design.screen.notch === 'punch') s += 5; // 屏下摄像头的全面屏红利
@@ -737,6 +793,17 @@ export function validate(design, year, opts = {}) {
   if (design.screen.inch > 9) issues.push({ level: 'warn', text: '屏幕尺寸超过 9 英寸，便携性极差。' });
   if (design.camera.count > 1 && year < 2016) issues.push({ level: 'warn', text: '多摄系统在当前年代成本过高、收益有限。' });
   if (d.thermal < 35) issues.push({ level: 'warn', text: `散热评分 ${d.thermal}，高负载下会明显降频。` });
+  // 背部智窗：机身内 + 与摄像头模组避让
+  if (design.backWindow?.on) {
+    const bw = design.backWindow;
+    const ww = (bw.inch || 1.8) * 11, wh = (bw.inch || 1.8) * 8;
+    if (Math.abs(bw.cx || 0) + ww / 2 > b.width / 2 - 1 || Math.abs(bw.cy || 0) + wh / 2 > b.length / 2 - 1) {
+      issues.push({ level: 'error', text: '背部智窗超出机身范围。' });
+    }
+    if (camR && Math.abs(bw.cx - camR.cx) < (ww + camR.w) / 2 && Math.abs(bw.cy - camR.cy) < (wh + camR.h) / 2) {
+      issues.push({ level: 'error', text: '背部智窗与摄像头模组重叠，请移开智窗或模组。' });
+    }
+  }
   return { issues, derived: d, ok: !issues.some((i) => i.level === 'error') };
 }
 

@@ -449,6 +449,25 @@ function stepBrand(state, report, extraBrand = 0) {
   state.company.brand += (Math.max(target, brandFloor) - state.company.brand) * 0.16 * wom * policyMul(state, 'brandCut');
   state.company.brand = clamp(state.company.brand, 0, 100);
   state.company.reputation += (avgReview - state.company.reputation) * 0.05;
+  // 设计奖月度评审：量产机型按设计分概率获奖（品牌 +2.5）
+  const awYear = state.date.year;
+  for (const p of state.models) {
+    if (p.status !== 'production') continue;
+    p.awards = p.awards || [];
+    if (p.awards.length >= 3) continue;
+    const dScore = derive(p.design, awYear).designScore;
+    const winP = clamp((dScore - 78) / 380, 0, 0.055);
+    if (chance(winP)) {
+      const pool = ['IF 设计金奖', '红点最佳设计奖', '年度创新设计奖'];
+      const name = pool[Math.floor(Math.random() * pool.length)];
+      if (!p.awards.some((a) => a.name === name)) {
+        p.awards.push({ name, year: awYear });
+        state.company.brand = clamp(state.company.brand + 2.5, 0, 100);
+        report.notes.push(`${p.name} 获得${name}，设计实力获行业认可。`);
+        addLog(state, 'product', `${p.name} 获得${name}。`);
+      }
+    }
+  }
   report.rating = Math.round(avgReview);
   report.brand = Math.round(state.company.brand);
 }
