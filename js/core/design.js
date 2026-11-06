@@ -42,6 +42,9 @@ export function ensureBranding(design) {
   if (br.textY === undefined) br.textY = Math.round(-L * 0.26 * 10) / 10;
   if (br.textSize === undefined) br.textSize = +clamp(W * 0.05, 1.6, 6).toFixed(1);
   if (br.text === undefined) br.text = null;
+  // Logo 颜色（null=原图/公司默认色）与表面效果（img=原图质感 / metal / glass / plastic）
+  if (br.logoColor === undefined) br.logoColor = null;
+  if (br.logoFinish === undefined) br.logoFinish = 'img';
   return design;
 }
 
@@ -101,6 +104,7 @@ export function defaultDesign(year = 2020, unlocked = []) {
       notch: modern ? 'punch' : 'none',
       // 面板供应商与分辨率档位：按年代选当时最合适的档
       panelVendor: year >= 2012 ? 'pv_sdc' : '',
+      panelGen: '',
       res: year >= 2016 ? 'res2k' : year >= 2013 ? 'res1080' : year >= 2012 ? 'res720' : '',
     },
     camera: {
@@ -265,24 +269,30 @@ export function cameraScoreOf(design) {
 export function screenSize(design) {
   const { inch, aspect } = design.screen;
   const a0 = SCREEN_ASPECTS[aspect] ?? 16 / 9;
-  const a = a0 === 0 ? Math.max(1.1, design.screen.aspectV || 2) : a0;
+  // 自由比例：折叠屏内屏为横宽形态，允许 a<1（高/宽 < 1 即宽屏）
+  const a = a0 === 0 ? clamp(design.screen.aspectV || 2, 0.5, 2.6) : a0;
   const diag = inch * 25.4;
   const h = diag / Math.sqrt(1 + 1 / (a * a));
   const w = h / a;
   return { w: +w.toFixed(1), h: +h.toFixed(1), diag: +diag.toFixed(1), a };
 }
 
-// 按机身尺寸与边框反推最大可容纳的屏幕 inch（调机身时自动贴合用）
+// 按机身尺寸与边框反推最大可容纳的屏幕 inch（调机身时自动贴合用）。
+// 折叠机型：body.width/length 是折叠态（单半）尺寸，屏幕按展开态有效足迹贴合
+// （横向折叠宽×2 / 竖向翻折长×2）
 export function maxScreenInch(design) {
   const b = design.body;
   const bz = design.screen.bezel;
-  const availW = b.width - bz * 2 - 1.2;
-  const availH = b.length - bz * 2 - 1.2;
+  const effW = b.fold === 'fold' ? b.width * 2 : b.width;
+  const effH = b.fold === 'flip' ? b.length * 2 : b.length;
+  const availW = effW - bz * 2 - 1.2;
+  const availH = effH - bz * 2 - 1.2;
+  // SCREEN_ASPECTS 语义为 高/宽（与 screenSize 一致）：h = w * a ≤ availH → w ≤ availH / a
   const a = SCREEN_ASPECTS[design.screen.aspect] === 0
-    ? Math.max(1.1, design.screen.aspectV || 2)
+    ? clamp(design.screen.aspectV || 2, 0.5, 2.6)
     : (SCREEN_ASPECTS[design.screen.aspect] || 16 / 9);
-  const w = Math.min(availW, availH * a);
-  const h = w / a;
+  const w = Math.min(availW, availH / a);
+  const h = w * a;
   const diag = Math.sqrt(w * w + h * h);
   return Math.round(clamp(diag / 25.4, 1, 8.2) * 10) / 10;
 }
@@ -350,12 +360,15 @@ function resolvePanel(design) {
   // 面板供应商：品质/成本系数（未选时默认 1.0）；分辨率档位影响清晰度与成本
   const pv = PANEL_VENDORS.find((v) => v.id === design.screen.panelVendor) || null;
   const res = RES_TIERS.find((r) => r.id === design.screen.res) || null;
-  const vendorMul = pv ? pv.cost : 1.0;
+  // 发光材料世代（M14/Q10/C9 等真机命名）：品质与成本小幅上浮
+  const gen = pv && pv.gens ? pv.gens.find((g) => g.id === design.screen.panelGen) || null : null;
+  const vendorMul = (pv ? pv.cost : 1.0) * (gen ? gen.c : 1.0);
   const resMul = res ? res.costMul : 1.0;
-  let out = { ...base, quality: base.quality * (pv ? pv.quality : 1.0) };
+  const genQ = gen ? gen.q : 1.0;
+  let out = { ...base, quality: base.quality * (pv ? pv.quality : 1.0) * genQ };
   if (design.parts.ownPanel) {
     // 自研面板：品质由部门等级决定，成本按自产 0.72 折算
-    out.quality = design.parts.ownPanel.quality * (pv ? pv.quality : 1.0);
+    out.quality = design.parts.ownPanel.quality * (pv ? pv.quality : 1.0) * genQ;
   }
   out.priceFor = (inch) => Math.round(base.priceFor(inch) * vendorMul * resMul);
   out.resLevel = res ? res.level : 0.85;
@@ -431,15 +444,19 @@ function rawBom(design) {
     ? 4 + (cs.style === 'round' ? 2 : cs.style === 'capsule' ? 3.5 : cs.style === 'square' ? 3 : 4.5)
       + Math.max(0, (cs.w - 6) * 0.4)
     : 0;
+  // 4 扬声器：底部/顶部各两只（折叠屏每半一只），多出一对腔体与开孔模具
   mechanical += (ports.dualSpeaker ? 7 : 0) + (ports.topMic && !ports.dualSpeaker ? 2 : 0)
-    + customPortCost;
-  // 槽形扬声器孔需要精修模具，略贵于圆孔
+    + (ports.quadSpeaker ? 14 : 0) + customPortCost;
+  // 槽形扬声器孔需要精修模具，略贵于圆孔；底部麦克风升级扬声器同款样式时同理
   const spStyle = ports.speakerStyle || 'dot5';
   mechanical += (spStyle === 'slot2' || spStyle === 'slot3') ? 2 : 0;
+  if (ports.micStyle && ports.micStyle !== 'hole') {
+    mechanical += 3 + ((ports.micStyle === 'slot2' || ports.micStyle === 'slot3') ? 2 : 0);
+  }
   return Math.round(parts + extras + mechanical);
 }
 
-export function derive(design, year) {
+export function derive(design, year, opts = {}) {
   ensureLenses(design);
   design._year = year;
   const b = design.body;
@@ -469,8 +486,12 @@ export function derive(design, year) {
   const chargeMin = Math.round(bat.mah * 3.85 / Math.max(5, cw.watt) / 900 * 60); // 有线充满分钟数
 
   // 工业设计评分：比例、厚度、屏占比、材质、时代合理性
-  const ratio = b.length / b.width;
-  const ratioScore = clamp(100 - Math.abs(ratio - 2.05) * 90, 0, 100);
+  // 折叠机按展开态有效比例：fold 展开接近方形（理想 ≈1.06），flip 用两倍长度（理想 ≈2.05）
+  const effLen = b.fold === 'flip' ? b.length * 2 : b.length;
+  const effWid = b.fold === 'fold' ? b.width * 2 : b.width;
+  const ratio = effLen / effWid;
+  const ratioIdeal = b.fold === 'fold' ? 1.06 : 2.05;
+  const ratioScore = clamp(100 - Math.abs(ratio - ratioIdeal) * 90, 0, 100);
   const thinScore = clamp(100 - Math.max(0, b.thickness - 6.5) * 7.5, 0, 100);
   const screenRatio = clamp(((scr.w * scr.h) / (b.length * b.width)) * 100, 0, 100);
   const bezelScore = clamp(100 - design.screen.bezel * 16, 0, 100);
@@ -481,7 +502,7 @@ export function derive(design, year) {
   const craft = clamp(
     ratioScore * 0.18 + thinScore * 0.16 + screenRatio * 0.22 + bezelScore * 0.14 +
     materialScore * 0.12 + finishBonus + resFit * 0.16, 0, 100);
-  const eraFit = techEraFit(design, year);
+  const eraFit = techEraFit(design, year, opts);
 
   const designScore = clamp(craft * 0.78 + eraFit * 0.22, 0, 100);
 
@@ -504,7 +525,8 @@ export function derive(design, year) {
   const cost = bomCost(design, year);
 
   const volume = bodyVolume(design);
-  const internal = volume * 0.56;
+  // 折叠机为双层结构（两半各一层堆叠），内部可用空间 ×2
+  const internal = volume * 0.56 * (b.fold !== 'none' ? 2 : 1);
   const camVol = (camThick * 1.2 * Math.max(1, design.camera.lenses.length)) / 10; // cm3
   const used = batteryVolume(bat) + camVol
     + 9.5 + (design.parts.extras.length * 0.9) + (design.body.fold !== 'none' ? 9 : 0);
@@ -560,7 +582,9 @@ function thermalScore(design, cpu, year) {
 }
 
 // 时代合理性：设计与当前年代技术的匹配程度
-function techEraFit(design, year) {
+// opts.ignoreEra = 沙盒全解锁：不按年代扣分（技术已全掌握，超前设计不视为不合理）
+function techEraFit(design, year, opts = {}) {
+  if (opts.ignoreEra) return 100;
   const b = design.body;
   const expected = {
     thickness: year < 1995 ? 26 : year < 2005 ? 18 : year < 2010 ? 13 : year < 2014 ? 10.5 : year < 2018 ? 8.5 : 8,
@@ -603,14 +627,16 @@ export function eraRel(value, base) {
   return clamp(value / base, 0.35, 2.6);
 }
 
-export function validate(design, year) {
+export function validate(design, year, opts = {}) {
   const issues = [];
   const b = design.body;
-  // 折叠形态：屏幕装配在内屏（展开态），横向折叠宽度翻倍、竖向翻折长度放大
+  // 折叠形态：屏幕装配在内屏（展开态）。
+  // 约定：body.width / body.length 是折叠态（单半）尺寸——横向折叠展开宽 = width×2，
+  // 竖向翻折展开长 = length×2
   const effW = b.fold === 'fold' ? b.width * 2 : b.width;
-  const effH = b.fold === 'flip' ? b.length * 1.9 : b.length;
+  const effH = b.fold === 'flip' ? b.length * 2 : b.length;
   const scr = screenSize(design);
-  const d = derive(design, year);
+  const d = derive(design, year, opts);
 
   if (scr.w + design.screen.bezel * 2 > effW + 0.6) {
     issues.push({ level: 'error', text: `屏幕宽度 ${scr.w}mm 超出机身 ${effW}mm，无法装配。` });
@@ -651,7 +677,7 @@ export function validate(design, year) {
       issues.push({ level: 'error', text: '闪光灯超出机身范围，请调整位置或大小。' });
     }
   }
-  if (b.fold !== 'none' && year < 2020) issues.push({ level: 'error', text: '折叠结构尚未成熟，当前年代无法量产。' });
+  if (b.fold !== 'none' && year < 2020 && !opts.ignoreEra) issues.push({ level: 'error', text: '折叠结构尚未成熟，当前年代无法量产。' });
   // 侧键纵向偏移不能滑出机身
   for (const [kn, v] of [['音量键', b.btnVolY || 0], ['电源键', b.btnPowY || 0]]) {
     if (Math.abs(v) > b.length / 2 - 4) issues.push({ level: 'error', text: `${kn}位置超出机身范围，请调整。` });
@@ -665,8 +691,8 @@ export function validate(design, year) {
     if (Math.abs(x || 0) + span / 2 > b.width / 2 - 0.8) issues.push({ level: 'error', text: `${label}超出机身宽度，请调整位置。` });
   };
   if (portW) chkX('充电口位置', ports.chargePos, portW);
-  chkX('扬声器位置', ports.speakerX ?? -b.width * 0.28, spSpan);
-  chkX('麦克风位置', ports.micX ?? b.width * 0.2, 1.4);
+  chkX('扬声器位置', ports.speakerX ?? b.width * 0.28, spSpan);
+  chkX('麦克风位置', ports.micX ?? -b.width * 0.2, ports.micStyle && ports.micStyle !== 'hole' ? speakerRowSpec(ports.micStyle).span : 1.4);
   if (ports.dualSpeaker) chkX('顶部扬声器位置', ports.topSpeakerX ?? b.width * 0.28, spSpan);
   if (ports.topMic) chkX('顶部麦克风位置', ports.topMicX ?? -b.width * 0.2, 1.4);
   // 背面装饰位置不能超出机身

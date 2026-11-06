@@ -4,10 +4,10 @@
 // 摄像头传感器：roles 决定可用于哪类镜头；format 决定镜头物理尺寸与厚度；
 // score 为 0-100 成像基准分；tech 用于解锁门槛（复用 parts 摄像头科技线）。
 export const IMAGE_SENSORS = [
-  { id: 'sn_vga', name: 'VGA CIS', vendor: '公版', year: 2000, mp: 0.1, format: '1/4″', pixel: 1.75, roles: ['主摄', '前置'], tech: 'vga_cam', score: 10, price: 30 },
+  { id: 'sn_vga', name: 'VGA CIS', vendor: '公版', year: 2000, mp: 0.1, format: '1/4″', pixel: 1.75, roles: ['主摄', '前置', '景深'], tech: 'vga_cam', score: 10, price: 30 },
   { id: 'sn_1p3', name: '130万 CIS', vendor: '公版', year: 2003, mp: 1.3, format: '1/3″', pixel: 1.6, roles: ['主摄', '前置'], tech: 'cmos', score: 24, price: 60 },
   { id: 'sn_5mp', name: '5MP CIS', vendor: '公版', year: 2008, mp: 5, format: '1/3.2″', pixel: 1.4, roles: ['主摄', '前置'], tech: 'mp_cam', score: 38, price: 90 },
-  { id: 'sn_13mp', name: '13MP CIS', vendor: '公版', year: 2013, mp: 13, format: '1/3″', pixel: 1.12, roles: ['主摄', '超广角'], tech: 'mp_cam', score: 48, price: 130 },
+  { id: 'sn_13mp', name: '13MP CIS', vendor: '公版', year: 2013, mp: 13, format: '1/3″', pixel: 1.12, roles: ['主摄', '超广角', '微距', '景深'], tech: 'mp_cam', score: 48, price: 130 },
   // 索尼 IMX 系列
   { id: 'sn_imx586', name: 'IMX586', vendor: '索尼', year: 2018, mp: 48, format: '1/2″', pixel: 0.8, roles: ['主摄', '长焦'], tech: 'dual_cam', score: 63, price: 200, ois: true },
   { id: 'sn_imx582', name: 'IMX582', vendor: '索尼', year: 2019, mp: 48, format: '1/2″', pixel: 0.8, roles: ['主摄'], tech: 'dual_cam', score: 60, price: 170 },
@@ -29,16 +29,29 @@ export const IMAGE_SENSORS = [
   { id: 'sn_hp1', name: 'ISOCELL HP1', vendor: '三星', year: 2021, mp: 200, format: '1/1.22″', pixel: 0.64, roles: ['主摄'], tech: 'comp_photo', score: 88, price: 520, ois: true },
   { id: 'sn_hp3', name: 'ISOCELL HP3', vendor: '三星', year: 2022, mp: 200, format: '1/1.4″', pixel: 0.56, roles: ['主摄'], tech: 'comp_photo', score: 82, price: 420 },
   { id: 'sn_hp2', name: 'ISOCELL HP2', vendor: '三星', year: 2023, mp: 200, format: '1/1.3″', pixel: 0.6, roles: ['主摄'], tech: 'comp_photo', score: 90, price: 560, ois: true },
-  { id: 'sn_jn1', name: 'ISOCELL JN1', vendor: '三星', year: 2021, mp: 50, format: '1/2.76″', pixel: 0.64, roles: ['超广角', '长焦', '前置'], tech: 'dual_cam', score: 55, price: 110 },
+  { id: 'sn_jn1', name: 'ISOCELL JN1', vendor: '三星', year: 2021, mp: 50, format: '1/2.76″', pixel: 0.64, roles: ['超广角', '长焦', '前置', '景深'], tech: 'dual_cam', score: 55, price: 110 },
   { id: 'sn_hp9', name: 'ISOCELL HP9', vendor: '三星', year: 2024, mp: 200, format: '1/1.4″', pixel: 0.56, roles: ['潜望'], tech: 'ai_imaging', score: 93, price: 700, ois: true },
   // 豪威 OV 系列
-  { id: 'sn_ov13b', name: 'OV13B', vendor: '豪威', year: 2020, mp: 13, format: '1/3.06″', pixel: 1.12, roles: ['超广角', '前置'], tech: 'mp_cam', score: 46, price: 90 },
-  { id: 'sn_ov08d', name: 'OV08D10', vendor: '豪威', year: 2019, mp: 8, format: '1/4″', pixel: 1.4, roles: ['超广角', '前置'], tech: 'mp_cam', score: 26, price: 45 },
+  { id: 'sn_ov13b', name: 'OV13B', vendor: '豪威', year: 2020, mp: 13, format: '1/3.06″', pixel: 1.12, roles: ['超广角', '前置', '微距'], tech: 'mp_cam', score: 46, price: 90 },
+  { id: 'sn_ov08d', name: 'OV08D10', vendor: '豪威', year: 2019, mp: 8, format: '1/4″', pixel: 1.4, roles: ['超广角', '前置', '景深', '微距'], tech: 'mp_cam', score: 26, price: 45 },
   { id: 'sn_ov64b', name: 'OV64B', vendor: '豪威', year: 2020, mp: 64, format: '1/2″', pixel: 0.702, roles: ['长焦', '潜望', '主摄'], tech: 'dual_cam', score: 68, price: 180, ois: true },
   { id: 'sn_ov48c', name: 'OV48C', vendor: '豪威', year: 2020, mp: 48, format: '1/1.32″', pixel: 1.2, roles: ['主摄'], tech: 'ois', score: 80, price: 360, ois: true },
   { id: 'sn_ov50a', name: 'OV50A', vendor: '豪威', year: 2021, mp: 50, format: '1/1.5″', pixel: 1.0, roles: ['主摄'], tech: 'ois', score: 75, price: 290 },
   { id: 'sn_ov50h', name: 'OV50H', vendor: '豪威', year: 2023, mp: 50, format: '1/1.3″', pixel: 1.2, roles: ['主摄'], tech: 'comp_photo', score: 89, price: 520, ois: true },
   { id: 'sn_ov08a10', name: 'OV08A10', vendor: '豪威', year: 2020, mp: 8, format: '1/4.4″', pixel: 1.25, roles: ['潜望'], tech: 'periscope', score: 45, price: 120, ois: true },
+  // 2024-2026：索尼 LYTIA 新一代（光喻旗舰/中端）
+  { id: 'sn_lyt808', name: 'LYT-808', vendor: '索尼', year: 2023, mp: 50, format: '1/1.4″', pixel: 1.12, roles: ['主摄'], tech: 'comp_photo', score: 80, price: 380, ois: true },
+  { id: 'sn_lyt600', name: 'LYT-600', vendor: '索尼', year: 2023, mp: 50, format: '1/1.95″', pixel: 0.8, roles: ['主摄', '超广角'], tech: 'ois', score: 62, price: 150 },
+  { id: 'sn_lyt500', name: 'LYT-500', vendor: '索尼', year: 2022, mp: 50, format: '1/2.93″', pixel: 0.6, roles: ['前置', '超广角'], tech: 'dual_cam', score: 50, price: 90 },
+  { id: 'sn_lyt818', name: 'LYT-818', vendor: '索尼', year: 2024, mp: 50, format: '1/1.28″', pixel: 1.22, roles: ['主摄', '潜望'], tech: 'ai_imaging', score: 88, price: 560, ois: true },
+  { id: 'sn_lyt828', name: 'LYT-828', vendor: '索尼', year: 2025, mp: 50, format: '1/1.28″', pixel: 1.22, roles: ['主摄', '超广角'], tech: 'ai_imaging', score: 95, price: 850, ois: true },
+  { id: 'sn_lyt901', name: 'LYT-901', vendor: '索尼', year: 2025, mp: 200, format: '1/1.12″', pixel: 0.7, roles: ['主摄'], tech: 'ai_imaging', score: 98, price: 1000, ois: true },
+  // 2024-2026：三星 ISOCELL
+  { id: 'sn_jn5', name: 'ISOCELL JN5', vendor: '三星', year: 2024, mp: 50, format: '1/2.76″', pixel: 0.64, roles: ['超广角', '长焦', '前置'], tech: 'comp_photo', score: 58, price: 110 },
+  { id: 'sn_hp5', name: 'ISOCELL HP5', vendor: '三星', year: 2025, mp: 200, format: '1/1.56″', pixel: 0.5, roles: ['主摄', '潜望', '长焦'], tech: 'ai_imaging', score: 87, price: 480, ois: true },
+  // 2024-2026：豪威（国产 1 英寸 LOFIC 旗舰）
+  { id: 'sn_ov50x', name: 'OV50X', vendor: '豪威', year: 2025, mp: 50, format: '1″', pixel: 1.6, roles: ['主摄'], tech: 'ai_imaging', score: 97, price: 900, ois: true },
+  { id: 'sn_ov50n', name: 'OV50N', vendor: '豪威', year: 2024, mp: 50, format: '1/1.56″', pixel: 1.0, roles: ['主摄', '超广角'], tech: 'comp_photo', score: 76, price: 300, ois: true },
   // 未来
   { id: 'sn_lightfield', name: '光场传感阵列', vendor: '公版', year: 2035, mp: 400, format: '1″', pixel: 0.5, roles: ['主摄', '潜望'], tech: 'lightfield', score: 100, price: 1200, ois: true },
 ];
@@ -81,6 +94,12 @@ export const CPU_CORES = [
   { id: 'a725', name: 'Cortex-A725', kind: 'big', year: 2024, ipc: 2.0, ghz: [2.4, 3.0] },
   { id: 'oryon', name: '自研 Oryon 类', kind: 'prime', year: 2024, ipc: 3.0, ghz: [3.5, 4.3] },
   { id: 'taishan', name: '自研泰山类', kind: 'big', year: 2023, ipc: 1.9, ghz: [2.0, 2.7] },
+  // 2025-2026：ARM Lumex C1 集群（天玑9500 首发全系）+ 第三代自研大核
+  { id: 'c1_ultra', name: 'Lumex C1-Ultra', kind: 'prime', year: 2025, ipc: 3.4, ghz: [3.8, 4.3] },
+  { id: 'c1_prem', name: 'Lumex C1-Premium', kind: 'big', year: 2025, ipc: 2.05, ghz: [2.8, 3.5] },
+  { id: 'c1_pro', name: 'Lumex C1-Pro', kind: 'big', year: 2025, ipc: 2.15, ghz: [2.5, 3.0] },
+  { id: 'c1_nano', name: 'Lumex C1-Nano', kind: 'little', year: 2025, ipc: 1.3, ghz: [1.6, 2.2] },
+  { id: 'oryon3', name: '自研 Oryon 三代', kind: 'prime', year: 2025, ipc: 3.3, ghz: [3.8, 4.6] },
 ];
 
 // GPU 架构：perf 单核性能系数，slices 建议核数
@@ -95,6 +114,9 @@ export const GPU_ARCHS = [
   { id: 'adreno_like', name: '自研 Adreno 类', vendor: '自研', year: 2021, perf: 2.2, maxCore: 12 },
   { id: 'maleoon', name: '自研马良类', vendor: '自研', year: 2023, perf: 1.9, maxCore: 10 },
   { id: 'apple_like', name: '自研整合 GPU（苹果类）', vendor: '自研', year: 2022, perf: 2.6, maxCore: 8 },
+  { id: 'mali_g1u', name: 'Mali-G1 Ultra（光追）', vendor: 'ARM 公版', year: 2025, perf: 3.2, maxCore: 12 },
+  { id: 'adreno8', name: '自研 Adreno 8 系列', vendor: '自研', year: 2025, perf: 3.3, maxCore: 12 },
+  { id: 'xclipse950', name: 'Xclipse 950 类（RDNA 授权）', vendor: 'AMD 授权', year: 2025, perf: 2.6, maxCore: 8 },
 ];
 
 // ---------- 自研 OS 底层架构 ----------
@@ -106,11 +128,29 @@ export const OS_BASES = [
 ];
 
 // ---------- 屏幕面板供应商 ----------
+// gens：发光材料世代（真机命名，如三星 M12/M13/M14/E7、京东方 Q9/Q10、华星 C8/C9），
+// q = 品质乘数，c = 成本乘数（越新越贵）
 export const PANEL_VENDORS = [
-  { id: 'pv_sdc', name: '三星显示 SDC', tech: 'oled', year: 2012, quality: 1.06, cost: 1.18, desc: '钻石排列 · 发光材料领先（E 系）' },
+  { id: 'pv_sdc', name: '三星显示 SDC', tech: 'oled', year: 2012, quality: 1.06, cost: 1.18, desc: '钻石排列 · 发光材料领先（E 系）',
+    gens: [
+      { id: 'M11', name: 'M11 发光材料', year: 2021, q: 1.01, c: 1.02 },
+      { id: 'M12', name: 'M12 发光材料', year: 2022, q: 1.02, c: 1.03 },
+      { id: 'M13', name: 'M13 发光材料', year: 2023, q: 1.04, c: 1.05 },
+      { id: 'E7', name: 'E7 发光材料', year: 2024, q: 1.05, c: 1.06 },
+      { id: 'M14', name: 'M14 发光材料', year: 2024, q: 1.07, c: 1.09 },
+    ] },
   { id: 'pv_lgd', name: 'LG Display', tech: 'oled', year: 2013, quality: 1.03, cost: 1.10, desc: 'LTPO 强项 · 护眼向' },
-  { id: 'pv_boe', name: '京东方 BOE', tech: 'oled', year: 2017, quality: 1.0, cost: 0.92, desc: '国产 OLED 第一梯队 · Q 系发光材料' },
-  { id: 'pv_csot', name: '华星光电 CSOT', tech: 'oled', year: 2018, quality: 0.99, cost: 0.88, desc: '小米深度绑定 · C 系发光体系' },
+  { id: 'pv_boe', name: '京东方 BOE', tech: 'oled', year: 2017, quality: 1.0, cost: 0.92, desc: '国产 OLED 第一梯队 · Q 系发光材料',
+    gens: [
+      { id: 'Q9', name: 'Q9 发光材料', year: 2022, q: 1.01, c: 1.02 },
+      { id: 'Q9p', name: 'Q9+ 发光材料', year: 2023, q: 1.03, c: 1.04 },
+      { id: 'Q10', name: 'Q10 发光材料', year: 2024, q: 1.05, c: 1.06 },
+    ] },
+  { id: 'pv_csot', name: '华星光电 CSOT', tech: 'oled', year: 2018, quality: 0.99, cost: 0.88, desc: '小米深度绑定 · C 系发光体系',
+    gens: [
+      { id: 'C8', name: 'C8 发光材料', year: 2023, q: 1.02, c: 1.03 },
+      { id: 'C9', name: 'C9 发光材料', year: 2024, q: 1.04, c: 1.05 },
+    ] },
   { id: 'pv_tianma', name: '天马', tech: 'oled', year: 2019, quality: 0.96, cost: 0.85, desc: '高频 PWM 护眼 · LTPS 老牌' },
   { id: 'pv_visionox', name: '维信诺', tech: 'oled', year: 2018, quality: 0.95, cost: 0.86, desc: '华为系二供 · ViP 微透镜' },
   { id: 'pv_jdi', name: 'JDI', tech: 'tft', year: 2002, quality: 1.0, cost: 1.0, desc: 'LTPS LCD 发明者' },

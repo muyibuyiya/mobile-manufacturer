@@ -177,7 +177,7 @@ export function createGame(opts) {
     departments: DEPT_DEFS.map((d) => ({ ...d, budget: 0, focus: 50 })),
     employees: [],
     models: [],
-    tech: { unlocked: techAll ? TECHS.map((t) => t.id) : [], researching: null, completed: [] },
+    tech: { all: !!techAll, unlocked: techAll ? TECHS.map((t) => t.id) : [], researching: null, completed: [] },
     production: { mode: 'foundry', foundryId: 'f1', batch: 20000, quality: 65, process: 0, automation: 0, autoInvested: 0 },
     factories: [],
     campus: newCampus(year),
@@ -343,6 +343,12 @@ export function sanitizeState(s) {
   ensureSubsidiaries(s);
   // 中后期系统提示（一次性）
   if (!s.hints || typeof s.hints.seen !== 'object') s.hints = { seen: s.hints?.seen && typeof s.hints.seen === 'object' ? s.hints.seen : {} };
+  // 沙盒全解锁标记：旧档没有 tech.all 字段，按「沙盒 + 技术全掌握」推断补齐
+  if (!s.tech) s.tech = { all: false, unlocked: [], researching: null, completed: [] };
+  if (typeof s.tech.all !== 'boolean') {
+    s.tech.all = s.mode === 'sandbox' && Array.isArray(s.tech.unlocked)
+      && (TECHS.length === 0 || s.tech.unlocked.length >= TECHS.length);
+  }
   // 配色方案库
   if (!Array.isArray(s.colorSchemes)) s.colorSchemes = [];
   // 旧档机型设计补齐第七轮外观字段（三区配色 / 侧键样式 / 顶底开孔）

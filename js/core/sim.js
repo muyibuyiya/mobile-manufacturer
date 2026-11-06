@@ -675,7 +675,9 @@ export function avgShare(state) {
 }
 
 export function evaluateModel(state, model) {
-  const v = validate(model.design, state.date.year);
+  // 沙盒全解锁：跳过年代合理性门槛（如 2020 前的折叠结构）
+  const v = validate(model.design, state.date.year,
+    (state.mode === 'sandbox' && state.tech.all) ? { ignoreEra: true } : {});
   const d = v.derived;
   return { ...v, derived: d };
 }

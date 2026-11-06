@@ -394,7 +394,8 @@ export function renderGame(root, state, opts = {}) {
         render(); break;
       case 'launch': {
         const m = state.models.find((x) => x.id === id);
-        const v = validate(m.design, state.date.year);
+        const v = validate(m.design, state.date.year,
+          (state.mode === 'sandbox' && state.tech.all) ? { ignoreEra: true } : {});
         if (!v.ok) { opts.onToast?.('设计未通过合理性检查，无法量产', 'bad'); break; }
         const planned = Number(m.productionTarget) > 0 ? Number(m.productionTarget) : 20000;
         const launchCost = 500000 + planned * 2;
@@ -1120,7 +1121,8 @@ export function renderGame(root, state, opts = {}) {
       ${models.length ? `<div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(320px,1fr))">
         ${models.map((m) => {
           const d = derive(m.design, state.date.year);
-          const v = validate(m.design, state.date.year);
+          const v = validate(m.design, state.date.year,
+            (state.mode === 'sandbox' && state.tech.all) ? { ignoreEra: true } : {});
           const statusMap = { draft: ['设计中', 'warn'], production: ['在售', 'good'], discontinued: ['已下市', ''] };
           const st = statusMap[m.status] || ['未知', ''];
           const bw = 58, bh = Math.round(clamp(58 * (m.design.body.length / m.design.body.width), 96, 150));

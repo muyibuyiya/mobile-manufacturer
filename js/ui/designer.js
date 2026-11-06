@@ -125,6 +125,11 @@ function lensGlassMaterial(look) {
 export function renderDesigner(container, state, model, hooks = {}) {
   const year = state.date.year;
   const unlocked = state.tech.unlocked;
+  // 沙盒全解锁：元器件/传感器的年代门槛（x.year <= year）按「全部可用」处理，
+  // 校验跳过年代合理性错误（validate opts.ignoreEra）
+  const sandboxAll = state.mode === 'sandbox' && !!state.tech.all;
+  const availYear = sandboxAll ? 9999 : year;
+  const VOPT = sandboxAll ? { ignoreEra: true } : {};
   const orig = JSON.parse(JSON.stringify(model.design));
   let viewMode = '2d'; // 2d | 3d
   let camView = 'hero';
@@ -146,6 +151,36 @@ export function renderDesigner(container, state, model, hooks = {}) {
       if (viewMode === '3d') { if (three) buildPhone(); } else draw2D();
     };
     img.src = logoSrcToUrl(logoSrc);
+  }
+
+  // Logo 染色/材质：logoColor 为 null 时跟随公司 Logo 色；finish = img(原图)/metal/glass/plastic
+  // 返回 [c0,c1,c2,c3] 四段渐变色（img 且未染色时返回 null = 用原图）
+  function logoShadeStops(base, finish) {
+    if (finish === 'metal') return [shadeHex(base, 60), base, shadeHex(base, -55), shadeHex(base, 35)];
+    if (finish === 'glass') return [shadeHex(base, 85), base, shadeHex(base, -70), shadeHex(base, -20)];
+    if (finish === 'plastic') return [shadeHex(base, 18), base, shadeHex(base, -24), base];
+    return null;
+  }
+  // 生成 Logo 画布（恒为 canvas）：需要染色/材质时输出剪影渐变填充，否则原样绘制位图
+  function makeLogoCanvas() {
+    if (!logoImg) return null;
+    const d = model.design;
+    const br = d.branding || {};
+    const finish = br.logoFinish || 'img';
+    const base = br.logoColor || state.company?.logoColor || '#4aa3ff';
+    const c = document.createElement('canvas');
+    c.width = c.height = 128;
+    const lctx = c.getContext('2d');
+    lctx.drawImage(logoImg, 0, 0, 128, 128);
+    if (finish === 'img' && !br.logoColor) return c; // 原图直出
+    lctx.globalCompositeOperation = 'source-in';
+    const grad = lctx.createLinearGradient(0, 0, 0, 128);
+    const stops = logoShadeStops(base, finish) || [base, base, base, base];
+    grad.addColorStop(0, stops[0]); grad.addColorStop(0.42, stops[1]);
+    grad.addColorStop(0.62, stops[2]); grad.addColorStop(1, stops[3]);
+    lctx.fillStyle = grad;
+    lctx.fillRect(0, 0, 128, 128);
+    return c;
   }
 
   container.innerHTML = `
@@ -215,6 +250,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
     const freeAspect = d.screen.aspect === '自由';
     const ports = body.ports || {};
     const sp = speakerRowSpec(ports.speakerStyle);
+    const micSpan = ports.micStyle && ports.micStyle !== 'hole' ? speakerRowSpec(ports.micStyle).span : 2.8;
     return section('body', '机身', `
       ${sliderRow('长度', 'body.length', body.length, 70, 200, 1, 'mm')}
       ${sliderRow('宽度', 'body.width', body.width, 35, 100, 0.5, 'mm')}
@@ -229,7 +265,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
           ${Object.keys(SCREEN_ASPECTS).map((a) => `<option ${d.screen.aspect === a ? 'selected' : ''}>${a}</option>`).join('')}
         </select>
       </label>
-      ${freeAspect ? sliderRow('长宽比（自由）', 'screen.aspectV', d.screen.aspectV || 2, 1.1, 2.6, 0.01, '') : ''}
+      ${freeAspect ? sliderRow('长宽比（自由，高/宽）', 'screen.aspectV', d.screen.aspectV || 2, 0.5, 2.6, 0.01, '') : ''}
       <label class="field"><span>前面板开孔</span>
         <select data-k="screen.notch">
           ${[['none', '无开孔'], ['punch', '单孔'], ['notch', '刘海'], ['waterdrop', '水滴']].map(([v, n]) => `<option value="${v}" ${d.screen.notch === v ? 'selected' : ''}>${n}</option>`).join('')}
@@ -244,15 +280,28 @@ export function renderDesigner(container, state, model, hooks = {}) {
         <select data-k="screen.panelVendor">
           <option value="" ${!d.screen.panelVendor ? 'selected' : ''}>公版 · 无品牌溢价</option>
           ${PANEL_VENDORS.map((v) => {
-            const ok = v.year <= year && unlocked.includes(v.tech);
+            const ok = v.year <= availYear && unlocked.includes(v.tech);
             return `<option value="${v.id}" ${d.screen.panelVendor === v.id ? 'selected' : ''} ${ok ? '' : 'disabled'}>${v.name} · 品质 ${Math.round(v.quality * 100)}% · 成本 ${v.cost > 1 ? '+' : ''}${Math.round((v.cost - 1) * 100)}%${ok ? '' : `（${v.year} 年）`}</option>`;
           }).join('')}
         </select>
       </label>
+      ${(() => {
+        const pv = PANEL_VENDORS.find((v) => v.id === d.screen.panelVendor);
+        if (!pv || !pv.gens) return '';
+        return `<label class="field"><span>发光材料世代</span>
+          <select data-k="screen.panelGen">
+            <option value="" ${!d.screen.panelGen ? 'selected' : ''}>标准材料</option>
+            ${pv.gens.map((g) => {
+              const ok = g.year <= availYear && unlocked.includes(pv.tech);
+              return `<option value="${g.id}" ${d.screen.panelGen === g.id ? 'selected' : ''} ${ok ? '' : 'disabled'}>${g.name} · 品质 +${Math.round((g.q - 1) * 100)}%${ok ? '' : `（${g.year} 年）`}</option>`;
+            }).join('')}
+          </select>
+        </label>`;
+      })()}
       <label class="field"><span>分辨率</span>
         <select data-k="screen.res">
           ${RES_TIERS.map((r) => {
-            const ok = r.year <= year;
+            const ok = r.year <= availYear;
             return `<option value="${r.id}" ${d.screen.res === r.id ? 'selected' : ''} ${ok ? '' : 'disabled'}>${r.name} · ${r.w}×${r.h}${ok ? '' : `（${r.year} 年）`}</option>`;
           }).join('')}
         </select>
@@ -344,13 +393,22 @@ export function renderDesigner(container, state, model, hooks = {}) {
       ${sliderRow('接口深度', 'body.ports.chargeShape.h', ports.chargeShape?.h ?? 3, 1.5, 5, 0.5, 'mm')}
       ` : ''}
       ${sliderRow('充电口位置 · 横', 'body.ports.chargePos', ports.chargePos || 0, -(body.width / 2 - 6), body.width / 2 - 6, 0.5, 'mm')}
-      ${sliderRow('扬声器位置 · 横', 'body.ports.speakerX', ports.speakerX ?? Math.round(-body.width * 0.28 * 10) / 10, -(body.width / 2 - sp.span / 2 - 1), body.width / 2 - sp.span / 2 - 1, 0.5, 'mm')}
-      ${sliderRow('麦克风位置 · 横', 'body.ports.micX', ports.micX ?? Math.round(body.width * 0.2 * 10) / 10, -(body.width / 2 - 2), body.width / 2 - 2, 0.5, 'mm')}
+      ${sliderRow('扬声器位置 · 横', 'body.ports.speakerX', ports.speakerX ?? Math.round(body.width * 0.28 * 10) / 10, -(body.width / 2 - sp.span / 2 - 1), body.width / 2 - sp.span / 2 - 1, 0.5, 'mm')}
+      <label class="field"><span>底部麦克风样式</span>
+        <select data-k="body.ports.micStyle">
+          ${[['hole', '小圆孔'], ['dot5', '5 圆孔'], ['dot6', '6 圆孔'], ['slot2', '2 槽形孔'], ['slot3', '3 槽形孔']].map(([v, n]) => `<option value="${v}" ${(ports.micStyle || 'hole') === v ? 'selected' : ''}>${n}</option>`).join('')}
+        </select>
+      </label>
+      ${sliderRow('麦克风位置 · 横', 'body.ports.micX', ports.micX ?? Math.round(-body.width * 0.2 * 10) / 10, -(body.width / 2 - micSpan / 2 - 1), body.width / 2 - micSpan / 2 - 1, 0.5, 'mm')}
       <label class="opt ${(ports.dualSpeaker) ? 'on' : ''}" style="display:flex;gap:6px;align-items:center;padding:6px 8px;margin-bottom:6px">
         <input type="checkbox" data-k="body.ports.dualSpeaker" data-bool="1" ${ports.dualSpeaker ? 'checked' : ''} style="width:auto" />
         <span>双扬声器（顶部 + 底部扬声器孔）</span>
       </label>
       ${ports.dualSpeaker ? sliderRow('顶部扬声器 · 横', 'body.ports.topSpeakerX', ports.topSpeakerX ?? Math.round(body.width * 0.28 * 10) / 10, -(body.width / 2 - sp.span / 2 - 1), body.width / 2 - sp.span / 2 - 1, 0.5, 'mm') : ''}
+      <label class="opt ${(ports.quadSpeaker) ? 'on' : ''}" style="display:flex;gap:6px;align-items:center;padding:6px 8px;margin-bottom:6px">
+        <input type="checkbox" data-k="body.ports.quadSpeaker" data-bool="1" ${ports.quadSpeaker ? 'checked' : ''} style="width:auto" />
+        <span>4 扬声器（底部/顶部各一对，折叠屏每半一只）</span>
+      </label>
       <label class="opt ${(ports.topMic) ? 'on' : ''}" style="display:flex;gap:6px;align-items:center;padding:6px 8px;margin-bottom:6px">
         <input type="checkbox" data-k="body.ports.topMic" data-bool="1" ${ports.topMic ? 'checked' : ''} style="width:auto" />
         <span>顶部麦克风孔</span>
@@ -360,19 +418,24 @@ export function renderDesigner(container, state, model, hooks = {}) {
       <label class="field"><span>结构</span>
         <select data-k="body.fold">
           <option value="none" ${body.fold === 'none' ? 'selected' : ''}>直板</option>
-          <option value="fold" ${body.fold === 'fold' ? 'selected' : ''} ${year >= 2020 ? '' : 'disabled'}>横向折叠（${year >= 2020 ? '可用' : '2020 年解锁'}）</option>
-          <option value="flip" ${body.fold === 'flip' ? 'selected' : ''} ${year >= 2020 ? '' : 'disabled'}>竖向翻折</option>
+          <option value="fold" ${body.fold === 'fold' ? 'selected' : ''} ${availYear >= 2020 ? '' : 'disabled'}>横向折叠（${availYear >= 2020 ? '可用' : '2020 年解锁'}）</option>
+          <option value="flip" ${body.fold === 'flip' ? 'selected' : ''} ${availYear >= 2020 ? '' : 'disabled'}>竖向翻折</option>
         </select>
       </label>
       ${body.fold !== 'none' ? `
-      <div class="tiny dim" style="margin:2px 0 4px">${body.fold === 'flip' ? '竖向翻折：闭合后机身减半长度，必须设计外屏' : '横向折叠：闭合后机身减半宽度，可选配外屏'}</div>
+      <div class="tiny" style="margin:2px 0 4px;padding:6px 8px;border-radius:7px;background:rgba(74,163,255,.08);line-height:1.8">
+        ${body.fold === 'flip'
+          ? `展开 <b>${body.width}×${Math.round(body.length * 2 * 10) / 10}mm</b>（单层）<br>折叠 <b>${body.width}×${body.length}mm</b>（双层，厚约 ${Math.round((body.thickness * 2 - 0.6) * 10) / 10}mm）`
+          : `展开 <b>${Math.round(body.width * 2 * 10) / 10}×${body.length}mm</b>（单层）<br>折叠 <b>${body.width}×${body.length}mm</b>（双层，厚约 ${Math.round((body.thickness * 2 - 0.6) * 10) / 10}mm）`}
+      </div>
+      <div class="tiny dim" style="margin:2px 0 4px">${body.fold === 'flip' ? '竖向翻折：机身尺寸为折叠态单半，内屏=展开态全幅，必须设计外屏' : '横向折叠：机身尺寸为折叠态单半，内屏=展开态全幅，可选配外屏'}</div>
       ${sliderRow('外屏尺寸', 'body.coverScreen.inch', body.coverScreen?.inch || 0, 0, body.fold === 'flip' ? 6.4 : 6.9, 0.1, '″')}
       ${(body.coverScreen?.inch || 0) > 0 ? `
       <label class="field"><span>外屏供应商</span>
         <select data-k="body.coverScreen.panelVendor">
           <option value="" ${!body.coverScreen?.panelVendor ? 'selected' : ''}>公版</option>
           ${PANEL_VENDORS.filter((v) => v.tech === 'oled').map((v) => {
-            const ok = v.year <= year && unlocked.includes(v.tech);
+            const ok = v.year <= availYear && unlocked.includes(v.tech);
             return `<option value="${v.id}" ${body.coverScreen?.panelVendor === v.id ? 'selected' : ''} ${ok ? '' : 'disabled'}>${v.name}${ok ? '' : `（${v.year} 年）`}</option>`;
           }).join('')}
         </select>
@@ -380,7 +443,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
       <label class="field"><span>外屏分辨率</span>
         <select data-k="body.coverScreen.res">
           ${RES_TIERS.map((r) => {
-            const ok = r.year <= year && r.level <= 1.0;
+            const ok = r.year <= availYear && r.level <= 1.0;
             return `<option value="${r.id}" ${(body.coverScreen?.res || 'res1080') === r.id ? 'selected' : ''} ${ok ? '' : 'disabled'}>${r.name}${ok ? '' : `（${r.year} 年）`}</option>`;
           }).join('')}
         </select>
@@ -397,7 +460,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
       <label class="field"><span>有线快充</span>
         <select data-k="parts.charge.wired">
           ${CHARGERS.wired.map((x) => {
-            const ok = unlocked.includes(x.tech) && x.year <= year;
+            const ok = unlocked.includes(x.tech) && x.year <= availYear;
             return `<option value="${x.id}" ${(d.parts.charge?.wired) === x.id ? 'selected' : ''} ${ok ? '' : 'disabled'}>${x.name}${ok ? '' : '（未解锁）'}</option>`;
           }).join('')}
         </select>
@@ -405,7 +468,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
       <label class="field"><span>快充协议</span>
         <select data-k="parts.charge.proto">
           ${CHARGERS.proto.map((x) => {
-            const ok = unlocked.includes(x.tech) && x.year <= year;
+            const ok = unlocked.includes(x.tech) && x.year <= availYear;
             return `<option value="${x.id}" ${(d.parts.charge?.proto) === x.id ? 'selected' : ''} ${ok ? '' : 'disabled'}>${x.name}${ok ? '' : '（未解锁）'}</option>`;
           }).join('')}
         </select>
@@ -413,7 +476,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
       <label class="field"><span>无线充电</span>
         <select data-k="parts.charge.wireless" ${d.parts.extras.includes('x_wl') ? '' : 'disabled'}>
           ${CHARGERS.wireless.map((x) => {
-            const ok = unlocked.includes(x.tech) && x.year <= year;
+            const ok = unlocked.includes(x.tech) && x.year <= availYear;
             return `<option value="${x.id}" ${(d.parts.charge?.wireless) === x.id ? 'selected' : ''} ${ok ? '' : 'disabled'}>${x.name}${d.parts.extras.includes('x_wl') ? (ok ? '' : '（未解锁）') : '（需勾选无线充电）'}</option>`;
           }).join('')}
         </select>
@@ -425,7 +488,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
           const on = model.design.parts.extras.includes(x.id);
           return `<label class="opt ${on ? 'on' : ''} ${ok ? '' : 'disabled'}" style="text-align:left;padding:6px 8px;display:flex;gap:6px;align-items:center">
             <input type="checkbox" data-x="${x.id}" ${on ? 'checked' : ''} ${ok ? '' : 'disabled'} style="width:auto" />
-            <span>${x.name}${x.year && x.year > year ? `（${x.year}）` : ''}</span>
+            <span>${x.name}${x.year && x.year > availYear ? `（${x.year}）` : ''}</span>
           </label>`;
         }).join('')}
       </div>`);
@@ -492,7 +555,15 @@ export function renderDesigner(container, state, model, hooks = {}) {
       ${d.logoOnBack ? `
       ${sliderRow('Logo 位置 · 横', 'branding.logoX', br.logoX, -(b.width / 2), b.width / 2, 0.5, 'mm')}
       ${sliderRow('Logo 位置 · 纵', 'branding.logoY', br.logoY, -(b.length / 2), b.length / 2, 0.5, 'mm')}
-      ${sliderRow('Logo 大小', 'branding.logoSize', br.logoSize, 3, Math.max(8, b.width * 0.5), 0.5, 'mm')}` : ''}
+      ${sliderRow('Logo 大小', 'branding.logoSize', br.logoSize, 3, Math.max(8, b.width * 0.5), 0.5, 'mm')}
+      <label class="field"><span>Logo 颜色 <span class="tiny dim">（默认跟随公司 Logo 色）</span></span>
+        <input type="color" data-k="branding.logoColor" value="${br.logoColor || state.company.logoColor || '#4aa3ff'}" style="width:100%;height:26px;padding:2px;background:#10151c;border:1px solid var(--line-2);border-radius:7px;cursor:pointer" />
+      </label>
+      <label class="field"><span>Logo 表面效果</span>
+        <select data-k="branding.logoFinish">
+          ${[['img', '原图质感'], ['metal', '金属'], ['glass', '玻璃'], ['plastic', '塑料']].map(([v, n]) => `<option value="${v}" ${(br.logoFinish || 'img') === v ? 'selected' : ''}>${n}</option>`).join('')}
+        </select>
+      </label>` : ''}
       <label class="opt ${d.brandText ? 'on' : ''}" style="display:flex;gap:6px;align-items:center;padding:6px 8px;margin-bottom:6px">
         <input type="checkbox" data-k="brandText" data-bool="1" ${d.brandText ? 'checked' : ''} style="width:auto" />
         <span>背面文字</span>
@@ -511,7 +582,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
     const cur = d.screen.panel;
     const own = d.parts.ownPanel;
     return SCREENS.map((s) => {
-      const ok = unlocked.includes(s.tech) && s.year <= year;
+      const ok = unlocked.includes(s.tech) && s.year <= availYear;
       return `<option value="${s.id}" ${cur === s.id && !own ? 'selected' : ''} ${ok ? '' : 'disabled'}>${s.label} · ${s.year}${ok ? '' : '（未解锁）'}</option>`;
     }).join('') + `<option value="__own" ${own ? 'selected' : ''} ${(state.divisions?.panel?.level || 0) < 1 ? 'disabled' : ''}>自研面板${(state.divisions?.panel?.level || 0) >= 1 ? ` ${state.divisions.panel.level}.0 · 品质 ${Math.round(ownPanelSpec(state).quality)}` : '（需成立面板研发部）'}</option>`;
   }
@@ -522,7 +593,9 @@ export function renderDesigner(container, state, model, hooks = {}) {
     const lt = lensTypeById(l.type);
     const ownLv = divs.optics?.level || 0;
     // 传感器候选：角色匹配的全部型号按品牌分组（未解锁的以禁用态留在组内），自研传感器需光学部
-    const candidates = IMAGE_SENSORS.filter((s) => s.roles.includes(lt.name));
+    // LENS_TYPES 用全名（潜望长焦），传感器 roles 用短名（潜望）——按映射表换算
+    const roleName = { '潜望长焦': '潜望' }[lt.name] || lt.name;
+    const candidates = IMAGE_SENSORS.filter((s) => s.roles.includes(roleName));
     const sGroups = [];
     const sByName = new Map();
     for (const s of candidates) {
@@ -531,7 +604,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
       sByName.get(g).items.push(s);
     }
     const sensorOpts = sGroups.map((g) => `<optgroup label="${g.name}">${g.items.map((s) => {
-      const ok = s.year <= year && unlocked.includes(s.tech);
+      const ok = s.year <= availYear && unlocked.includes(s.tech);
       return `<option value="${s.id}" ${l.sensor === s.id ? 'selected' : ''} ${ok ? '' : 'disabled'}>${s.name} · ${s.mp}MP · ${s.format} · ¥${s.price}${ok ? '' : '（未解锁）'}</option>`;
     }).join('')}</optgroup>`).join('');
     const ownOpt = ownLv >= 1 || l.sensor === 'sn_own'
@@ -622,7 +695,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
       return `<label class="field"><span>${label}</span>
       <select data-k="${key}">
         ${groups.map((g) => `<optgroup label="${g.name}">${g.items.map((x) => {
-          const ok = unlocked.includes(x[techKey]) && x.year <= year;
+          const ok = unlocked.includes(x[techKey]) && x.year <= availYear;
           let ownOk = true, ownTip = '';
           if (x.own && key === 'parts.cpu') { ownOk = lv >= 1; ownTip = '（需成立半导体研发中心）'; }
           return `<option value="${x.id}" ${cur === x.id ? 'selected' : ''} ${ok && ownOk ? '' : 'disabled'}>${fmt(x)}${ok ? '' : '（未解锁）'}${ownTip}</option>`;
@@ -633,7 +706,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
     return `<label class="field"><span>${label}</span>
       <select data-k="${key}">
         ${list.map((x) => {
-          const ok = unlocked.includes(x[techKey]) && x.year <= year;
+          const ok = unlocked.includes(x[techKey]) && x.year <= availYear;
           // 自研部件需要对应部门等级
           let ownOk = true, ownTip = '';
           if (x.own) {
@@ -722,17 +795,23 @@ export function renderDesigner(container, state, model, hooks = {}) {
     const cols = 3, rows = 2;
     const cw = w / cols, ch = h / rows;
     const b = model.design.body;
-    // 折叠态：足迹减半（flip 长度减半 / fold 宽度减半），厚度按两层机身
+    // 折叠机型 2D 语义：body 尺寸 = 折叠态单半足迹。
+    // 折叠态：足迹不变（即单半），厚度按两层机身（扣铰链间隙），侧/顶视图画双层接缝；
+    // 展开态：单层厚度，标记 __openFold 供 drawGridView 扩边渲染（fold 宽×2 / flip 长×2）+折痕+背部分屏
     const folded = foldView === 'folded' && b.fold !== 'none';
     let design2 = model.design;
-    if (folded) {
+    if (b.fold !== 'none') {
       design2 = JSON.parse(JSON.stringify(model.design));
-      design2.body.length = b.fold === 'flip' ? b.length / 2 : b.length;
-      design2.body.width = b.fold === 'fold' ? b.width / 2 : b.width;
-      design2.body.thickness = Math.round((b.thickness * 2 - 0.6) * 10) / 10;
-      design2.__foldedView = true;
+      if (folded) {
+        design2.body.thickness = Math.round((b.thickness * 2 - 0.6) * 10) / 10;
+        design2.__foldedView = true;
+      } else {
+        design2.__openFold = true;
+      }
     }
-    const scale = Math.min((cw - 46) / b.width, (ch - 52) / b.length, 3.2);
+    const fpW = b.fold === 'fold' && !folded ? b.width * 2 : b.width;
+    const fpL = b.fold === 'flip' && !folded ? b.length * 2 : b.length;
+    const scale = Math.min((cw - 46) / fpW, (ch - 52) / fpL, 3.2);
     VIEWS.forEach((v, i) => {
       const cx = (i % cols) * cw, cy = Math.floor(i / cols) * ch;
       drawGridView(ctx, cx, cy, cw, ch, v, design2, scale);
@@ -754,8 +833,20 @@ export function renderDesigner(container, state, model, hooks = {}) {
     const b = d.body;
     const isSide = view.id === 'left' || view.id === 'right';
     const isTop = view.id === 'top' || view.id === 'bottom';
-    const realW = isSide ? b.thickness : b.width;
-    const realH = isTop ? b.thickness : b.length;
+    const openFold = !!d.__openFold && b.fold !== 'none';
+    const twoLayer = !!d.__foldedView && (isSide || isTop);
+    // 展开态折叠机足迹：正/背视图 fold 宽×2 / flip 长×2；顶/底视图仅 fold 宽×2（flip 展开加长不改变顶视宽度）；
+    // 侧视图仅 flip 长×2；折叠态侧/顶视图 = 双层机身（中间留铰链缝隙）
+    let realW = isSide ? b.thickness : b.width;
+    let realH = isTop ? b.thickness : b.length;
+    if (openFold && !isSide && !isTop) {
+      if (b.fold === 'fold') realW = b.width * 2;
+      else realH = b.length * 2;
+    } else if (openFold && isTop && b.fold === 'fold') {
+      realW = b.width * 2;
+    } else if (openFold && isSide && b.fold === 'flip') {
+      realH = b.length * 2;
+    }
     const W = realW * scale, H = realH * scale;
     const x = x0 + (cw - W) / 2, y = y0 + (ch - H) / 2;
 
@@ -774,30 +865,61 @@ export function renderDesigner(container, state, model, hooks = {}) {
     ctx.fillText(view.name, x0 + 10, y0 + 16);
     ctx.textAlign = 'right';
     ctx.fillStyle = '#4a5464';
-    ctx.fillText(isSide ? `厚 ${b.thickness}mm` : isTop ? `${b.width}×${b.thickness}mm` : `${b.length}×${b.width}mm`, x0 + cw - 10, y0 + 16);
+    const exW = openFold && b.fold === 'fold' ? Math.round(b.width * 2 * 10) / 10 : b.width;
+    const exH = openFold && b.fold === 'flip' ? Math.round(b.length * 2 * 10) / 10 : b.length;
+    ctx.fillText(isSide ? `厚 ${b.thickness}mm` : isTop ? `${exW}×${b.thickness}mm` : `${exH}×${exW}mm`, x0 + cw - 10, y0 + 16);
 
-    // 机身（侧视图/顶视图的圆角受厚度限制，避免出现胶囊形半圆端）
-    const rMm = isSide || isTop ? Math.min(b.corner, realW / 2, realH / 2) : b.corner;
-    const rPx = Math.max(2, rMm * scale);
-    ctx.save();
-    ctx.shadowColor = 'rgba(0,0,0,.5)';
-    ctx.shadowBlur = 14;
-    ctx.shadowOffsetY = 5;
-    const bodyGrad = ctx.createLinearGradient(x, y, x + W, y + H);
+    // 机身：折叠态侧/顶视图画两层独立边框（中间留 0.6mm 铰链缝隙），其余为单块
     const viewColor = view.id === 'back' ? partColor('back') : partColor('frame');
-    bodyGrad.addColorStop(0, shade(viewColor, 26));
-    bodyGrad.addColorStop(0.5, viewColor);
-    bodyGrad.addColorStop(1, shade(viewColor, -18));
-    ctx.fillStyle = bodyGrad;
-    roundRect(ctx, x, y, W, H, rPx);
-    ctx.fill();
-    ctx.restore();
-
-    // 边框高光
-    ctx.strokeStyle = 'rgba(255,255,255,.18)';
-    ctx.lineWidth = 1;
-    roundRect(ctx, x + 0.5, y + 0.5, W - 1, H - 1, rPx);
-    ctx.stroke();
+    const gapPx = 0.6 * scale;
+    const layers = [];
+    if (twoLayer) {
+      if (isSide) {
+        const lw = (W - gapPx) / 2;
+        layers.push([x, y, lw, H], [x + lw + gapPx, y, lw, H]);
+      } else {
+        const lh = (H - gapPx) / 2;
+        layers.push([x, y, W, lh], [x, y + lh + gapPx, W, lh]);
+      }
+    } else {
+      layers.push([x, y, W, H]);
+    }
+    for (const [lx, ly, lw, lh] of layers) {
+      const rLm = isSide || isTop ? Math.min(b.corner, lw / scale / 2, lh / scale / 2) : b.corner;
+      const rLp = Math.max(2, rLm * scale);
+      ctx.save();
+      ctx.shadowColor = 'rgba(0,0,0,.5)';
+      ctx.shadowBlur = 14;
+      ctx.shadowOffsetY = 5;
+      const bodyGrad = ctx.createLinearGradient(lx, ly, lx + lw, ly + lh);
+      bodyGrad.addColorStop(0, shade(viewColor, 26));
+      bodyGrad.addColorStop(0.5, viewColor);
+      bodyGrad.addColorStop(1, shade(viewColor, -18));
+      ctx.fillStyle = bodyGrad;
+      roundRect(ctx, lx, ly, lw, lh, rLp);
+      ctx.fill();
+      ctx.restore();
+      // 边框高光
+      ctx.strokeStyle = 'rgba(255,255,255,.18)';
+      ctx.lineWidth = 1;
+      roundRect(ctx, lx + 0.5, ly + 0.5, lw - 1, lh - 1, rLp);
+      ctx.stroke();
+    }
+    // 折叠态双层：铰链端金属标记（画在缝隙端部）
+    if (twoLayer) {
+      ctx.fillStyle = 'rgba(160,170,182,.85)';
+      const hw = Math.max(3, 2.4 * scale);
+      if (isSide) {
+        // fold：铰链沿长度方向（左视图可见铰链面）；flip：铰链横穿宽度（侧视下端断面）
+        if (b.fold === 'fold') ctx.fillRect(x - 0.5, y + 2, 2.5, H - 4);
+        else { ctx.beginPath(); ctx.arc(x + W / 2, y + H - 2, hw * 0.6, 0, Math.PI * 2); ctx.fill(); }
+      } else if (b.fold === 'fold') {
+        ctx.fillRect(x + 2, y + H / 2 - 1, W - 4, 2);
+      } else {
+        ctx.fillRect(x + W / 2 - hw / 2, y + H / 2 - 1, hw, 2);
+      }
+    }
+    const rPx = Math.max(2, (isSide || isTop ? Math.min(b.corner, realW / 2, realH / 2) : b.corner) * scale);
 
     if (view.id === 'front') {
       // 折叠态正视图：显示外屏（cover screen）
@@ -822,16 +944,25 @@ export function renderDesigner(container, state, model, hooks = {}) {
         return;
       }
       const scr = screenSize(d);
-      const sw = scr.w * scale, sh = scr.h * scale;
+      // 折叠机内屏钳制到展开足迹（减边框），保证视觉上铺满展开机身
+      const maxSw = (openFold && b.fold === 'fold' ? b.width * 2 : b.width) - d.screen.bezel * 2 - 0.6;
+      const maxSh = (openFold && b.fold === 'flip' ? b.length * 2 : b.length) - d.screen.bezel * 2 - 0.6;
+      const sw = Math.min(scr.w, maxSw) * scale, sh = Math.min(scr.h, maxSh) * scale;
       const sx = x + (W - sw) / 2, sy = y + (H - sh) / 2;
-      const g = ctx.createLinearGradient(sx, sy, sx + sw, sy + sh);
-      g.addColorStop(0, '#0e1826');
-      g.addColorStop(0.42, '#17293f');
-      g.addColorStop(0.46, '#4d7fae');
-      g.addColorStop(1, '#0a1018');
-      ctx.fillStyle = g;
-      roundRect(ctx, sx, sy, sw, sh, Math.max(2, d.body.corner * scale * 0.7));
-      ctx.fill();
+      const sr = Math.max(2, d.body.corner * scale * 0.7);
+      if (openFold) {
+        // 折叠机展开态：专用宽幅内屏壁纸（铺满整个展开面），后续再叠加折痕
+        drawWideWallpaper(ctx, sx, sy, sw, sh, sr, b.fold);
+      } else {
+        const g = ctx.createLinearGradient(sx, sy, sx + sw, sy + sh);
+        g.addColorStop(0, '#0e1826');
+        g.addColorStop(0.42, '#17293f');
+        g.addColorStop(0.46, '#4d7fae');
+        g.addColorStop(1, '#0a1018');
+        ctx.fillStyle = g;
+        roundRect(ctx, sx, sy, sw, sh, sr);
+        ctx.fill();
+      }
       // 屏幕反光
       ctx.save();
       ctx.globalAlpha = 0.18;
@@ -844,6 +975,26 @@ export function renderDesigner(container, state, model, hooks = {}) {
       ctx.closePath();
       ctx.fill();
       ctx.restore();
+
+      // 展开态折叠机：屏幕中缝折痕（垂直折线 fold / 水平折线 flip）
+      if (openFold) {
+        ctx.save();
+        roundRect(ctx, sx, sy, sw, sh, Math.max(2, d.body.corner * scale * 0.7));
+        ctx.clip();
+        ctx.strokeStyle = 'rgba(255,255,255,.09)';
+        ctx.lineWidth = Math.max(1, 0.7 * scale);
+        ctx.beginPath();
+        if (d.body.fold === 'fold') { ctx.moveTo(sx + sw / 2, sy); ctx.lineTo(sx + sw / 2, sy + sh); }
+        else { ctx.moveTo(sx, sy + sh / 2); ctx.lineTo(sx + sw, sy + sh / 2); }
+        ctx.stroke();
+        ctx.strokeStyle = 'rgba(0,0,0,.22)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        if (d.body.fold === 'fold') { ctx.moveTo(sx + sw / 2 + 1.5, sy); ctx.lineTo(sx + sw / 2 + 1.5, sy + sh); }
+        else { ctx.moveTo(sx, sy + sh / 2 + 1.5); ctx.lineTo(sx + sw, sy + sh / 2 + 1.5); }
+        ctx.stroke();
+        ctx.restore();
+      }
 
       // 开孔（屏下摄像头时隐藏单孔）
       ctx.fillStyle = '#05080c';
@@ -869,8 +1020,41 @@ export function renderDesigner(container, state, model, hooks = {}) {
 
     if (view.id === 'back') {
       // 背面 mm→px 坐标（原点=机身中心，+y 朝上）：镜头 / 闪光灯 / Logo / 文字共用
-      const px = (xmm) => x + W / 2 + xmm * scale;
-      const py = (ymm) => y + H / 2 - ymm * scale;
+      // 展开态折叠机：镜头在半A（fold=正视右半→背视左半；flip=上半），模组坐标映射到该半区中心；
+      // 另一半区画外屏（有 coverScreen 时）或纯后盖
+      const camHalfDX = openFold && b.fold === 'fold' ? -W / 4 : 0;
+      const camHalfDY = openFold && b.fold === 'flip' ? -H / 4 : 0;
+      const px = (xmm) => x + W / 2 + camHalfDX + xmm * scale;
+      const py = (ymm) => y + H / 2 + camHalfDY - ymm * scale;
+      if (openFold) {
+        const cv = b.coverScreen?.inch || 0;
+        ctx.save();
+        roundRect(ctx, x, y, W, H, rPx);
+        ctx.clip();
+        // 分缝
+        ctx.strokeStyle = 'rgba(0,0,0,.5)';
+        ctx.lineWidth = Math.max(1.2, 0.9 * scale * 0.4);
+        ctx.beginPath();
+        if (b.fold === 'fold') { ctx.moveTo(x + W / 2, y - 2); ctx.lineTo(x + W / 2, y + H + 2); }
+        else { ctx.moveTo(x - 2, y + H / 2); ctx.lineTo(x + W + 2, y + H / 2); }
+        ctx.stroke();
+        // 外屏半区（fold=背视右半 / flip=下半）
+        if (cv > 0) {
+          const gx = b.fold === 'fold' ? x + W / 2 : x;
+          const gy = b.fold === 'flip' ? y + H / 2 : y;
+          const gw = b.fold === 'fold' ? W / 2 : W;
+          const gh = b.fold === 'flip' ? H / 2 : H;
+          const cg = ctx.createLinearGradient(gx, gy, gx + gw, gy + gh);
+          cg.addColorStop(0, '#0e1826'); cg.addColorStop(0.5, '#2b5a8c'); cg.addColorStop(1, '#0a1018');
+          ctx.fillStyle = cg;
+          ctx.fillRect(gx, gy, gw, gh);
+          ctx.fillStyle = 'rgba(255,255,255,.4)';
+          ctx.font = '10px -apple-system, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillText(`外屏 ${cv}″`, gx + gw / 2, gy + gh / 2 + 3);
+        }
+        ctx.restore();
+      }
       // 摄像头模组（按 cameraModuleRect 定位，含位置偏移与大小）
       ensureLenses(d);
       if (d.camera.lenses.length > 0) {
@@ -900,15 +1084,19 @@ export function renderDesigner(container, state, model, hooks = {}) {
           const look = LENS_LOOK[l.type] || LENS_LOOK.main;
           const rad = (lensRadiusMm(sn ? sn.format : '1/2.4″')) * (l.size || 1) * scale * 0.82;
           const lx = px(rect.cx + l.x), ly = py(rect.cy + l.y);
-          // 潜望长焦：方形基座 + 圆镜（真机潜望模组形态）
+          // 潜望长焦：立式棱镜模组（竖长圆角矩形，镜组偏上、下端棱镜反光窗）
           if (look.plate !== null) {
-            const pw = rad * 2.35;
+            const pw = rad * 2.4, ph = rad * 3.5;
+            const py0 = ly - ph * 0.42;
             ctx.fillStyle = 'rgba(10,14,20,.88)';
-            roundRect(ctx, lx - pw / 2, ly - pw / 2, pw, pw, pw * 0.28);
+            roundRect(ctx, lx - pw / 2, py0, pw, ph, pw * 0.34);
             ctx.fill();
             ctx.strokeStyle = 'rgba(255,255,255,.10)';
-            roundRect(ctx, lx - pw / 2 + 0.5, ly - pw / 2 + 0.5, pw - 1, pw - 1, pw * 0.28);
+            roundRect(ctx, lx - pw / 2 + 0.5, py0 + 0.5, pw - 1, ph - 1, pw * 0.34);
             ctx.stroke();
+            ctx.fillStyle = 'rgba(150,190,235,.16)';
+            roundRect(ctx, lx - pw * 0.3, py0 + ph * 0.6, pw * 0.6, ph * 0.3, pw * 0.14);
+            ctx.fill();
           }
           // 镜筒玻璃（高光偏移渐变，色膜随焦段不同）
           const gHi = Math.min(255, ((look.glass >> 16) & 255) + 46);
@@ -982,10 +1170,17 @@ export function renderDesigner(container, state, model, hooks = {}) {
         const half = (br.logoSize / 2) * scale;
         ctx.save();
         ctx.shadowColor = 'rgba(0,0,0,.35)'; ctx.shadowBlur = 3;
-        if (logoImg) {
-          ctx.drawImage(logoImg, lpx - half, lpy - half, half * 2, half * 2);
+        const lc = makeLogoCanvas();
+        if (lc) {
+          ctx.drawImage(lc, lpx - half, lpy - half, half * 2, half * 2);
         } else {
-          ctx.fillStyle = state.company.logoColor || '#4aa3ff';
+          // 无 Logo 图像：色块（按所选颜色与材质上渐变）
+          const base = br.logoColor || state.company.logoColor || '#4aa3ff';
+          const stops = logoShadeStops(base, br.logoFinish || 'img') || [base, base, base, base];
+          const lg = ctx.createLinearGradient(lpx, lpy - half, lpx, lpy + half);
+          lg.addColorStop(0, stops[0]); lg.addColorStop(0.42, stops[1]);
+          lg.addColorStop(0.62, stops[2]); lg.addColorStop(1, stops[3]);
+          ctx.fillStyle = lg;
           roundRect(ctx, lpx - half, lpy - half, half * 2, half * 2, Math.max(1, half * 0.3));
           ctx.fill();
         }
@@ -1023,7 +1218,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
         if (btnStyle === 'opposite') keys.push([H * 0.2, H * 0.08]);
         else keys.push([H * 0.33, H * 0.08]);
       }
-      const isSlot = btnStyle === 'strip' && view.id === 'left';
+      const isSlot = btnStyle === 'strip'; // strip：两侧键都是槽型（音量槽 + 电源槽）
       for (const [ty, th] of keys) {
         const bh = Math.max(3, th);
         if (isSlot) {
@@ -1071,14 +1266,16 @@ export function renderDesigner(container, state, model, hooks = {}) {
         ctx.fill();
       };
       const sp = speakerRowSpec(ports.speakerStyle);
-      const drawSpeaker = (cxmm) => {
-        if (sp.kind === 'slot') {
-          const pitch = sp.w + sp.gap;
-          for (let i = 0; i < sp.n; i++) slot(cxmm + (i - (sp.n - 1) / 2) * pitch, sp.w, sp.h);
+      const micSp = ports.micStyle && ports.micStyle !== 'hole' ? speakerRowSpec(ports.micStyle) : null;
+      const drawRow = (cxmm, spec) => { // 按样式规格画一排开孔
+        if (spec.kind === 'slot') {
+          const pitch = spec.w + spec.gap;
+          for (let i = 0; i < spec.n; i++) slot(cxmm + (i - (spec.n - 1) / 2) * pitch, spec.w, spec.h);
         } else {
-          for (let i = 0; i < sp.n; i++) hole(cxmm + (i - (sp.n - 1) / 2) * sp.gap, sp.d, sp.d);
+          for (let i = 0; i < spec.n; i++) hole(cxmm + (i - (spec.n - 1) / 2) * spec.gap, spec.d, spec.d);
         }
       };
+      const drawSpeaker = (cxmm) => drawRow(cxmm, sp);
       // 充电口：标准开口尺寸；custom 用用户定义形状
       const po = PORT_OPENINGS[ports.charge] || { w: ports.chargeShape?.w || 6, h: ports.chargeShape?.h || 3 };
       const portShape = ports.charge === 'custom' ? (ports.chargeShape?.style || 'round') : (ports.charge === 'micro' ? 'rect' : 'capsule');
@@ -1092,12 +1289,90 @@ export function renderDesigner(container, state, model, hooks = {}) {
         roundRect(ctx, PX(cxmm) - pw * scale / 2, cy - ph * scale / 2, Math.max(1.4, pw * scale), Math.max(1, ph * scale), Math.min(pw, ph) * scale * 0.3);
         ctx.fill();
       };
-      if (isBottom) {
+      if (twoLayer) {
+        // 折叠态：两层各画各的开孔。上层 = 半B，下层 = 半A（fold：半A带全套底部开孔；
+        // flip：折叠后顶边 = 半A顶边 + 半B底边，故顶视图见两排，底视图为铰链侧无开孔）
+        const cyA = isSide ? cy : y + H - (H - gapPx) / 4;          // 下层中心
+        const cyB = isSide ? cy : y + (H - gapPx) / 4;              // 上层中心
+        const PXA = (xmm) => (isSide ? x + W - (W - gapPx) / 4 : x + W / 2 + xmm * scale);
+        const PXB = (xmm) => (isSide ? x + (W - gapPx) / 4 : x + W / 2 + xmm * scale);
+        const holeL = (cyp, xmm, pw, ph) => {
+          ctx.fillStyle = '#0a0f15';
+          ctx.beginPath();
+          ctx.ellipse(isSide ? xmm : PX(xmm), cyp, Math.max(0.8, pw * scale / 2), Math.max(0.8, ph * scale / 2), 0, 0, Math.PI * 2);
+          ctx.fill();
+        };
+        const slotL = (cyp, xmm, pw, ph) => {
+          ctx.fillStyle = '#0a0f15';
+          roundRect(ctx, (isSide ? xmm : PX(xmm)) - pw * scale / 2, cyp - ph * scale / 2, Math.max(1.4, pw * scale), Math.max(1, ph * scale), ph * scale / 2);
+          ctx.fill();
+        };
+        const rowL = (cyp, xmm, spec) => {
+          if (spec.kind === 'slot') {
+            const pitch = spec.w + spec.gap;
+            for (let i = 0; i < spec.n; i++) slotL(cyp, xmm + (i - (spec.n - 1) / 2) * pitch, spec.w, spec.h);
+          } else {
+            for (let i = 0; i < spec.n; i++) holeL(cyp, xmm + (i - (spec.n - 1) / 2) * spec.gap, spec.d, spec.d);
+          }
+        };
+        const spkL = (cyp, xmm) => rowL(cyp, xmm, sp);
+        const micL = (cyp, xmm) => micSp ? rowL(cyp, xmm, micSp) : holeL(cyp, xmm, 1.2, 1.2);
+        const portL = (cyp, xmm) => {
+          if (portShape === 'capsule') slotL(cyp, xmm, po.w, po.h);
+          else if (portShape === 'round') holeL(cyp, xmm, po.w, po.w);
+          else slotL(cyp, xmm, po.w, po.h);
+        };
+        const spX = ports.speakerX ?? b.width * 0.28;
+        const tSpX = ports.topSpeakerX ?? b.width * 0.28;
+        if (b.fold === 'fold') {
+          if (isBottom) {
+            // 下层（半A）：充电口 + 扬声器 + 麦克风；上层（半B）：quadSpeaker 时镜像扬声器（折叠后与半A对齐）
+            portL(cyA, ports.chargePos || 0);
+            spkL(cyA, spX);
+            micL(cyA, ports.micX ?? -b.width * 0.2);
+            if (ports.quadSpeaker) spkL(cyB, spX);
+          } else {
+            if (ports.dualSpeaker) spkL(cyA, tSpX);
+            if (ports.topMic) holeL(cyA, ports.topMicX ?? -b.width * 0.2, 1.2, 1.2);
+            if (ports.quadSpeaker) spkL(cyB, tSpX);
+          }
+        } else if (!isBottom) {
+          // flip 折叠：顶视图 = 上层（半B底边：充电/扬声器/麦克风）+ 下层（半A顶边：顶部扬声器/麦克风）
+          portL(cyB, ports.chargePos || 0);
+          spkL(cyB, spX);
+          micL(cyB, ports.micX ?? -b.width * 0.2);
+          if (ports.quadSpeaker) spkL(cyB, -(ports.speakerX ?? b.width * 0.28));
+          if (ports.dualSpeaker) spkL(cyA, tSpX);
+          if (ports.topMic) holeL(cyA, ports.topMicX ?? -b.width * 0.2, 1.2, 1.2);
+        }
+      } else if (openFold && b.fold === 'fold') {
+        // 展开态横向折叠：全宽足迹，半A（右半）带全套开孔，quadSpeaker 时半B镜像扬声器（折叠后两半对齐）
+        const hw = b.width / 2;
+        if (isBottom) {
+          drawPort(hw + (ports.chargePos || 0));
+          drawSpeaker(hw + (ports.speakerX ?? b.width * 0.28));
+          micSp ? drawRow(hw + (ports.micX ?? -b.width * 0.2), micSp) : hole(hw + (ports.micX ?? -b.width * 0.2), 1.2, 1.2);
+          if (ports.quadSpeaker) drawSpeaker(-(hw + (ports.speakerX ?? b.width * 0.28)));
+        } else {
+          if (ports.dualSpeaker) drawSpeaker(hw + (ports.topSpeakerX ?? b.width * 0.28));
+          if (ports.quadSpeaker) drawSpeaker(-(hw + (ports.topSpeakerX ?? b.width * 0.28)));
+          if (ports.topMic) hole(hw + (ports.topMicX ?? -b.width * 0.2), 1.2, 1.2);
+        }
+        // 中缝（铰链在中央，展开时不可见，仅画浅折线）
+        ctx.strokeStyle = 'rgba(0,0,0,.28)';
+        ctx.lineWidth = Math.max(1, 0.5 * scale);
+        ctx.beginPath();
+        ctx.moveTo(x + W / 2, y + 2);
+        ctx.lineTo(x + W / 2, y + H - 2);
+        ctx.stroke();
+      } else if (isBottom) {
         drawPort(ports.chargePos || 0);
-        drawSpeaker(ports.speakerX ?? -b.width * 0.28);
-        hole(ports.micX ?? b.width * 0.2, 1.2, 1.2);
+        drawSpeaker(ports.speakerX ?? b.width * 0.28);
+        micSp ? drawRow(ports.micX ?? -b.width * 0.2, micSp) : hole(ports.micX ?? -b.width * 0.2, 1.2, 1.2);
+        if (ports.quadSpeaker) drawSpeaker(-(ports.speakerX ?? b.width * 0.28));
       } else {
         if (ports.dualSpeaker) drawSpeaker(ports.topSpeakerX ?? b.width * 0.28);
+        if (ports.quadSpeaker) drawSpeaker(-(ports.topSpeakerX ?? b.width * 0.28));
         if (ports.topMic) hole(ports.topMicX ?? -b.width * 0.2, 1.2, 1.2);
       }
     }
@@ -1107,6 +1382,89 @@ export function renderDesigner(container, state, model, hooks = {}) {
     ctx.font = '10px monospace';
     ctx.textAlign = 'center';
     if (!isSide) ctx.fillText(`${b.width} mm`, x + W / 2, y + H + 12);
+  }
+
+  // 折叠机展开态专用内屏壁纸：宽幅桌面铺满整个展开面（时钟/图标/.Dock 按展开比例重排）
+  function drawWideWallpaper(ctx, sx, sy, sw, sh, sr, fold) {
+    ctx.save();
+    roundRect(ctx, sx, sy, sw, sh, sr);
+    ctx.clip();
+    // 底色：横幅渐变（fold 横向流动 / flip 纵向）
+    const g = ctx.createLinearGradient(sx, sy, sx + sw * 0.9, sy + sh);
+    g.addColorStop(0, '#0a1f38');
+    g.addColorStop(0.3, '#14497e');
+    g.addColorStop(0.55, '#3a6fb8');
+    g.addColorStop(0.78, '#5b4a9e');
+    g.addColorStop(1, '#0b0f1c');
+    ctx.fillStyle = g;
+    ctx.fillRect(sx, sy, sw, sh);
+    // 氛围光斑
+    const rg = ctx.createRadialGradient(sx + sw * 0.26, sy + sh * 0.3, 4, sx + sw * 0.26, sy + sh * 0.3, Math.max(sw, sh) * 0.5);
+    rg.addColorStop(0, 'rgba(140,210,255,.4)');
+    rg.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = rg;
+    ctx.fillRect(sx, sy, sw, sh);
+    const rg2 = ctx.createRadialGradient(sx + sw * 0.8, sy + sh * 0.75, 4, sx + sw * 0.8, sy + sh * 0.75, Math.max(sw, sh) * 0.42);
+    rg2.addColorStop(0, 'rgba(190,140,255,.32)');
+    rg2.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = rg2;
+    ctx.fillRect(sx, sy, sw, sh);
+    // 时钟（fold=左半区上侧；flip=上半中央）
+    const clockX = fold === 'flip' ? sx + sw / 2 : sx + sw * 0.27;
+    const clockY = fold === 'flip' ? sy + sh * 0.2 : sy + sh * 0.3;
+    ctx.fillStyle = 'rgba(255,255,255,.92)';
+    ctx.textAlign = 'center';
+    ctx.font = `600 ${Math.max(10, sh * 0.11)}px -apple-system, "Segoe UI", sans-serif`;
+    ctx.fillText('09:41', clockX, clockY);
+    ctx.font = `400 ${Math.max(5, sh * 0.038)}px -apple-system, "Segoe UI", sans-serif`;
+    ctx.fillStyle = 'rgba(255,255,255,.66)';
+    ctx.fillText('11月6日 星期五', clockX, clockY + sh * 0.06);
+    // 图标网格：6 列 × 3 行铺满展开面
+    const cols = 6, rows = 3;
+    const size = Math.min(sw * 0.09, sh * 0.13);
+    const gapX = (sw - 32 - cols * size) / (cols - 1);
+    const startY = fold === 'flip' ? sy + sh * 0.3 : sy + sh * 0.44;
+    const palette = ['#3a7bd5', '#e0533d', '#2fb37a', '#f2b134', '#8b5cf6', '#22a8c9', '#e8548a', '#5b6b7f', '#4aa3ff', '#37c9a5', '#ff9f4a', '#ff5d6c', '#a78bfa', '#f5c542', '#36c9c9', '#7d8ea3', '#d4763a', '#4f8f5f'];
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const ix = sx + 16 + c * (size + gapX);
+        const iy = startY + r * (size + sh * 0.055);
+        if (iy + size > sy + sh - sh * 0.16) break;
+        const col0 = palette[(r * cols + c) % palette.length];
+        const ig = ctx.createLinearGradient(ix, iy, ix + size, iy + size);
+        ig.addColorStop(0, col0);
+        ig.addColorStop(1, shade(col0, -34));
+        ctx.fillStyle = ig;
+        roundRect(ctx, ix, iy, size, size, size * 0.28);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(255,255,255,.16)';
+        ctx.lineWidth = 1;
+        roundRect(ctx, ix + 0.5, iy + 0.5, size - 1, size - 1, size * 0.28);
+        ctx.stroke();
+      }
+    }
+    // 底部 Dock
+    const dw = Math.min(sw * 0.62, sw - 40), dh = Math.max(12, sh * 0.1);
+    const dx = sx + (sw - dw) / 2, dy = sy + sh - dh - sh * 0.05;
+    ctx.fillStyle = 'rgba(255,255,255,.14)';
+    roundRect(ctx, dx, dy, dw, dh, dh * 0.32);
+    ctx.fill();
+    for (let i = 0; i < 4; i++) {
+      const ix = dx + dw * 0.12 + i * (dw * 0.76 / 3) - size * 0.32;
+      const iy = dy + (dh - size * 0.64) / 2;
+      const col0 = palette[(i * 3 + 5) % palette.length];
+      const ig = ctx.createLinearGradient(ix, iy, ix + size * 0.64, iy + size * 0.64);
+      ig.addColorStop(0, col0);
+      ig.addColorStop(1, shade(col0, -30));
+      ctx.fillStyle = ig;
+      roundRect(ctx, ix, iy, size * 0.64, size * 0.64, size * 0.18);
+      ctx.fill();
+    }
+    // 桌面指示条
+    ctx.fillStyle = 'rgba(255,255,255,.5)';
+    roundRect(ctx, sx + sw / 2 - sw * 0.055, sy + sh - sh * 0.022, sw * 0.11, Math.max(2, sh * 0.008), 2);
+    ctx.fill();
+    ctx.restore();
   }
 
   function shade(hex, amt) {
@@ -1183,19 +1541,34 @@ export function renderDesigner(container, state, model, hooks = {}) {
 
     // 手动轨道
     const orbit = { theta: Math.PI * 0.14, phi: Math.PI * 0.47, radius: 240, target: new THREE.Vector3(0, 0, 0) };
-    let dragging = false, lx = 0, ly = 0;
+    let dragging = false, panning = false, lx = 0, ly = 0;
     const dom = renderer.domElement;
     dom.style.cursor = 'grab';
     dom.style.touchAction = 'none'; // 触摸设备：拖动只旋转视角，不带动页面
     dom.addEventListener('pointerdown', (e) => {
       if (e.pointerType !== 'mouse') e.preventDefault();
-      dragging = true; lx = e.clientX; ly = e.clientY; dom.setPointerCapture(e.pointerId); dom.style.cursor = 'grabbing';
+      dragging = true;
+      panning = e.button === 2 || e.shiftKey; // 右键 / Shift+拖拽 = 平移视点
+      lx = e.clientX; ly = e.clientY; dom.setPointerCapture(e.pointerId); dom.style.cursor = 'grabbing';
     });
-    dom.addEventListener('pointerup', (e) => { dragging = false; dom.style.cursor = 'grab'; });
+    dom.addEventListener('pointerup', (e) => { dragging = false; panning = false; dom.style.cursor = 'grab'; });
+    dom.addEventListener('contextmenu', (e) => { if (dragging) e.preventDefault(); });
     dom.addEventListener('pointermove', (e) => {
       if (!dragging) return;
-      orbit.theta -= (e.clientX - lx) * 0.008;
-      orbit.phi = clamp(orbit.phi - (e.clientY - ly) * 0.006, 0.22, Math.PI - 0.22);
+      const dx = e.clientX - lx, dy = e.clientY - ly;
+      if (panning) {
+        // 平移：沿相机右/上方向移动取景中心（幅度随视距缩放，越近移得越少）
+        const panScale = orbit.radius * 0.0016;
+        const forward = new THREE.Vector3().setFromSphericalCoords(1, orbit.phi, orbit.theta).negate();
+        const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
+        const up = new THREE.Vector3().crossVectors(right, forward).normalize();
+        orbit.target.addScaledVector(right, -dx * panScale).addScaledVector(up, dy * panScale);
+        // 限制平移范围，防止把模型弄丢
+        orbit.target.clampScalar(-orbit.radius * 0.8, orbit.radius * 0.8);
+      } else {
+        orbit.theta -= dx * 0.008;
+        orbit.phi = clamp(orbit.phi - dy * 0.006, 0.22, Math.PI - 0.22);
+      }
       lx = e.clientX; ly = e.clientY;
       autoRotate = false;
       container.querySelector('#btn-rotate')?.classList.remove('primary');
@@ -1457,30 +1830,43 @@ export function renderDesigner(container, state, model, hooks = {}) {
         const lensR = lensRadiusMm(sn ? sn.format : '1/2.4″') * (l.size || 1);
         const lx = rect.cx + l.x, ly = rect.cy + l.y;
         const zBase = modTopZ; // 模组表面（无凸台时=后壳表面）
-        // 潜望长焦：方形基座 + 圆镜（真机潜望模组形态）
+        // 潜望长焦：立式棱镜模组——竖长深盒（真实潜望结构：镜组横置、棱镜折转光路），
+        // 镜筒开在盒体上部正面，下端另有镀膜棱镜反光窗；镜组整体前移贴到盒体表面
+        let periShift = 0;
         if (look.plate !== null) {
-          const pd = Math.max(0.25, bump * 0.55);
-          const plateGeo = new THREE.ExtrudeGeometry(roundedShape(lensR * 2.3, lensR * 2.3, lensR * 0.69), {
-            depth: pd, bevelEnabled: true, bevelThickness: 0.1, bevelSize: 0.1, bevelSegments: 1, curveSegments: 6,
+          const pd = Math.max(2.2, lensR * 2.1);
+          const bw = lensR * 2.35, bh = lensR * 3.4;
+          const boxGeo = new THREE.ExtrudeGeometry(roundedShape(bw, bh, lensR * 0.6), {
+            depth: pd, bevelEnabled: true, bevelThickness: 0.22, bevelSize: 0.22, bevelSegments: 2, curveSegments: 8,
           });
-          plateGeo.translate(0, 0, -pd);
-          const plate = new THREE.Mesh(plateGeo, new THREE.MeshStandardMaterial({ color: look.plate, metalness: 0.5, roughness: 0.4 }));
-          plate.userData.part = 'camera';
-          plate.position.set(lx, ly, zBase + 0.02);
-          g.add(plate);
+          boxGeo.translate(0, 0, -pd);
+          const box = new THREE.Mesh(boxGeo, new THREE.MeshStandardMaterial({ color: 0x10151c, metalness: 0.5, roughness: 0.42 }));
+          box.userData.part = 'camera';
+          box.position.set(lx, ly - lensR * 0.35, zBase + 0.02);
+          box.castShadow = true;
+          g.add(box);
+          const prism = new THREE.Mesh(new THREE.CircleGeometry(lensR * 0.55, 20), new THREE.MeshStandardMaterial({
+            color: 0x2b4a74, metalness: 0.8, roughness: 0.15, emissive: 0x14283f, emissiveIntensity: 0.4,
+          }));
+          prism.userData.part = 'camera';
+          prism.rotation.y = Math.PI;
+          prism.position.set(lx, ly + lensR * 1.15, zBase - pd - 0.02);
+          g.add(prism);
+          periShift = pd + 0.25;
         }
+        const zL = zBase - periShift;
         // 金属装饰圈：主摄/潜望亮银、长焦近黑（粗糙度更高）
         const ringMat2 = new THREE.MeshStandardMaterial({ color: look.ring, metalness: 1, roughness: l.type === 'tele' ? 0.42 : 0.2 });
         const ring = new THREE.Mesh(new THREE.TorusGeometry(lensR * 0.96, Math.max(0.32, lensR * 0.13), 10, 28), ringMat2);
         ring.userData.part = 'camera';
-        ring.position.set(lx, ly, zBase - 0.06);
+        ring.position.set(lx, ly, zL - 0.06);
         g.add(ring);
         // 镜身（外大内小阶梯圆柱；openEnded——端盖会挡住玻璃，且镜口本该是空的）
         const barrel = new THREE.Mesh(new THREE.CylinderGeometry(lensR * 0.98, lensR * 1.05, bump + 1.5, 26, 1, true),
           new THREE.MeshStandardMaterial({ color: look.barrel, metalness: 0.55, roughness: 0.32 }));
         barrel.userData.part = 'camera';
         barrel.rotation.x = Math.PI / 2;
-        barrel.position.set(lx, ly, zBase - bump / 2 - 0.35);
+        barrel.position.set(lx, ly, zL - bump / 2 - 0.35);
         g.add(barrel);
         // 内圈：OIS 亮绿圈 / 普通暗圈（浮在玻璃面外 0.02mm，作镀膜刻环）
         const innerRing = new THREE.Mesh(new THREE.TorusGeometry(lensR * 0.68, Math.max(0.06, lensR * 0.045), 8, 22),
@@ -1490,14 +1876,14 @@ export function renderDesigner(container, state, model, hooks = {}) {
           }));
         innerRing.userData.part = 'camera';
         innerRing.rotation.y = Math.PI;
-        innerRing.position.set(lx, ly, zBase - bump - 1.04);
+        innerRing.position.set(lx, ly, zL - bump - 1.04);
         g.add(innerRing);
         // 最外层玻璃：程序化法线贴图（同心元件棱 + 弧面）+ roughnessMap + clearcoat，
         // 层次感与自然高光来自环境反射，不再用白球假高光（瞳孔已烘进颜色图）
         const glass = new THREE.Mesh(new THREE.CircleGeometry(lensR * 0.94, 28), lensGlassMaterial(look));
         glass.userData.part = 'camera';
         glass.rotation.y = Math.PI;
-        glass.position.set(lx, ly, zBase - bump - 1.02);
+        glass.position.set(lx, ly, zL - bump - 1.02);
         g.add(glass);
       }
 
@@ -1542,22 +1928,24 @@ export function renderDesigner(container, state, model, hooks = {}) {
       bm.position.set(sideSign * (W / 2 + 0.42), yPos, 0);
       g.add(bm);
     };
-    // 槽型键（strip）：内凹深色胶囊槽
+    // 槽型键（strip）：内凹深色胶囊槽。注意挤出体经 rotateY 后占据 x∈[0,0.5]，
+    // 必须镜像并定位到边框表面外侧（W/2+0.42 起），嵌入表面会被 0.5mm 倒角完全吞掉
     const mkSlot = (sideSign, yPos, hLen) => {
       const th = Math.max(1.2, T * 0.3);
       const geo = new THREE.ExtrudeGeometry(roundedShape(th, hLen, Math.min(th, hLen) * 0.48), {
         depth: 0.5, bevelEnabled: false, curveSegments: 8,
       });
       geo.rotateY(Math.PI / 2);
+      if (sideSign < 0) geo.rotateY(Math.PI); // 左侧：翻转让槽片朝 -X 凸出
       const m = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: 0x0a0f15, roughness: 0.7, metalness: 0.2 }));
       m.userData.part = 'button';
-      m.position.set(sideSign * (W / 2 - 0.18), yPos, 0);
+      m.position.set(sideSign * (W / 2 + 0.42), yPos, 0);
       g.add(m);
     };
     const R = 1, Lft = -1; // 右侧 / 左侧
     if (btnStyle === 'strip') {
       mkSlot(Lft, L * 0.12 + volY, L * 0.16);   // 细长条：音量槽
-      mkBtn(R, -L * 0.02 + powY, L * 0.06);     // 电源
+      mkSlot(R, -L * 0.02 + powY, L * 0.06);    // 电源键（同为槽型）
     } else if (btnStyle === 'split') {
       mkBtn(Lft, L * 0.22 + volY, L * 0.07);   // 音量加（分离）
       mkBtn(Lft, L * 0.10 + volY, L * 0.07);   // 音量减（分离）
@@ -1607,16 +1995,20 @@ export function renderDesigner(container, state, model, hooks = {}) {
       g.add(m);
     };
     const spRow = speakerRowSpec(ports.speakerStyle);
-    const speakerRow = (sign, cxmm) => {
-      if (spRow.kind === 'slot') {
-        const pitch = spRow.w + spRow.gap;
-        for (let i = 0; i < spRow.n; i++) slotHole(cxmm + (i - (spRow.n - 1) / 2) * pitch, sign, spRow.w, spRow.h);
+    // 底部麦克风可升级为扬声器同款样式；quadSpeaker = 底/顶各一对（镜像位置）
+    const micRow = ports.micStyle && ports.micStyle !== 'hole' ? speakerRowSpec(ports.micStyle) : null;
+    const rowSpec = (sign, cxmm, spec) => {
+      const s = spec || spRow;
+      if (s.kind === 'slot') {
+        const pitch = s.w + s.gap;
+        for (let i = 0; i < s.n; i++) slotHole(cxmm + (i - (s.n - 1) / 2) * pitch, sign, s.w, s.h);
       } else {
-        for (let i = 0; i < spRow.n; i++) dot(cxmm + (i - (spRow.n - 1) / 2) * spRow.gap, sign);
+        for (let i = 0; i < s.n; i++) dot(cxmm + (i - (s.n - 1) / 2) * s.gap, sign);
       }
     };
-    speakerRow(-1, ports.speakerX ?? -W * 0.28); // 底部扬声器
-    dot(ports.micX ?? W * 0.2, -1);              // 底部麦克风
+    rowSpec(-1, ports.speakerX ?? W * 0.28);            // 底部扬声器（默认右侧）
+    if (ports.quadSpeaker) rowSpec(-1, -(ports.speakerX ?? W * 0.28)); // 4 扬声器：底部第二只
+    rowSpec(-1, ports.micX ?? -W * 0.2, micRow);        // 底部麦克风（默认左侧小孔）
     // 充电口：Type-C 开口 8.34×2.56 / Micro-B 6.85×1.8 / 自定义形状（style+w+h 可编辑），横向位置可调
     const cs = ports.chargeShape || { style: 'round', w: 6, h: 3 };
     const chargeX = ports.chargePos || 0;
@@ -1628,11 +2020,6 @@ export function renderDesigner(container, state, model, hooks = {}) {
       m.userData.part = 'port';
       m.position.set(chargeX, -(L / 2 + EDGE + 0.05), 0); // 薄片贴底面外壁
       g.add(m);
-      const rim = new THREE.Mesh(new THREE.TorusGeometry(6.85 / 2 + 0.3, 0.15, 8, 24), rimMat);
-      rim.rotation.x = Math.PI / 2;
-      rim.userData.part = 'port';
-      rim.position.set(chargeX, -(L / 2 + EDGE), 0);
-      g.add(rim);
     } else {
       // 自定义：2D 截面（XZ 平面）拉伸，薄片贴底面
       const cw = Math.max(2.4, Math.min(W * 0.6, cs.w || 6));
@@ -1655,37 +2042,33 @@ export function renderDesigner(container, state, model, hooks = {}) {
         m.position.set(chargeX, -(L / 2 + EDGE + 0.1), 0);
         g.add(m);
       }
-      // 自定义口外圈亮边
-      const rimR = Math.max(cw, 5) / 2 + 0.35;
-      const portRim = new THREE.Mesh(new THREE.TorusGeometry(rimR, 0.18, 8, 24), rimMat);
-      portRim.rotation.x = Math.PI / 2;
-      portRim.userData.part = 'port';
-      portRim.position.set(chargeX, -(L / 2 + EDGE), 0);
-      g.add(portRim);
     }
-    if (ports.dualSpeaker) speakerRow(1, ports.topSpeakerX ?? W * 0.28); // 双扬声器：顶部
-    if (ports.topMic) dot(ports.topMicX ?? -W * 0.2, 1);                 // 顶部麦克风
+    if (ports.dualSpeaker) rowSpec(1, ports.topSpeakerX ?? W * 0.28);        // 双扬声器：顶部
+    if (ports.quadSpeaker) rowSpec(1, -(ports.topSpeakerX ?? W * 0.28));     // 4 扬声器：顶部第二只
+    if (ports.topMic) dot(ports.topMicX ?? -W * 0.2, 1);                     // 顶部麦克风（保持小孔）
 
     // 背标：公司 Logo 图像 + 品牌文字（位置/大小按 branding，mm）
     ensureBranding(d);
     const BACKZ = -FACE - 0.08; // 贴在后盖表面外侧，避免 Z 冲突
     if (d.logoOnBack) {
       const br = d.branding;
-      let logoTex = null;
-      if (logoImg) {
-        const lc = document.createElement('canvas');
-        lc.width = lc.height = 128;
-        const lctx = lc.getContext('2d');
-        lctx.drawImage(logoImg, 0, 0, 128, 128);
-        logoTex = new THREE.CanvasTexture(lc);
-        logoTex.colorSpace = THREE.SRGBColorSpace;
-      }
-      const logoMesh = logoTex
-        ? new THREE.Mesh(new THREE.PlaneGeometry(br.logoSize, br.logoSize), new THREE.MeshStandardMaterial({
-            map: logoTex, transparent: true, metalness: 0.45, roughness: 0.3, alphaTest: 0.02,
-          }))
+      const finish = br.logoFinish || 'img';
+      // 材质参数：金属高反射 / 玻璃近镜面 / 塑料哑光
+      const matByFinish = {
+        img: { metalness: 0.45, roughness: 0.3 },
+        metal: { metalness: 1.0, roughness: 0.26 },
+        glass: { metalness: 0.15, roughness: 0.07 },
+        plastic: { metalness: 0.05, roughness: 0.55 },
+      }[finish] || { metalness: 0.45, roughness: 0.3 };
+      const lc = makeLogoCanvas();
+      const logoMesh = lc
+        ? new THREE.Mesh(new THREE.PlaneGeometry(br.logoSize, br.logoSize), (() => {
+            const tex = new THREE.CanvasTexture(lc);
+            tex.colorSpace = THREE.SRGBColorSpace;
+            return new THREE.MeshStandardMaterial({ map: tex, transparent: true, alphaTest: 0.02, ...matByFinish });
+          })())
         : new THREE.Mesh(new THREE.PlaneGeometry(br.logoSize, br.logoSize), new THREE.MeshStandardMaterial({
-            color: state.company.logoColor || '#4aa3ff', metalness: 0.7, roughness: 0.3,
+            color: br.logoColor || state.company.logoColor || '#4aa3ff', ...matByFinish,
           }));
       logoMesh.userData.part = 'logo';
       logoMesh.rotation.y = Math.PI;
@@ -1781,8 +2164,9 @@ export function renderDesigner(container, state, model, hooks = {}) {
   function buildFoldedPhone(g, d, b) {
     const W = b.width, L = b.length, T = b.thickness;
     const isFlip = b.fold === 'flip';
-    const halfW = isFlip ? W : W;          // 每半宽度
-    const halfL = isFlip ? L / 2 : L;      // 每半长度（flip 的设计长度为展开态）
+    // 语义：body 尺寸 = 折叠态单半（flip 的设计长度为半长，fold 的设计宽度为半宽）
+    const halfW = W;                       // 每半宽度
+    const halfL = L;                       // 每半长度
     const matFrame = MATERIALS.find((m) => m.id === b.frame) || MATERIALS[0];
     const matBack = MATERIALS.find((m) => m.id === b.back) || MATERIALS[0];
     const rough = b.finish === 'gloss' ? 0.12 : b.finish === 'matte' ? 0.52 : 0.34;
@@ -1790,12 +2174,18 @@ export function renderDesigner(container, state, model, hooks = {}) {
     const backColor = new THREE.Color(partColor('back'));
     const coverColor = new THREE.Color(partColor('cover'));
     const scr = screenSize(d);
-    const theta = 0; // 完全展开态（180° 平铺），折叠态在 2D「折叠态」视图查看
-    const wallTex = makeWallpaper();
+    // 展开态（180° 平铺）或折叠态（半B 翻折叠到半A 上，留 0.7mm 间隙防穿模）
+    const folded = foldView === 'folded';
 
     function buildHalf(sign) {
       const grp = new THREE.Group();
-      const shape = roundedShape(halfW, halfL, Math.min(b.corner, halfW / 3, halfL / 3));
+      // 铰链侧两角为直角：展开时两半在中缝平齐，避免出现拼图状缺口
+      // halfA(sign=1)：fold=右半（铰链在左）/ flip=上半（铰链在下）；halfB 相反
+      const r0 = Math.min(b.corner, halfW / 3, halfL / 3);
+      const radii = isFlip
+        ? (sign > 0 ? [r0, r0, 0, 0] : [0, 0, r0, r0])
+        : (sign > 0 ? [0, r0, r0, 0] : [r0, 0, 0, r0]);
+      const shape = roundedShape(halfW, halfL, r0, radii);
       const geo = new THREE.ExtrudeGeometry(shape, {
         depth: T, bevelEnabled: true, bevelThickness: 0.5, bevelSize: 0.5,
         bevelSegments: 3, curveSegments: 8, steps: 1,
@@ -1811,45 +2201,52 @@ export function renderDesigner(container, state, model, hooks = {}) {
       bodyMesh.castShadow = true;
       grp.add(bodyMesh);
 
-      // 背盖
-      const backShape = roundedShape(halfW - 1.2, halfL - 1.2, Math.max(1, b.corner * 0.9));
+      // 背盖（几何居中于原点，必须随半体平移到半区中心，否则折叠/展开都会偏出机身）
+      const backShape = roundedShape(halfW - 1.2, halfL - 1.2, Math.max(1, b.corner * 0.9), radii.map((v) => Math.max(0, v - 0.3)));
       const backMesh = new THREE.Mesh(new THREE.ShapeGeometry(backShape, 12), new THREE.MeshStandardMaterial({
         color: backColor.clone().multiplyScalar(1.35).offsetHSL(0, 0, 0.04),
         metalness: matBack.id === 'glass' ? 0.18 : 0.5, roughness: b.finish === 'gloss' ? 0.14 : 0.46,
       }));
       backMesh.userData.part = 'back';
       backMesh.rotation.y = Math.PI;
-      backMesh.position.z = -(T / 2 + 0.58);
+      backMesh.position.set(isFlip ? 0 : sign * halfW / 2, isFlip ? sign * halfL / 2 : 0, -(T / 2 + 0.58));
       grp.add(backMesh);
       return grp;
     }
 
-    // 铰链侧对齐原点，绕铰链旋转
+    // 铰链侧对齐原点，绕铰链旋转；折叠态半B 翻转 180° 并沿法向抬升，与半A 留缝隙
     const halfA = buildHalf(1);   // 右半（fold）/ 上半（flip）
     const halfB = buildHalf(-1);  // 左半 / 下半
-    if (isFlip) {
-      halfA.rotation.x = -theta;
-      halfB.rotation.x = theta;
-    } else {
-      halfA.rotation.y = -theta;
-      halfB.rotation.y = theta;
+    if (folded) {
+      if (isFlip) {
+        halfB.rotation.x = Math.PI;          // 下半向上翻折，叠到上半上
+      } else {
+        halfB.rotation.y = Math.PI;          // 左半向右翻折，叠到右半上
+      }
+      halfB.position.z = T / 2 + 0.7;        // 抬出缝隙（半B 背面朝外 = 折叠态正面）
+    } else if (isFlip) {
+      halfA.rotation.x = 0;
+      halfB.rotation.x = 0;
     }
     g.add(halfA);
     g.add(halfB);
 
-    // 内屏：展开态一整块（跨两半，无折缝）
-    const fullW = isFlip ? Math.min(scr.w, halfW - 1) : Math.min(scr.w, halfW * 2 - 1.4);
-    const fullH = isFlip ? Math.min(scr.h, halfL * 2 - 1.4) : Math.min(scr.h, halfL - 1);
-    const sShape = roundedShape(fullW, fullH, Math.max(0.8, b.corner * 0.55));
-    const sGeo = new THREE.ShapeGeometry(sShape, 12);
-    normalizeUV(sGeo);
-    const screen = new THREE.Mesh(sGeo, new THREE.MeshStandardMaterial({
-      color: 0x0a0f16, metalness: 0.2, roughness: 0.08,
-      emissive: 0xffffff, emissiveMap: wallTex, emissiveIntensity: 1.0, map: wallTex,
-    }));
-    screen.userData.part = 'screen';
-    screen.position.z = T / 2 + 0.58;
-    g.add(screen);
+    // 内屏：展开态一整块（跨两半，无折缝）；折叠态两半合拢，整片内屏隐藏
+    if (!folded) {
+      const fullW = isFlip ? Math.min(scr.w, halfW - 1) : Math.min(scr.w, halfW * 2 - 1.4);
+      const fullH = isFlip ? Math.min(scr.h, halfL * 2 - 1.4) : Math.min(scr.h, halfL - 1);
+      const sShape = roundedShape(fullW, fullH, Math.max(0.8, b.corner * 0.55));
+      const sGeo = new THREE.ShapeGeometry(sShape, 12);
+      normalizeUV(sGeo);
+      const wallTex = makeWallpaper();
+      const screen = new THREE.Mesh(sGeo, new THREE.MeshStandardMaterial({
+        color: 0x0a0f16, metalness: 0.2, roughness: 0.08,
+        emissive: 0xffffff, emissiveMap: wallTex, emissiveIntensity: 1.0, map: wallTex,
+      }));
+      screen.userData.part = 'screen';
+      screen.position.z = T / 2 + 0.58;
+      g.add(screen);
+    }
 
     // 外屏（cover screen）：贴在 halfB 背面（折叠时朝外）
     const cvInch = b.coverScreen?.inch || 0;
@@ -1875,17 +2272,19 @@ export function renderDesigner(container, state, model, hooks = {}) {
       isFlip ? new THREE.CylinderGeometry(1.5, 1.5, W * 0.94, 18) : new THREE.CylinderGeometry(1.5, 1.5, L * 0.94, 18),
       new THREE.MeshStandardMaterial({ color: 0x8a939e, metalness: 1, roughness: 0.25 }));
     hinge.userData.part = 'back';
-    if (isFlip) hinge.rotation.x = Math.PI / 2;
+    if (isFlip) hinge.rotation.z = Math.PI / 2; // 折线沿宽度方向（圆柱轴转到 X）
     g.add(hinge);
 
     // 摄像头模组（放右半/上半的背面，半体局部坐标）
+    // fold 的半A 占 x∈[0,W]，模组坐标（以半体中心为原点）需平移 halfW/2；flip 已在 y 向映射
     ensureLenses(d);
     if (d.camera.lenses.length > 0) {
       const rect = cameraModuleRect(d);
+      const cxOff = isFlip ? 0 : halfW / 2;
       const bump = d.camera.step ? Math.max(d.camera.bump, 0.5) : 0;
-      // flip 时把模组位置映射到上半的局部坐标并钳入边界
+      // flip 时把模组位置映射到上半（半体局部坐标 y∈[0,halfL]）的背面并钳入边界
       const cy = isFlip
-        ? clamp(L / 2 - rect.cy, -halfL / 2 + rect.h / 2 + 2, halfL / 2 - rect.h / 2 - 2)
+        ? clamp(halfL / 2 + rect.cy, rect.h / 2 + 2, halfL - rect.h / 2 - 2)
         : rect.cy;
       const decoR = rect.shape === 'circle' ? rect.w / 2 : rect.shape === 'pill' ? rect.h / 2 : Math.min(rect.radius ?? 8, rect.w / 2, rect.h / 2);
       const modShape = roundedShape(rect.w, rect.h, decoR);
@@ -1897,7 +2296,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
         modGeo.translate(0, 0, -bump);
         const mod = new THREE.Mesh(modGeo, modMat);
         mod.userData.part = 'camera';
-        mod.position.set(rect.cx, cy, -halfFace);
+        mod.position.set(rect.cx + cxOff, cy, -halfFace);
         halfA.add(mod);
         modTopZ = -halfFace - bump - 0.3;
       } else {
@@ -1910,38 +2309,52 @@ export function renderDesigner(container, state, model, hooks = {}) {
         if (l.sensor === 'sn_own') sn = d.parts.ownCmr;
         const look = LENS_LOOK[l.type] || LENS_LOOK.main;
         const lensR = lensRadiusMm(sn ? sn.format : '1/2.4″') * (l.size || 1);
-        const lx = rect.cx + l.x, ly = cy + l.y;
-        // 潜望：方形基座
+        const lx = rect.cx + cxOff + l.x, ly = cy + l.y;
+        // 潜望：立式棱镜模组（与主机型一致，镜组前移贴到盒体表面）
+        let periShift = 0;
         if (look.plate !== null) {
-          const pd = Math.max(0.25, bump * 0.55);
-          const plateGeo = new THREE.ExtrudeGeometry(roundedShape(lensR * 2.3, lensR * 2.3, lensR * 0.69), { depth: pd, bevelEnabled: true, bevelThickness: 0.1, bevelSize: 0.1, bevelSegments: 1, curveSegments: 6 });
-          plateGeo.translate(0, 0, -pd);
-          const plate = new THREE.Mesh(plateGeo, new THREE.MeshStandardMaterial({ color: look.plate, metalness: 0.5, roughness: 0.4 }));
-          plate.userData.part = 'camera';
-          plate.position.set(lx, ly, modTopZ + 0.02);
-          halfA.add(plate);
+          const pd = Math.max(2.2, lensR * 2.1);
+          const bw = lensR * 2.35, bh = lensR * 3.4;
+          const boxGeo = new THREE.ExtrudeGeometry(roundedShape(bw, bh, lensR * 0.6), {
+            depth: pd, bevelEnabled: true, bevelThickness: 0.22, bevelSize: 0.22, bevelSegments: 2, curveSegments: 8,
+          });
+          boxGeo.translate(0, 0, -pd);
+          const box = new THREE.Mesh(boxGeo, new THREE.MeshStandardMaterial({ color: 0x10151c, metalness: 0.5, roughness: 0.42 }));
+          box.userData.part = 'camera';
+          box.position.set(lx, ly - lensR * 0.35, modTopZ + 0.02);
+          box.castShadow = true;
+          halfA.add(box);
+          const prism = new THREE.Mesh(new THREE.CircleGeometry(lensR * 0.55, 20), new THREE.MeshStandardMaterial({
+            color: 0x2b4a74, metalness: 0.8, roughness: 0.15, emissive: 0x14283f, emissiveIntensity: 0.4,
+          }));
+          prism.userData.part = 'camera';
+          prism.rotation.y = Math.PI;
+          prism.position.set(lx, ly + lensR * 1.15, modTopZ - pd - 0.02);
+          halfA.add(prism);
+          periShift = pd + 0.25;
         }
+        const zL = modTopZ - periShift;
         const ring2 = new THREE.Mesh(new THREE.TorusGeometry(lensR * 0.96, Math.max(0.32, lensR * 0.13), 10, 28),
           new THREE.MeshStandardMaterial({ color: look.ring, metalness: 1, roughness: l.type === 'tele' ? 0.42 : 0.2 }));
         ring2.userData.part = 'camera';
-        ring2.position.set(lx, ly, modTopZ - 0.06);
+        ring2.position.set(lx, ly, zL - 0.06);
         halfA.add(ring2);
         const lens = new THREE.Mesh(new THREE.CylinderGeometry(lensR * 0.98, lensR * 1.05, bump + 1.5, 26, 1, true),
           new THREE.MeshStandardMaterial({ color: look.barrel, metalness: 0.55, roughness: 0.32 }));
         lens.userData.part = 'camera';
         lens.rotation.x = Math.PI / 2;
-        lens.position.set(lx, ly, modTopZ - bump / 2 - 0.35);
+        lens.position.set(lx, ly, zL - bump / 2 - 0.35);
         halfA.add(lens);
         const glassLens = new THREE.Mesh(new THREE.CircleGeometry(lensR * 0.94, 26), lensGlassMaterial(look));
         glassLens.userData.part = 'camera';
         glassLens.rotation.y = Math.PI;
-        glassLens.position.set(lx, ly, modTopZ - bump - 1.02);
+        glassLens.position.set(lx, ly, zL - bump - 1.02);
         halfA.add(glassLens);
       }
       // 闪光灯（样式与主机型一致）
       const fl2 = d.camera.flash || { x: 0, y: 0, r: 1.5 };
       const flash = makeFlashMesh(fl2);
-      const flashX = fl2.offDeco ? rect.cx + rect.w / 2 + 2.6 : rect.cx + clamp(fl2.x, -rect.w / 2, rect.w / 2);
+      const flashX = (fl2.offDeco ? rect.cx + rect.w / 2 + 2.6 : rect.cx + clamp(fl2.x, -rect.w / 2, rect.w / 2)) + cxOff;
       const flashY = fl2.offDeco ? cy - rect.h * 0.18 : cy + clamp(fl2.y, -rect.h / 2, rect.h / 2);
       flash.position.set(flashX, flashY, -halfFace);
       halfA.add(flash);
@@ -1956,15 +2369,18 @@ export function renderDesigner(container, state, model, hooks = {}) {
     fBtnGeo.translate(-0.325, 0, 0);
     const b1 = new THREE.Mesh(fBtnGeo, btnMat);
     b1.userData.part = 'body';
-    if (isFlip) { b1.rotation.z = Math.PI / 2; b1.position.set(W * 0.3, halfL / 2 + 0.55, 0); }
+    // 侧键装在半A外缘右侧：fold=右半（x∈[0,W]，键在 W+0.42）；flip=上半（x∈[-W/2,W/2]，键在 W/2+0.42）
+    if (isFlip) b1.position.set(halfW / 2 + 0.42, halfL * 0.7, 0);
     else b1.position.set(halfW + 0.42, halfL * 0.18, 0);
     halfA.add(b1);
 
     // 取景
     if (!three.framed) {
-      const span = isFlip ? L : Math.max(L, W * 2.2);
+      const span = folded ? (isFlip ? L : Math.max(L, W)) : (isFlip ? L * 2 : Math.max(L, W * 2.2));
       three.orbit.radius = clamp(span * 1.55 * 1.6, 150, 620);
-      three.orbit.target.set(0, 0, 0);
+      // 折叠态机身偏向半A 象限，取景中心略作偏移
+      if (folded) three.orbit.target.set(isFlip ? 0 : W * 0.2, isFlip ? L * 0.2 : 0, 0);
+      else three.orbit.target.set(0, 0, 0);
       three.framed = true;
     }
   }
@@ -1982,19 +2398,22 @@ export function renderDesigner(container, state, model, hooks = {}) {
     uv.needsUpdate = true;
   }
 
-  function roundedShape(w, h, r) {
+  // 圆角矩形轮廓；radii = [左上, 右上, 右下, 左下]（缺省四角同 r），0 = 直角
+  function roundedShape(w, h, r, radii) {
     const s = new THREE.Shape();
     const x = -w / 2, y = -h / 2;
-    const rr = Math.min(r, w / 2, h / 2);
-    s.moveTo(x + rr, y);
-    s.lineTo(x + w - rr, y);
-    s.quadraticCurveTo(x + w, y, x + w, y + rr);
-    s.lineTo(x + w, y + h - rr);
-    s.quadraticCurveTo(x + w, y + h, x + w - rr, y + h);
-    s.lineTo(x + rr, y + h);
-    s.quadraticCurveTo(x, y + h, x, y + h - rr);
-    s.lineTo(x, y + rr);
-    s.quadraticCurveTo(x, y, x + rr, y);
+    const R = radii || [r, r, r, r];
+    const rr = (v) => Math.max(0, Math.min(v, w / 2, h / 2));
+    const tl = rr(R[0]), tr = rr(R[1]), br = rr(R[2]), bl = rr(R[3]);
+    s.moveTo(x + bl, y);
+    s.lineTo(x + w - br, y);
+    if (br > 0) s.quadraticCurveTo(x + w, y, x + w, y + br);
+    s.lineTo(x + w, y + h - tr);
+    if (tr > 0) s.quadraticCurveTo(x + w, y + h, x + w - tr, y + h);
+    s.lineTo(x + tl, y + h);
+    if (tl > 0) s.quadraticCurveTo(x, y + h, x, y + h - tl);
+    s.lineTo(x, y + bl);
+    if (bl > 0) s.quadraticCurveTo(x, y, x + bl, y);
     return s;
   }
 
@@ -2109,7 +2528,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
     else { init3D(); buildPhone(); }
   }
 
-  // 折叠视图切换按钮只在折叠机型显示
+  // 折叠视图切换按钮只在折叠机型显示（2D/3D 均可用：3D 切换展开/折叠模型）
   function syncFoldToggle() {
     const el = container.querySelector('#fold-toggle');
     if (el) el.style.display = model.design.body.fold !== 'none' ? 'flex' : 'none';
@@ -2127,12 +2546,45 @@ export function renderDesigner(container, state, model, hooks = {}) {
 
   function applyValue(key, v, { fromInput } = {}) {
     const d = model.design;
+    const prevFold = d.body.fold;
     if (key.startsWith('body.ports') && !d.body.ports) d.body.ports = { dualSpeaker: false, topMic: false, charge: 'typec' };
     if (key.startsWith('body.colors') && !d.body.colors) d.body.colors = { frame: d.body.color, back: d.body.color, cover: '#05070a' };
     if (key.startsWith('branding')) ensureBranding(d);
     setPath(d, key, v);
-    // 调机身/边框时屏幕自动贴合，避免出现机身与屏幕比例失衡
-    if (key === 'body.length' || key === 'body.width' || key === 'screen.bezel') {
+    // 换面板供应商时校验发光材料世代归属，失效则回退标准材料
+    if (key === 'screen.panelVendor') {
+      const pvObj = PANEL_VENDORS.find((x) => x.id === d.screen.panelVendor);
+      if (!pvObj || !pvObj.gens || !pvObj.gens.some((g) => g.id === d.screen.panelGen)) d.screen.panelGen = '';
+    }
+    // 切换折叠结构：body 尺寸 = 折叠态单半语义下的机身重配
+    // → flip：长度减半（展开总长 ≈ 原直板长度）；flip → 直板：长度恢复翻倍
+    if (key === 'body.fold' && v !== prevFold) {
+      if (v === 'flip') {
+        d.body.length = Math.max(70, Math.round(d.body.length / 2));
+        syncSliderUI('body.length', d.body.length);
+      } else if (prevFold === 'flip') {
+        d.body.length = Math.min(240, Math.round(d.body.length * 2));
+        syncSliderUI('body.length', d.body.length);
+      }
+      // 折叠机内屏比例贴合展开足迹（自由比例），保证内屏铺满展开机身
+      if (v !== 'none') {
+        const effW = v === 'fold' ? d.body.width * 2 : d.body.width;
+        const effH = v === 'flip' ? d.body.length * 2 : d.body.length;
+        d.screen.aspect = '自由';
+        d.screen.aspectV = Math.round(clamp(effH / effW, 0.5, 2.6) * 100) / 100;
+        syncSliderUI('screen.aspectV', d.screen.aspectV);
+      }
+      // 机身变小后，背面 Logo/文字坐标收回新机身范围（避免校验报越界错误）
+      ensureBranding(d);
+      const bd = d.branding;
+      const bx = Math.max(2, d.body.width / 2 - 3), by = Math.max(2, d.body.length / 2 - 3);
+      for (const k of ['logoX', 'textX']) bd[k] = clamp(bd[k] || 0, -bx, bx);
+      for (const k of ['logoY', 'textY']) bd[k] = clamp(bd[k] || 0, -by, by);
+      if (d.logoOnBack) syncSliderUI('branding.logoX', bd.logoX);
+      syncSliderUI('branding.textX', bd.textX);
+    }
+    // 调机身/边框/折叠结构时屏幕自动贴合，避免出现机身与屏幕比例失衡
+    if (key === 'body.length' || key === 'body.width' || key === 'screen.bezel' || key === 'body.fold') {
       const fitted = maxScreenInch(d);
       if (Math.abs(fitted - d.screen.inch) > 0.049) {
         d.screen.inch = fitted;
@@ -2143,8 +2595,9 @@ export function renderDesigner(container, state, model, hooks = {}) {
     else if (key !== 'screen.inch') { /* 输入源控件保持用户输入 */ }
     // 比例预设切到「自由」时需重建控件，出现长宽比滑杆；充电口切自定义时出现形状编辑
     // 比例预设切到「自由」时需重建控件，出现长宽比滑杆；充电口切自定义时出现形状编辑；
-    // 折叠结构切换时出现外屏设计与视图切换按钮；闪光灯样式切换时出现宽/长或大小滑杆
-    if (key === 'screen.aspect' || key === 'body.ports.charge' || key === 'body.fold' || key === 'camera.flash.style') {
+    // 折叠结构切换时出现外屏设计与视图切换按钮；闪光灯样式切换时出现宽/长或大小滑杆；
+    // 勾选背面 Logo/文字时出现位置、颜色与材质编辑
+    if (key === 'screen.aspect' || key === 'screen.panelVendor' || key === 'body.ports.charge' || key === 'body.ports.micStyle' || key === 'body.fold' || key === 'camera.flash.style' || key === 'logoOnBack' || key === 'brandText') {
       renderControls();
       syncFoldToggle();
     }
@@ -2341,6 +2794,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
       container.querySelectorAll('[data-vm]').forEach((b) => b.classList.toggle('on', b.dataset.vm === viewMode));
       container.querySelector('#cam-views').style.display = viewMode === '3d' ? 'flex' : 'none';
       container.querySelector('#dz-hint').style.display = viewMode === '2d' ? 'block' : 'none';
+      syncFoldToggle(); // 折叠态切换仅 2D 可用，切 3D 时隐藏
       if (viewMode === '2d') {
         canvas2d.style.display = 'block';
         three?.renderer.domElement && (three.renderer.domElement.style.display = 'none');
@@ -2358,7 +2812,8 @@ export function renderDesigner(container, state, model, hooks = {}) {
     if (foldBtn) {
       foldView = foldBtn.dataset.fold;
       container.querySelectorAll('[data-fold]').forEach((b) => b.classList.toggle('on', b.dataset.fold === foldView));
-      draw2D();
+      if (viewMode === '2d') draw2D();
+      else if (three) buildPhone(); // 3D：重建折叠/展开模型
       return;
     }
     const cam = e.target.closest('[data-cam]');
@@ -2581,14 +3036,28 @@ export function phoneFrontDataUrl(design, thumbW = 92) {
   ctx.fillStyle = shadeHex(col('cover'), -2);
   roundRectPath(ctx, x + inset, y + inset, W - inset * 2, H - inset * 2, Math.max(1, (rMm - 0.5) * scale));
   ctx.fill();
-  // 屏幕（按 bezel 内缩）
+  // 屏幕（按 bezel 内缩）；折叠机型缩略图=折叠态正面：有外屏画外屏，无外屏画熄屏面板
+  const cvInch = b.fold && b.fold !== 'none' ? (b.coverScreen?.inch || 0) : 0;
   const bez = Math.max(1.2, (design.screen.bezel || 2.2) * scale * 0.9);
-  const sx = x + bez, sy = y + bez, sw = W - bez * 2, sh = H - bez * 2;
   const sr = Math.max(1, (rMm - (design.screen.bezel || 2.2)) * scale * 0.8);
+  let sx = x + bez, sy = y + bez, sw = W - bez * 2, sh = H - bez * 2;
+  if (b.fold && b.fold !== 'none' && cvInch > 0) {
+    const cvWpx = Math.min(sw - 4, cvInch * 25.4 / 2.15 * scale);
+    const cvHpx = Math.min(sh - 5, cvInch * 25.4 / 2.15 * scale * (b.fold === 'flip' ? 1.02 : 1.42));
+    sx = x + (W - cvWpx) / 2; sy = y + (H - cvHpx) / 2;
+    sw = cvWpx; sh = cvHpx;
+  }
   const grad = ctx.createLinearGradient(sx, sy, sx + sw * 0.4, sy + sh);
-  grad.addColorStop(0, '#2e4a74');
-  grad.addColorStop(0.45, '#16283f');
-  grad.addColorStop(1, '#0a1422');
+  if (b.fold && b.fold !== 'none' && cvInch <= 0) {
+    // 无外屏折叠态：熄屏（近黑，只有微弱反光）
+    grad.addColorStop(0, '#0b0f15');
+    grad.addColorStop(0.5, '#101720');
+    grad.addColorStop(1, '#080c11');
+  } else {
+    grad.addColorStop(0, '#2e4a74');
+    grad.addColorStop(0.45, '#16283f');
+    grad.addColorStop(1, '#0a1422');
+  }
   ctx.fillStyle = grad;
   roundRectPath(ctx, sx, sy, sw, sh, sr);
   ctx.fill();
