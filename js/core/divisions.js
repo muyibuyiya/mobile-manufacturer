@@ -145,15 +145,33 @@ export function computeCustomSpec(state, id, form) {
 
   if (id === 'chip') {
     const archOf = (aid) => CPU_CORES.find((a) => a.id === aid) || null;
-    const prime = archOf(form.primeArch), big = archOf(form.bigArch), little = archOf(form.littleArch);
-    for (const [k, a] of [['超大核', prime], ['大核', big], ['小核', little]]) {
-      if (!a) errors.push(`请选择${k}架构`);
-      else if (a.year > year) errors.push(`${a.name} 尚未发布（${a.year} 年）`);
+    // 核心互斥规则（参考现实同代旗舰平台）：
+    // ① 同 kind 只能选一种架构（表单结构保证：超大/大/小核各一个下拉）；
+    // ② 小核可选「无」（骁龙 8 至尊版 = 全自研 Oryon 2+6，没有小核）；
+    // ③ 三簇微架构发布年份跨度 ≤3 年（同代芯片用相近世代架构；888 = X1+A78+A55 是跨度上限的罕见兼容）；
+    // ④ 自研核不与 ARM 公版核混排（自研超大核 + 公版大核的产品现实中不存在）
+    const prime = form.primeArch ? archOf(form.primeArch) : null;
+    const big = form.bigArch ? archOf(form.bigArch) : null;
+    const little = form.littleArch ? archOf(form.littleArch) : null;
+    if (!big) errors.push('请选择大核架构');
+    for (const a of [prime, big, little]) {
+      if (a && a.year > year) errors.push(`${a.name} 尚未发布（${a.year} 年）`);
+    }
+    const chosen = [prime, big, little].filter(Boolean);
+    if (chosen.length >= 2) {
+      const yrs = chosen.map((a) => a.year);
+      if (Math.max(...yrs) - Math.min(...yrs) > 3) {
+        errors.push(`核心微架构跨代混搭（${Math.min(...yrs)}~${Math.max(...yrs)} 年），同代芯片应使用相近世代的架构`);
+      }
+    }
+    if (chosen.some((a) => a.self) && chosen.some((a) => !a.self)) {
+      errors.push('自研核心不能与 ARM 公版核心混排（参考：骁龙 8 至尊版 = 全自研 Oryon 2+6）');
     }
     const gpu = GPU_ARCHS.find((g) => g.id === form.gpuArch);
     if (!gpu) errors.push('请选择 GPU 架构');
     else if (gpu.year > year) errors.push(`${gpu.name} 尚未发布（${gpu.year} 年）`);
-    const nP = clamp(form.primeN | 0, 0, 2), nB = clamp(form.bigN | 0, 1, 6), nL = clamp(form.littleN | 0, 1, 6);
+    const nP = clamp(form.primeN | 0, 0, 2), nB = clamp(form.bigN | 0, 1, 6);
+    const nL = little ? clamp(form.littleN | 0, 1, 6) : 0; // 小核可选「无」
     const total = nP + nB + nL;
     if (total < 2 || total > 12) errors.push('核心总数需在 2~12 之间');
     const ghzP = prime ? clamp(Number(form.primeGhz) || 3.0, prime.ghz[0], prime.ghz[1]) : 3;
@@ -171,7 +189,7 @@ export function computeCustomSpec(state, id, form) {
     spec.perf = Math.round(perf);
     spec.power = round(1.7 + total * 0.16 + (ghzP - 2.5) * 0.5 + gpuScore * 0.008, 2);
     spec.price = Math.round((420 + total * 85 + nP * 150 + (form.gpuCores | 0) * 24) * 0.82);
-    spec.cores = `${nP ? `${nP}×${prime.name}@${ghzP}GHz + ` : ''}${nB}×${big.name}@${ghzB}GHz + ${nL}×${little.name}@${ghzL}GHz`;
+    spec.cores = `${nP ? `${nP}×${prime.name}@${ghzP}GHz + ` : ''}${nB}×${big.name}@${ghzB}GHz${nL && little ? ` + ${nL}×${little.name}@${ghzL}GHz` : ''}`;
     spec.gpu = `${gpu.name} MC${form.gpuCores | 0}`;
     spec.desc = `${spec.cores} · ${spec.gpu}`;
     spec.gen = lv;

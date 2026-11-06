@@ -95,7 +95,7 @@ export function defaultDesign(year = 2020, unlocked = []) {
       fold: 'none',
       // 折叠外屏（cover screen）：inch=0 为无（开关在 UI 的 body.coverOn，切换时记忆 last）；
       // ratio 高/宽比（0=按折叠结构默认）、x/y 半区内偏移 mm——外屏不默认占满、可精准调节；
-      // notch 外屏开孔（none/punch，可选前置摄像头）+ holeX 挖孔位置（%外屏宽）
+      // notch 外屏开孔（none/punch/udc，可选前置摄像头或屏下摄像头）+ holeX 挖孔位置（%外屏宽）
       coverScreen: { inch: 0, last: 2.6, ratio: 0, x: 0, y: 0, notch: 'none', holeX: 0 },
     },
     screen: {
@@ -608,6 +608,7 @@ function techEraFit(design, year, opts = {}) {
   if (year < 2020 && design.body.fold !== 'none') s -= 40;
   if (year >= 2016 && design.screen.inch < 4.5) s -= 15;
   if (year >= 2022 && design.parts.extras.includes('x_udc') && design.screen.notch === 'punch') s += 5; // 屏下摄像头的全面屏红利
+  if (year >= 2022 && design.parts.extras.includes('x_udc') && design.body.coverScreen?.notch === 'udc') s += 2; // 外屏屏下摄像头：闭合态正面无开孔
   return clamp(s, 0, 100);
 }
 
@@ -718,6 +719,9 @@ export function validate(design, year, opts = {}) {
   if (b.fold !== 'none') {
     const cs = b.coverScreen || {};
     const cv = cs.inch || 0;
+    if (cs.notch === 'udc' && !design.parts.extras.includes('x_udc')) {
+      issues.push({ level: 'error', text: '外屏屏下摄像头需要先解锁屏下摄像头技术。' });
+    }
     if (b.fold === 'flip' && cv <= 0) issues.push({ level: 'warn', text: '竖向翻折机型未设计外屏，闭合状态下无法查看时间与通知。' });
     if (cv > 0) {
       const cw = cv * 11.8, ch = cw * (cs.ratio || (b.fold === 'flip' ? 1.05 : 1.42));

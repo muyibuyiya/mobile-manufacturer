@@ -63,7 +63,7 @@ function menu() {
           </div>
           <div class="spacer"></div>
           <div class="tiny dim" style="text-align:right;line-height:1.7">
-            原型版本 0.6<br/>纯前端 · three.js · 本地存档
+            原型版本 0.7<br/>纯前端 · three.js · 本地存档
           </div>
         </div>
 

@@ -92,14 +92,14 @@ export const CPU_CORES = [
   { id: 'a520', name: 'Cortex-A520', kind: 'little', year: 2023, ipc: 1.2, ghz: [1.5, 2.3] },
   { id: 'x925', name: 'Cortex-X925', kind: 'prime', year: 2024, ipc: 2.9, ghz: [3.4, 3.7] },
   { id: 'a725', name: 'Cortex-A725', kind: 'big', year: 2024, ipc: 2.0, ghz: [2.4, 3.0] },
-  { id: 'oryon', name: '自研 Oryon 类', kind: 'prime', year: 2024, ipc: 3.0, ghz: [3.5, 4.3] },
-  { id: 'taishan', name: '自研泰山类', kind: 'big', year: 2023, ipc: 1.9, ghz: [2.0, 2.7] },
+  { id: 'oryon', name: '自研 Oryon 类', kind: 'prime', year: 2024, ipc: 3.0, ghz: [3.5, 4.3], self: true },
+  { id: 'taishan', name: '自研泰山类', kind: 'big', year: 2023, ipc: 1.9, ghz: [2.0, 2.7], self: true },
   // 2025-2026：ARM Lumex C1 集群（天玑9500 首发全系）+ 第三代自研大核
   { id: 'c1_ultra', name: 'Lumex C1-Ultra', kind: 'prime', year: 2025, ipc: 3.4, ghz: [3.8, 4.3] },
   { id: 'c1_prem', name: 'Lumex C1-Premium', kind: 'big', year: 2025, ipc: 2.05, ghz: [2.8, 3.5] },
   { id: 'c1_pro', name: 'Lumex C1-Pro', kind: 'big', year: 2025, ipc: 2.15, ghz: [2.5, 3.0] },
   { id: 'c1_nano', name: 'Lumex C1-Nano', kind: 'little', year: 2025, ipc: 1.3, ghz: [1.6, 2.2] },
-  { id: 'oryon3', name: '自研 Oryon 三代', kind: 'prime', year: 2025, ipc: 3.3, ghz: [3.8, 4.6] },
+  { id: 'oryon3', name: '自研 Oryon 三代', kind: 'prime', year: 2025, ipc: 3.3, ghz: [3.8, 4.6], self: true },
 ];
 
 // GPU 架构：perf 单核性能系数，slices 建议核数
