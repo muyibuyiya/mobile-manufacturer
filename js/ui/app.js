@@ -107,6 +107,7 @@ export function renderGame(root, state, opts = {}) {
   let pendingDesignId = null;
   let activeModal = null;
   let rivalChart = 'bar';
+  let empFilter = 'all';
   let rivalRank = 'month';
   let renameTargetId = null;
 
@@ -452,8 +453,9 @@ export function renderGame(root, state, opts = {}) {
       case 'hire': {
         const c = state.hiringPool?.[Number(ds.i)];
         if (!c) break;
-        const fee = c.salary * 2;
-        if (state.company.cash < fee) { opts.onToast?.('资金不足，无法支付招聘费用', 'bad'); break; }
+        const isHH = state.recruitChannel === 'headhunter';
+        const fee = c.salary * 2 * (isHH ? 1.2 : 1);
+        if (state.company.cash < fee) { opts.onToast?.(isHH ? '资金不足（含猎头费 20%）' : '资金不足，无法支付招聘费用', 'bad'); break; }
         state.company.cash -= fee;
         state.employees.push({ ...c, deptId: ds.dept || c.deptId, role: c.role });
         state.hiringPool.splice(Number(ds.i), 1);
@@ -477,7 +479,19 @@ export function renderGame(root, state, opts = {}) {
         e.satisfaction = clamp(e.satisfaction + 8, 0, 100);
         render(); break;
       }
-      case 'refresh-pool': state.hiringPool = genPool(state); render(); break;
+      case 'recruit-channel': state.recruitChannel = ds.v; state.hiringPool = genPool(state, ds.v); render(); break;
+      case 'campus-event': {
+        if (state.company.cash < 3000000) { opts.onToast?.('资金不足', 'bad'); break; }
+        state.company.cash -= 3000000;
+        state.recruitment = state.recruitment || {};
+        state.recruitment.campusEventMonths = 3;
+        state.hiringPool = genPool(state, 'campus');
+        addLog(state, 'hr', '举办校园招聘会，应届生候选人批量涌入。');
+        opts.onToast?.('校园招聘会已举办', 'good');
+        render();
+        break;
+      }
+      case 'refresh-pool': state.hiringPool = genPool(state, state.recruitChannel || 'social'); render(); break;
       case 'expand-office': {
         const o = state.offices[0];
         const cost = 2000000 * o.level;
@@ -1675,7 +1689,10 @@ export function renderGame(root, state, opts = {}) {
       <div class="two-col">
         <div class="card">
           <div class="card-title">员工名册 <span class="right">${state.employees.length} 人</span></div>
-      <div class="row" style="gap:5px;margin:8px 0;flex-wrap:wrap">
+      <div class="row" style="gap:4px;margin:6px 0;flex-wrap:wrap">
+        <button class="btn tiny ${empFilter === 'all' ? 'primary' : ''}" data-emp-f="all">全部</button>
+        ${DEPT_DEFS.map((d2) => `<button class="btn tiny ${empFilter === d2.id ? 'primary' : ''}" data-emp-f="${d2.id}">${d2.name}</button>`).join('')}
+      </div>      <div class="row" style="gap:5px;margin:8px 0;flex-wrap:wrap">
         <span class="tiny dim">按部门：</span>
         <button class="btn tiny primary" data-emp-f="all">全部</button>
         ${DEPT_DEFS.map((d2) => `<button class="btn tiny" data-emp-f="${d2.id}">${d2.name}</button>`).join('')}
@@ -1720,6 +1737,15 @@ export function renderGame(root, state, opts = {}) {
 
         <div class="card">
           <div class="card-title">招聘市场 <span class="right">入职费 = 2 个月薪资</span></div>
+          <div class="row" style="gap:5px;margin-bottom:8px;flex-wrap:wrap">
+            <button class="btn small ${(state.recruitChannel || 'social') === 'social' ? 'primary' : ''}" data-act="recruit-channel" data-v="social">社招</button>
+            <button class="btn small ${state.recruitChannel === 'campus' ? 'primary' : ''}" data-act="recruit-channel" data-v="campus">校招</button>
+            <button class="btn small ${state.recruitChannel === 'headhunter' ? 'primary' : ''}" data-act="recruit-channel" data-v="headhunter">猎头</button>
+            <div style="flex:1"></div>
+            ${(state.recruitChannel || 'social') === 'campus' ? `<button class="btn tiny" data-act="campus-event" ${(state.recruitment?.campusEventMonths || 0) > 0 ? 'disabled' : ''}>${(state.recruitment?.campusEventMonths || 0) > 0 ? `招聘会中（${state.recruitment.campusEventMonths}月）` : '举办招聘会（¥300万）'}</button>` : ''}
+            ${(state.recruitChannel || 'social') === 'headhunter' ? '<span class="tiny dim" style="align-self:center">猎头费 = 年薪 20%</span>' : ''}
+            ${(state.recruitChannel || 'social') === 'campus' ? '<span class="tiny dim" style="align-self:center">应届生：薪资低潜力高，3-4/9-10 月最佳</span>' : ''}
+          </div>
           <div class="list">
             ${state.hiringPool.map((c, i) => {
               const rk = rankOf(c.skill);
@@ -2747,17 +2773,22 @@ export function renderGame(root, state, opts = {}) {
 }
 
 // ---------- 招聘池 ----------
-function genPool(state) {
-  const count = 6;
+function genPool(state, channel = 'social') {
+  const count = channel === 'headhunter' ? 3 : channel === 'campus' ? 8 : 6;
   const pool = [];
+  const campusSeason = [3, 4, 9, 10].includes(state.date.month + 1);
   for (let i = 0; i < count; i++) {
     const dept = DEPT_DEFS[Math.floor(Math.random() * DEPT_DEFS.length)].id;
     const roles = ROLE_BY_DEPT[dept];
-    pool.push(generateEmployee(state.date.year, {
-      skillMean: 45 + state.company.brand * 0.18 + (Math.random() - 0.5) * 16,
-      deptId: dept,
-      role: roles[Math.floor(Math.random() * roles.length)],
-    }));
+    let skillMean = 45 + state.company.brand * 0.18 + (Math.random() - 0.5) * 16;
+    let mul = 1;
+    if (channel === 'campus') { skillMean = 32 + state.company.brand * 0.1 + (Math.random() - 0.5) * 10; mul = 0.6; if (!campusSeason && !state.recruitment?.campusEventMonths) skillMean -= 5; }
+    else if (channel === 'headhunter') { skillMean = 68 + state.company.brand * 0.15 + (Math.random() - 0.5) * 12; mul = 1.35; }
+    const emp = generateEmployee(state.date.year, { skillMean, deptId: dept, role: roles[Math.floor(Math.random() * roles.length)] });
+    if (channel === 'campus') { emp.potential = Math.min(100, emp.potential + 12); emp.edu = '本科（应届）'; }
+    emp.salary = Math.round(emp.salary * mul / 100) * 100;
+    emp.expectSalary = Math.round(emp.expectSalary * mul / 100) * 100;
+    pool.push(emp);
   }
   return pool;
 }
