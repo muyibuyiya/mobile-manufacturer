@@ -113,27 +113,27 @@ export function marketMix(marketId) {
 // priceTier：相对主流锚点的定价定位；appeal：对各人群的吸引力系数
 export const LINEUPS = [
   {
-    id: 'flagship', name: '旗舰系列', icon: '✦', priceTier: 1.55, brandGain: 1.8,
+    id: 'flagship', name: '旗舰', icon: '✦', priceTier: 1.55, brandGain: 1.8,
     appeal: { premium: 1.20, photo: 1.12, tech: 1.10, biz: 1.02, mass: 0.96, game: 1.0, budget: 0.78 },
     desc: '堆料与品牌标杆，毛利高但人群窄。',
   },
   {
-    id: 'main', name: '数字系列', icon: '◍', priceTier: 1.0, brandGain: 1.0,
+    id: 'main', name: '中端', icon: '◍', priceTier: 1.0, brandGain: 1.0,
     appeal: { premium: 1.02, photo: 1.0, tech: 1.0, biz: 1.0, mass: 1.02, game: 1.0, budget: 1.0 },
     desc: '主力走量机型，覆盖面最广。',
   },
   {
-    id: 'youth', name: '青春系列', icon: '✿', priceTier: 0.62, brandGain: 0.6,
+    id: 'youth', name: '低端', icon: '✿', priceTier: 0.62, brandGain: 0.6,
     appeal: { premium: 0.82, photo: 0.92, tech: 0.9, biz: 0.9, mass: 1.06, game: 0.98, budget: 1.18 },
     desc: '低价走量，拉新与渠道渗透用。',
   },
   {
-    id: 'biz', name: '商务系列', icon: '▤', priceTier: 1.15, brandGain: 1.1,
+    id: 'biz', name: '商务', icon: '▤', priceTier: 1.15, brandGain: 1.1,
     appeal: { premium: 1.06, photo: 0.92, tech: 0.96, biz: 1.24, game: 0.86, mass: 0.98, budget: 0.88 },
     desc: '续航、安全与通信优先，商务人群忠诚。',
   },
   {
-    id: 'game', name: '游戏系列', icon: '⚡', priceTier: 1.08, brandGain: 0.9,
+    id: 'game', name: '电竞', icon: '⚡', priceTier: 1.08, brandGain: 0.9,
     appeal: { premium: 0.94, photo: 0.85, tech: 1.06, biz: 0.88, mass: 0.96, game: 1.26, budget: 0.9 },
     desc: '性能与散热特化，游戏人群溢价明显。',
   },

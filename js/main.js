@@ -3,6 +3,7 @@ import { createGame, saveSlots, loadGame, GENES, autoSave, peekAutoSave } from '
 import { ERAS, COUNTRIES } from './data/world.js';
 import { renderGame } from './ui/app.js';
 import { sfx, unlockAudio, startAmbient } from './core/audio.js';
+import { LOGO_EXTRA } from './data/logo-extra.js';
 
 const root = document.getElementById('root');
 let current = null;
@@ -176,9 +177,57 @@ const LOGO_PRESETS = [
 ];
 function presetSvg(idx, color) { return LOGO_PRESETS[idx].replaceAll('#C#', color); }
 
-// logoSel: { type: 'none'|'preset'|'image', idx, dataUrl }
+// ---------- 图形 Logo 库（149 款白色剪影，按品牌色染色） ----------
+const LOGO_EXTRA_IMGS = [];
+const EXTRA_TINT_CACHE = new Map();
+LOGO_EXTRA.forEach((src, i) => {
+  const img = new Image();
+  img.onload = () => {};
+  img.src = src;
+  LOGO_EXTRA_IMGS[i] = img;
+});
+function tintExtraSync(idx, color) {
+  const key = idx + '|' + color;
+  if (EXTRA_TINT_CACHE.has(key)) return EXTRA_TINT_CACHE.get(key);
+  const img = LOGO_EXTRA_IMGS[idx];
+  if (!img || !img.complete || !img.naturalWidth) return LOGO_EXTRA[idx];
+  const c = document.createElement('canvas');
+  c.width = 64; c.height = 64;
+  const ctx = c.getContext('2d');
+  ctx.drawImage(img, 0, 0, 64, 64);
+  ctx.globalCompositeOperation = 'source-in';
+  ctx.fillStyle = color;
+  ctx.fillRect(0, 0, 64, 64);
+  const out = c.toDataURL('image/png');
+  EXTRA_TINT_CACHE.set(key, out);
+  return out;
+}
+
+// 图形 Logo 选择弹窗
+function extraLogoModal(color, curIdx, onPick) {
+  const mask = document.createElement('div');
+  mask.className = 'modal-mask';
+  mask.innerHTML = `
+    <div class="modal" style="width:min(760px,94vw)">
+      <h2>图形 Logo 库</h2>
+      <div class="modal-sub">${LOGO_EXTRA.length} 款 · 点击选用（按当前品牌色染色）</div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;max-height:56vh;overflow-y:auto;padding:6px;background:#10161f;border:1px solid #2a3546;border-radius:10px">
+        ${LOGO_EXTRA.map((d, i) => `<div data-pick="${i}" title="图形 Logo ${i + 1}" style="width:52px;height:52px;border-radius:9px;background:#2a3648;border:2px solid ${i === curIdx ? '#fff' : '#2a3546'};display:flex;align-items:center;justify-content:center;cursor:pointer"><img src="${tintExtraSync(i, color)}" width="36" height="36" style="object-fit:contain" alt=""/></div>`).join('')}
+      </div>
+      <div class="row" style="margin-top:14px;justify-content:flex-end"><button class="btn" data-close>取消</button></div>
+    </div>`;
+  document.body.appendChild(mask);
+  mask.onclick = (e) => { if (e.target === mask) mask.remove(); };
+  mask.querySelector('[data-close]').onclick = () => mask.remove();
+  mask.querySelectorAll('[data-pick]').forEach((el) => {
+    el.onclick = () => { onPick(Number(el.dataset.pick)); mask.remove(); };
+  });
+}
+
+// logoSel: { type: 'none'|'preset'|'extra'|'image', idx, dataUrl }
 function logoHtml(sel, color, size = 20) {
   if (sel.type === 'preset') return presetSvg(sel.idx, color).replaceAll('width="20" height="20"', `width="${size}" height="${size}"`);
+  if (sel.type === 'extra') return `<img src="${tintExtraSync(sel.idx, color)}" width="${size}" height="${size}" style="object-fit:contain" alt=""/>`;
   if (sel.type === 'image') return `<img src="${sel.dataUrl}" width="${size}" height="${size}" style="border-radius:4px;object-fit:contain" alt=""/>`;
   return `<i style="display:inline-block;width:${size}px;height:${size}px;border-radius:5px;background:${color}"></i>`;
 }
@@ -348,6 +397,7 @@ function config(mode) {
                 ${LOGO_PRESETS.map((svg, i) =>
                   `<div data-preset="${i}" title="预设 Logo ${i + 1}" style="width:26px;height:26px;border-radius:6px;background:#10161f;border:1px solid #2a3546;display:flex;align-items:center;justify-content:center;cursor:pointer">${presetSvg(i, '#4aa3ff')}</div>`).join('')}
               </div>
+              <button class="btn small" id="btn-extra-logos" style="margin-top:8px">🖼 图形 Logo 库（${LOGO_EXTRA.length} 款）</button>
               <div class="row" style="margin-top:10px;gap:8px">
                 <button class="btn small" id="btn-upload-logo">📁 上传图片</button>
                 <button class="btn small" id="btn-paint-logo">✏️ 画一个</button>
@@ -375,6 +425,8 @@ function config(mode) {
     root.querySelectorAll('[data-color]').forEach((x) => (x.style.borderColor = 'transparent'));
     const activeColor = root.querySelector(`[data-color="${logoColor}"]`);
     if (activeColor && logoSel.type === 'none') activeColor.style.borderColor = '#fff';
+    const extraBtn = document.getElementById('btn-extra-logos');
+    if (extraBtn) extraBtn.classList.toggle('primary', logoSel.type === 'extra');
   };
   root.querySelectorAll('[data-color]').forEach((el) => {
     el.onclick = () => {
@@ -413,6 +465,15 @@ function config(mode) {
     logoSel.type = 'none';
     refreshPresets(); refreshPreview();
   };
+  document.getElementById('btn-extra-logos').onclick = () => {
+    extraLogoModal(logoColor, logoSel.type === 'extra' ? logoSel.idx : -1, (idx) => {
+      logoSel.type = 'extra';
+      logoSel.idx = idx;
+      logoSel.dataUrl = '';
+      refreshPresets(); refreshPreview();
+      toast('图形 Logo 已选用', 'good');
+    });
+  };
   document.getElementById('btn-rand-name').onclick = () => {
     document.getElementById('f-name').value = randName();
     sfx('click');
@@ -442,6 +503,7 @@ function config(mode) {
       logoColor,
       gene: document.getElementById('f-gene').value,
       logoData: logoSel.type === 'preset' ? presetSvg(logoSel.idx, logoColor)
+        : logoSel.type === 'extra' ? tintExtraSync(logoSel.idx, logoColor)
         : logoSel.type === 'image' ? logoSel.dataUrl : '',
     };
     if (isSandbox) {

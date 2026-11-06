@@ -428,7 +428,7 @@ function rawBom(design) {
   const coverScreenInch = design.body.coverScreen?.inch || 0;
   const coverPanelCost = coverScreenInch > 0 ? panel.priceFor(Math.min(coverScreenInch, 7)) * 0.7 : 0;
   const parts = c.price + r.price + s.price + b.price + camCost
-    + panel.priceFor(design.screen.inch) + coverPanelCost + frame.price + back.price * 1.4 + os.fee
+    + panel.priceFor(design.screen.inch) * (1 + ((design.screen.hz || 60) - 60) * 0.004) + coverPanelCost + frame.price + back.price * 1.4 + os.fee
     + cw.price + wl.price + pr.bonus * 4;
   const extras = design.parts.extras.reduce((sum, id) => {
     const x = EXTRAS.find((e) => e.id === id);
@@ -483,7 +483,9 @@ export function derive(design, year, opts = {}) {
   const perf = clamp(c.perf * 0.62 + ramScore(r.gb) * 0.2 + storageScore(s.gb) * 0.18, 0, 100);
   // 影像评分：逐镜（传感器档位 × 镜头类型权重 + 光圈/焦段/OIS）+ 组合加成
   const camera = cameraScoreOf(design);
+  const hz = design.screen.hz || 60;
   const drainMa = 210 + c.power * 105 + panel.quality * 1.5 + (design.screen.inch > 6 ? 60 : 0)
+    + (hz - 60) * 0.35
     - (design.parts.extras.includes('x_udc') ? 4 : 0);
   const endurance = bat.mah / drainMa;
   // 充电能力折算到续航评分（快充缩短补能焦虑）+ 充电时间
@@ -507,7 +509,7 @@ export function derive(design, year, opts = {}) {
   const resFit = clamp(panel.resLevel * 100 - Math.max(0, year - (RES_TIERS.find((r) => r.id === design.screen.res)?.year || year)) * 1.2, 30, 105);
   const craft = clamp(
     ratioScore * 0.18 + thinScore * 0.16 + screenRatio * 0.22 + bezelScore * 0.14 +
-    materialScore * 0.12 + finishBonus + resFit * 0.16, 0, 100);
+    materialScore * 0.12 + finishBonus + resFit * 0.16 + Math.min(5, (hz - 60) * 0.05), 0, 100);
   const eraFit = techEraFit(design, year, opts);
 
   const designScore = clamp(craft * 0.78 + eraFit * 0.22, 0, 100);

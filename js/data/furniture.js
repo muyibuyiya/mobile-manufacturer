@@ -23,6 +23,8 @@ export const PARTITIONS = [
   { id: 'door', name: '门', icon: '⊓', cost: 5000, desc: '隔墙上的通道。' },
 ];
 
+export const PARTITIONS_MAP = Object.fromEntries(PARTITIONS.map((p) => [p.id, p]));
+
 // 各类汇总加成（供 sim / state 使用）
 export function layoutCapacityBonus(state) {
   return (state.officeLayout?.items || []).filter((i) => i.type === 'desk').length;

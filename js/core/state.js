@@ -3,6 +3,7 @@ import { clamp, rand, randInt, pick, uid, gauss, chance } from './util.js';
 import { MARKETS, COMPETITORS, COUNTRIES, ERAS, SURNAMES, GIVEN, FOREIGN, FIELDS, EDUS, makeCompetitorPhone } from '../data/world.js';
 import { TECHS } from '../data/tech.js';
 import { newModel, ensureBranding } from './design.js';
+import { RAMS, STORAGES } from '../data/parts.js';
 import { newCampus, ensureCampus, officeCapacity } from './campus.js';
 import { ensureSupply, START_STOCK } from './supply.js';
 import { rankOf } from './staff.js';
@@ -17,15 +18,19 @@ import { ensureMarketing } from './marketing.js';
 import { ensureWarranty } from './aftermarket.js';
 import { ensureGuide } from './guide.js';
 import { ensureSubsidiaries } from './capital.js';
+import { migrateV1, normalizeLayout } from './floorplan.js';
 
 export { DEPT_DEFS, ROLE_BY_DEPT };
 
-// 室内自由摆放的家具与隔断
+// 室内布局（v2）：房间可拖放/调尺寸 + 家具/隔墙单数据源。
+// 旧档（v1：仅 items/edges，房间位置硬编码）经 migrateV1 迁移：rooms 取默认双排布局，items/edges 原样保留
 export function ensureLayout(s) {
-  if (!s || typeof s !== 'object') return { items: [], edges: [] };
-  if (!s.officeLayout || typeof s.officeLayout !== 'object') s.officeLayout = { items: [], edges: [] };
-  if (!Array.isArray(s.officeLayout.items)) s.officeLayout.items = [];
-  if (!Array.isArray(s.officeLayout.edges)) s.officeLayout.edges = [];
+  if (!s || typeof s !== 'object') return { v: 2, rooms: {}, items: [], edges: [] };
+  if (!s.officeLayout || typeof s.officeLayout !== 'object' || s.officeLayout.v !== 2) {
+    s.officeLayout = migrateV1(s.officeLayout);
+  } else {
+    s.officeLayout = normalizeLayout(s.officeLayout); // 每次读档全量校验（坏数据剔除）
+  }
   return s.officeLayout;
 }
 
@@ -366,6 +371,13 @@ export function sanitizeState(s) {
     if (!b.ports) b.ports = { dualSpeaker: !!b.color && (s.date?.year || 2020) >= 2015, topMic: false, charge: 'typec' };
     // 背面装饰（Logo/文字位置尺寸）+ 侧键偏移：缺省值由 ensureBranding 幂等补齐
     ensureBranding(m.design);
+    // 配置版本：剔除非法条目（坏 ram/stg id / 坏倍率）
+    if (Array.isArray(m.design.variants)) {
+      const ramIds = new Set(RAMS.map((x) => x.id));
+      const stgIds = new Set(STORAGES.map((x) => x.id));
+      m.design.variants = m.design.variants.filter((v) => v && ramIds.has(v.ram) && stgIds.has(v.stg));
+      for (const v of m.design.variants) v.priceMul = Math.max(0.5, Math.min(2.5, Number(v.priceMul) || 1));
+    }
   }
   for (const e of s.employees || []) {
     if (typeof e.training === 'undefined') e.training = null;

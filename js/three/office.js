@@ -3,13 +3,22 @@
 // 视角约定：
 // - 45° 等距（默认）：隐藏面朝相机的墙体与天花板，方便看清室内
 // - 正俯视：显示天花板，适合看整体布局
+//
+// v0.8.0 起办公室系统基于**单一楼层网格**（js/core/floorplan.js）：
+// 房间可拖放/调尺寸、家具单数据源（内置工位派生自人数）、BFS 寻路感知墙与门、
+// 编辑走增量 updateLayout（不重建场景）。3D 编辑器与 2D 平面规划页（floorplan2d.js）
+// 共用 floorplan.js 校验层。
 import * as THREE from '../../vendor/three.module.js';
-import { DEPT_DEFS } from '../core/state.js';
-import { FURNITURE_MAP } from '../data/furniture.js';
-
-// 室内编辑网格：每个部门 6×6 格
-export const LAYOUT_GRID = 6;
-export const LAYOUT_CELL = 3.9;
+import { DEPT_DEFS, autoSave } from '../core/state.js';
+import { FURNITURE, FURNITURE_MAP, PARTITIONS_MAP } from '../data/furniture.js';
+import {
+  CELL, FLOOR_W, FLOOR_H, FLOOR_X, FLOOR_Z, WALL_H,
+  ROOM_MIN, ROOM_MAX, ENTRANCE_RECT, ENTRANCE_CELL, DEPT_IDS_9,
+  migrateV1, roomCellWorld, roomAt, doorCells, autoDoor,
+  deptHeadcounts, builtinDesks, seatForDesk,
+  validateRoomPlace, validateFurniturePlace, validateEdgeToggle, validateDoorMove,
+  reachability, routePath, routeToCell, worldToCell, cellToWorld,
+} from '../core/floorplan.js';
 
 // 地块在园区里的环形位置（plots[0] 是总部办公室，居中）
 export const PLOT_RING = [null,
@@ -192,16 +201,32 @@ export function createOfficeScene(container, state) {
   scene.add(groundGrid);
 
   const floor = new THREE.Mesh(
-    new THREE.BoxGeometry(104, 2, 104),
+    new THREE.BoxGeometry(FLOOR_X, 2, FLOOR_Z),
     new THREE.MeshStandardMaterial({ color: 0x161d27, roughness: 0.9, metalness: 0.1 })
   );
   floor.position.y = -0.4;
   floor.receiveShadow = true;
   scene.add(floor);
 
-  const grid = new THREE.GridHelper(104, 26, 0x24303d, 0x1a222c);
-  grid.position.y = 0.62;
-  scene.add(grid);
+  // 楼层网格线（按 CELL 间距自绘，支持非正方形楼层）
+  const gridGroup = new THREE.Group();
+  {
+    const lineMat = new THREE.LineBasicMaterial({ color: 0x24303d, transparent: true, opacity: 0.55 });
+    const pts = [];
+    for (let cx = 0; cx <= FLOOR_W; cx++) {
+      const x = cx * CELL - FLOOR_X / 2;
+      pts.push(x, 0.62, -FLOOR_Z / 2, x, 0.62, FLOOR_Z / 2);
+    }
+    for (let cy = 0; cy <= FLOOR_H; cy++) {
+      const z = cy * CELL - FLOOR_Z / 2;
+      pts.push(-FLOOR_X / 2, 0.62, z, FLOOR_X / 2, 0.62, z);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+    gridGroup.add(new THREE.LineSegments(geo, lineMat));
+    gridGroup.visible = false; // 编辑模式才显示
+    scene.add(gridGroup);
+  }
 
   const group = new THREE.Group();
   scene.add(group);
@@ -301,291 +326,337 @@ export function createOfficeScene(container, state) {
 
 
   // ============================================================
-  // 一、部门分区 + 工位 + 员工行为（总部办公室内部）
-  // 布局参考真实办公楼：一条中央走廊（宽 4），两侧是各部门办公室
+  // 一、部门房间（可拖放/调尺寸）+ 家具（单一数据源）+ 员工行为
+  // 数据与校验在 js/core/floorplan.js；本段只做渲染，重建走 rebuildDyn()
   // ============================================================
-  const CELL = 24;
-  const people = []; // { group, path, seg, t, phase, timer, deptColor, seatPos }
+  const layout = state.officeLayout?.v === 2 ? state.officeLayout : migrateV1(state.officeLayout);
+  state.officeLayout = layout;
+  const people = []; // { group, empId, dept, path, seg, speed, phase, timer, bob, seat, seatIdx }
+  let headcounts = deptHeadcounts(state);
 
-  // 走廊式布局：北排 5 间（研发/设计/生产/质量/供应链），南排 4 间（市场/销售/财务/人事）
-  // 部门顺序按 DEPT_DEFS 前 9 个；走廊沿 X 轴，z ∈ [-2, 2]
-  function deptCenter(i) {
-    if (i < 5) return { x: (i - 2) * CELL, z: -14 };
-    return { x: (i - 6.5) * CELL, z: 14 };
+  // 动态组：房间墙/家具/门牌——updateLayout() 只重建这一组，员工与主循环不动
+  const dynGroup = new THREE.Group();
+  group.add(dynGroup);
+  const dynCutaways = []; // 与静态 cutaways 分开，重建时不影响壳体
+  function tagCutawayDyn(obj, normal) {
+    obj.userData.cutNormal = normal.clone().normalize();
+    dynCutaways.push(obj);
   }
-  const ENTRANCE = { x: -64, z: 0 }; // 主入口：走廊西端
+  const seatsByDept = {}; // deptId -> [{x, z, rot}]
+  const deptWorld = {};   // deptId -> 房间中心世界坐标
+  let meetPoint = { x: 0, z: 0 };
+  let roomCellKeys = new Set();      // 全部房间覆盖格（走廊简化寻路用）
+  let furnitureCellKeys = new Set(); // 家具格（含内置工位）
 
-  // 部门房间门：每间房都开向中央走廊
-  function deptDoor(cx, cz) {
-    return { along: 'x', pos: cz > 0 ? cz - 12 : cz + 12 };
-  }
-
-  // 进场路径：走廊西端入口 → 沿走廊到门口 → 进门 → 工位
-  function planEntry(seat, cx, cz) {
-    const door = deptDoor(cx, cz);
-    const dirZ = cz > 0 ? -1 : 1; // 房门朝走廊的方向
-    const outer = { x: cx, z: door.pos + dirZ * 2.5 };  // 走廊侧
-    const inner = { x: cx, z: door.pos - dirZ * 2.5 };  // 房间侧
-    return [
-      { x: ENTRANCE.x, z: ENTRANCE.z },
-      { x: cx, z: ENTRANCE.z },
-      { x: cx, z: outer.z },
-      { x: cx, z: inner.z },
-      { x: seat.x, z: seat.z },
-    ];
-  }
-
-  // 出房间到走廊的路径（进场的逆序，去掉入口点）：工位 → 门内 → 门外 → 走廊
-  function planExit(seat, cx, cz) {
-    return planEntry(seat, cx, cz).reverse().slice(1);
-  }
-
-  DEPT_DEFS.slice(0, 9).forEach((dept, i) => {
-    const count = state.employees.filter((e) => e.deptId === dept.id).length;
-    // 未启用的部门（没有任何员工）不渲染房间——避免出现一排空房间
-    if (count <= 0) return;
-    const { x: cx, z: cz } = deptCenter(i);
-    const col = new THREE.Color(dept.color);
-
-    const pad = new THREE.Mesh(GEO.pad, new THREE.MeshStandardMaterial({
-      color: col.clone().multiplyScalar(0.06).offsetHSL(0, 0.01, 0),
-      roughness: 0.95, metalness: 0.05,
-    }));
-    pad.position.set(cx, 0.12, cz);
-    pad.receiveShadow = true;
-    group.add(pad);
-
-    // 实体隔墙：每部门独立房间（24×24），房门开向中央走廊
-    const WALL_H = 7.2, DOOR_W = 5.4, SEG = (24 - DOOR_W) / 2;
-    const edgeMat = new THREE.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 0.7, roughness: 0.4 });
-    const door = deptDoor(cx, cz);
-    for (const axis of ['x', 'z']) {
-      for (const s of [-1, 1]) {
-        const wpos = (axis === 'x' ? cz : cx) + s * 12;
-        const isDoorWall = door.along === axis && Math.abs(door.pos - wpos) < 0.5;
-        if (isDoorWall) {
-          // 门洞两侧墙段 + 过梁
-          const off = DOOR_W / 2 + SEG / 2;
-          for (const t of [-1, 1]) {
-            const seg = new THREE.Mesh(
-              new THREE.BoxGeometry(axis === 'x' ? SEG : 0.7, WALL_H, axis === 'x' ? 0.7 : SEG), MAT.roomWall);
-            seg.position.set(axis === 'x' ? cx + t * off : wpos, WALL_H / 2 + 0.12, axis === 'x' ? wpos : cz + t * off);
-            seg.castShadow = true; seg.receiveShadow = true;
-            group.add(seg);
-          }
-          const lintel = new THREE.Mesh(
-            new THREE.BoxGeometry(axis === 'x' ? DOOR_W : 0.7, WALL_H - 5.2, axis === 'x' ? 0.7 : DOOR_W), MAT.roomWall);
-          lintel.position.set(axis === 'x' ? cx : wpos, 5.2 + (WALL_H - 5.2) / 2 + 0.12, axis === 'x' ? wpos : cz);
-          group.add(lintel);
-        } else {
-          const seg = new THREE.Mesh(
-            new THREE.BoxGeometry(axis === 'x' ? 24 : 0.7, WALL_H, axis === 'x' ? 0.7 : 24), MAT.roomWall);
-          seg.position.set(axis === 'x' ? cx : wpos, WALL_H / 2 + 0.12, axis === 'x' ? wpos : cz);
-          seg.castShadow = true; seg.receiveShadow = true;
-          group.add(seg);
-        }
-        // 墙顶部门色发光沿（保持分区辨识度）
-        const glow = new THREE.Mesh(
-          new THREE.BoxGeometry(axis === 'x' ? 24 : 0.9, 0.16, axis === 'x' ? 0.9 : 24), edgeMat);
-        glow.position.set(axis === 'x' ? cx : wpos, WALL_H + 0.28, axis === 'x' ? wpos : cz);
-        group.add(glow);
-      }
-    }
-
-    // 门牌：挂在门上方（走廊侧），关闭深度测试避免被墙体遮挡
-    const label = makeLabel(`${dept.name} · ${count}`, dept.color);
-    label.scale.set(9.5, 2.4, 1);
-    label.position.set(cx, 6.4, door.pos + (cz > 0 ? 0.8 : -0.8));
-    label.material.depthTest = false;
-    label.renderOrder = 50;
-    group.add(label);
-
-    // 工位坐标先收集，供员工寻路使用
-    const seats = [];
-    const n = Math.min(count, 12);
-    const cols = 4;
-    for (let k = 0; k < n; k++) {
-      const dx = (k % cols - 1.5) * 5.9;
-      const dz = (Math.floor(k / cols) - 1) * 7.0;
-      const wx = cx + dx, wz = cz + dz;
-      seats.push({ x: wx, z: wz + 2.35, rot: Math.PI + (k % 3 - 1) * 0.28 });
-
-      const top = new THREE.Mesh(GEO.deskTop, MAT.desk);
-      top.position.set(wx, 2.6, wz);
-      top.castShadow = true; top.receiveShadow = true;
-      group.add(top);
-      for (const s of [-1, 1]) {
-        const leg = new THREE.Mesh(GEO.deskLeg, MAT.deskDark);
-        leg.position.set(wx + s * 2.8, 1.5, wz);
-        leg.castShadow = true;
-        group.add(leg);
-      }
-      const mon = new THREE.Mesh(GEO.monitor, MAT.screen);
-      mon.position.set(wx, 3.6, wz - 0.9);
-      group.add(mon);
-      const stand = new THREE.Mesh(GEO.monitorStand, MAT.deskDark);
-      stand.position.set(wx, 2.95, wz - 0.9);
-      group.add(stand);
-
-      const seat = new THREE.Mesh(GEO.seat, MAT.chair);
-      seat.position.set(wx, 1.5, wz + 2.4);
-      seat.castShadow = true;
-      group.add(seat);
-      const backRest = new THREE.Mesh(GEO.back, MAT.chair);
-      backRest.position.set(wx, 2.25, wz + 3.1);
-      backRest.castShadow = true;
-      group.add(backRest);
-    }
-
-    // 空部门：一盆绿植表示闲置
-    if (n === 0) {
-      const pot = new THREE.Mesh(GEO.plantPot, MAT.pot);
-      pot.position.set(cx, 1.2, cz);
-      pot.castShadow = true;
-      group.add(pot);
-      const leaf = new THREE.Mesh(GEO.plantLeaf, MAT.leaf);
-      leaf.position.set(cx, 2.7, cz);
-      leaf.castShadow = true;
-      group.add(leaf);
-    }
-
-    // 员工实体：随机外观 + 行为状态机
-    const emps = state.employees.filter((e) => e.deptId === dept.id);
-    emps.forEach((emp, k) => {
-      const shirt = new THREE.Color(SHIRT_COLORS[(emp.name.charCodeAt(0) + k) % SHIRT_COLORS.length])
-        .lerp(col, 0.35);
-      const hairCol = HAIR_COLORS[(emp.name.charCodeAt(1) || 7) % HAIR_COLORS.length];
-
-      const person = new THREE.Group();
-      const body = new THREE.Mesh(GEO.torso, new THREE.MeshStandardMaterial({ color: shirt, roughness: 0.78 }));
-      body.position.y = 2.55;
-      body.castShadow = true;
-      const head = new THREE.Mesh(GEO.head, MAT.skin);
-      head.position.y = 3.75;
-      head.castShadow = true;
-      const hair = new THREE.Mesh(GEO.hair, new THREE.MeshStandardMaterial({ color: hairCol, roughness: 0.9 }));
-      hair.position.y = 3.82;
-      person.add(body, head, hair);
-      person.position.set(ENTRANCE.x, 0, ENTRANCE.z); // 从走廊西端主入口进场
-      group.add(person);
-
-      const seatPos = seats[k % Math.max(1, seats.length)] || { x: cx, z: cz + 4, rot: Math.PI };
-      people.push({
-        group: person,
-        dept: dept.id,
-        deptCx: cx,
-        deptCz: cz,
-        seat: seatPos,
-        path: [],
-        seg: 0,
-        speed: 5.2 + ((emp.name.length * 7) % 5) * 0.4,
-        phase: 'toDesk',   // toDesk → working → toBreak → breaking → toDesk
-        timer: 2 + k * 0.7, // 错峰进场
-        bob: Math.random() * Math.PI * 2,
-        inPlace: false,
-      });
+  function disposeObj(root) {
+    root.traverse((o) => {
+      if (o.geometry) o.geometry.dispose();
+      if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) => { m.map?.dispose(); m.dispose(); });
     });
-  });
+  }
 
-  // ---------- 南侧前厅（大门内侧）：logo 地环 + 前台 ----------
+  // 墙段绘制：key 归一化后跨房间去重（共享墙只画一次）
+  function drawWallSeg(kind, a, b, isDoor, col, edgeMat) {
+    // kind 'H'：沿 x 的横墙，a=格x，b=边界线y；'V'：沿 z 的纵墙，a=边界线x，b=格y
+    const isH = kind === 'H';
+    const wx = isH ? a * CELL - FLOOR_X / 2 + CELL / 2 : a * CELL - FLOOR_X / 2;
+    const wz = isH ? b * CELL - FLOOR_Z / 2 : b * CELL - FLOOR_Z / 2 + CELL / 2;
+    const DOOR_W = 2.8, SEG = (CELL - DOOR_W) / 2;
+    const g = new THREE.Group();
+    if (!isDoor) {
+      const seg = new THREE.Mesh(isH ? new THREE.BoxGeometry(CELL, WALL_H, 0.7) : new THREE.BoxGeometry(0.7, WALL_H, CELL), MAT.roomWall);
+      seg.position.set(wx, WALL_H / 2 + 0.12, wz);
+      seg.castShadow = true; seg.receiveShadow = true;
+      g.add(seg);
+    } else {
+      // 门洞：两侧窄墙段 + 过梁
+      for (const t of [-1, 1]) {
+        const seg = new THREE.Mesh(
+          isH ? new THREE.BoxGeometry(SEG, WALL_H, 0.7) : new THREE.BoxGeometry(0.7, WALL_H, SEG), MAT.roomWall);
+        seg.position.set(wx + (isH ? t * (DOOR_W / 2 + SEG / 2) : 0), WALL_H / 2 + 0.12, wz + (isH ? 0 : t * (DOOR_W / 2 + SEG / 2)));
+        seg.castShadow = true;
+        g.add(seg);
+      }
+      const lintel = new THREE.Mesh(
+        isH ? new THREE.BoxGeometry(DOOR_W, WALL_H - 5.2, 0.7) : new THREE.BoxGeometry(0.7, WALL_H - 5.2, DOOR_W), MAT.roomWall);
+      lintel.position.set(wx, 5.2 + (WALL_H - 5.2) / 2 + 0.12, wz);
+      g.add(lintel);
+    }
+    // 墙顶部门色发光沿
+    const glow = new THREE.Mesh(
+      isH ? new THREE.BoxGeometry(CELL, 0.16, 0.9) : new THREE.BoxGeometry(0.9, 0.16, CELL), edgeMat);
+    glow.position.set(wx, WALL_H + 0.28, wz);
+    g.add(glow);
+    dynGroup.add(g);
+    return g;
+  }
+
+  function rebuildDyn() {
+    while (dynGroup.children.length) {
+      const c = dynGroup.children.pop();
+      disposeObj(c);
+    }
+    dynCutaways.length = 0;
+    for (const k of Object.keys(seatsByDept)) delete seatsByDept[k];
+    headcounts = deptHeadcounts(state);
+    roomCellKeys = new Set();
+    furnitureCellKeys = new Set();
+    const wallKeys = new Set();
+
+    for (const dept of DEPT_DEFS.slice(0, 9)) {
+      const room = layout.rooms[dept.id];
+      if (!room) continue;
+      const count = headcounts[dept.id] || 0;
+      const col = new THREE.Color(dept.color);
+      const px = room.cx * CELL - FLOOR_X / 2, pz = room.cy * CELL - FLOOR_Z / 2;
+      const pw = room.w * CELL, ph = room.h * CELL;
+      deptWorld[dept.id] = { x: px + pw / 2, z: pz + ph / 2 };
+      for (let cy = room.cy; cy < room.cy + room.h; cy++) {
+        for (let cx = room.cx; cx < room.cx + room.w; cx++) roomCellKeys.add(cx + ',' + cy);
+      }
+
+      // 地垫（部门色淡染）
+      const pad = new THREE.Mesh(
+        new THREE.BoxGeometry(pw - 0.4, 0.25, ph - 0.4),
+        new THREE.MeshStandardMaterial({ color: col.clone().multiplyScalar(0.06).offsetHSL(0, 0.01, 0), roughness: 0.95, metalness: 0.05 })
+      );
+      pad.position.set(px + pw / 2, 0.12, pz + ph / 2);
+      pad.receiveShadow = true;
+      dynGroup.add(pad);
+
+      // 四面墙（共享墙去重；门段替换为门洞）
+      const edgeMat = new THREE.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 0.7, roughness: 0.4 });
+      const isDoorSeg = (side, t) => room.door && room.door.side === side && room.door.t === t;
+      const segs = [];
+      for (let t = 0; t < room.w; t++) {
+        segs.push({ kind: 'H', a: room.cx + t, b: room.cy, side: 'N', t });
+        segs.push({ kind: 'H', a: room.cx + t, b: room.cy + room.h, side: 'S', t });
+      }
+      for (let t = 0; t < room.h; t++) {
+        segs.push({ kind: 'V', a: room.cx, b: room.cy + t, side: 'W', t });
+        segs.push({ kind: 'V', a: room.cx + room.w, b: room.cy + t, side: 'E', t });
+      }
+      for (const s of segs) {
+        const key = `${s.kind}:${s.a}:${s.b}`;
+        if (wallKeys.has(key)) continue;
+        wallKeys.add(key);
+        drawWallSeg(s.kind, s.a, s.b, isDoorSeg(s.side, s.t), col, edgeMat);
+      }
+
+      // 门牌：挂在门上方
+      const dc = doorCells(layout, dept.id);
+      const doorWorld = cellToWorld(dc.inner.cx, dc.outer.cy >= room.cy + room.h ? room.cy + room.h : dc.outer.cy);
+      const doorWorldX = cellToWorld(dc.outer.cx, room.cy).x;
+      const label = makeLabel(`${dept.name} · ${count}`, dept.color);
+      label.scale.set(9.5, 2.4, 1);
+      const sideN = room.door.side === 'N';
+      const sideS = room.door.side === 'S';
+      const doorZ = sideN ? pz : sideS ? pz + ph : pz + (dc.inner.cy - room.cy + 0.5) * CELL;
+      const doorX = (room.door.side === 'N' || room.door.side === 'S') ? px + (room.door.t + 0.5) * CELL : (room.door.side === 'W' ? px : px + pw);
+      const lblZ = sideN ? doorZ - 1.2 : sideS ? doorZ + 1.2 : doorZ;
+      const lblX = sideN || sideS ? doorX : (room.door.side === 'W' ? doorX - 1.2 : doorX + 1.2);
+      label.position.set(lblX, 6.4, lblZ);
+      label.material.depthTest = false;
+      label.renderOrder = 50;
+      dynGroup.add(label);
+    }
+
+    // 家具：内置工位（派生）+ 用户 items —— 同一渲染路径，重叠从数据层杜绝
+    const desks = builtinDesks(layout, headcounts);
+    for (const d of desks) {
+      const w = roomCellWorld(layout, d.dept, d.lx, d.ly);
+      furnitureCellKeys.add(w.x + ',' + w.z);
+      dynGroup.add(makeFurniture('desk', w, 0));
+    }
+    for (const it of layout.items) {
+      const w = roomCellWorld(layout, it.dept, it.cx, it.cy);
+      furnitureCellKeys.add(w.x + ',' + w.z);
+      dynGroup.add(makeFurniture(it.type, w, it.rot || 0));
+    }
+    for (const ed of layout.edges) {
+      const room = layout.rooms[ed.dept];
+      if (!room) continue;
+      const isH = ed.orient === 'h';
+      const wx = room.cx * CELL - FLOOR_X / 2 + (isH ? (ed.ex + 0.5) * CELL : ed.ex * CELL);
+      const wz = room.cy * CELL - FLOOR_Z / 2 + (isH ? ed.ey * CELL : (ed.ey + 0.5) * CELL);
+      const g = new THREE.Group();
+      if (ed.type === 'wall') {
+        const seg = new THREE.Mesh(isH ? new THREE.BoxGeometry(CELL, 6, 0.7) : new THREE.BoxGeometry(0.7, 6, CELL), MAT.roomWall);
+        seg.position.y = 3;
+        seg.castShadow = true;
+        g.add(seg);
+        tagCutawayDyn(g, isH ? new THREE.Vector3(0, 0, 1) : new THREE.Vector3(1, 0, 0));
+      } else {
+        // 房间门改位标记：小地垫提示（真正门洞在周界墙上）
+        const mat = new THREE.Mesh(new THREE.BoxGeometry(CELL * 0.8, 0.18, CELL * 0.8),
+          new THREE.MeshStandardMaterial({ color: 0xf5a542, emissive: 0xf5a542, emissiveIntensity: 0.4 }));
+        mat.position.y = 0.3;
+        g.add(mat);
+      }
+      g.position.set(wx, 0.6, wz);
+      dynGroup.add(g);
+    }
+
+    // 工位表（内置 + 用户 desk；带房内局部格坐标供寻路）
+    for (const dept of DEPT_DEFS.slice(0, 9)) {
+      const list = [];
+      for (const d of desks.filter((x) => x.dept === dept.id)) {
+        list.push({ ...seatForDesk(layout, dept.id, d.lx, d.ly, 0), lx: d.lx, ly: d.ly });
+      }
+      for (const it of layout.items.filter((x) => x.dept === dept.id && x.type === 'desk')) {
+        list.push({ ...seatForDesk(layout, dept.id, it.cx, it.cy, it.rot || 0), lx: it.cx, ly: it.cy });
+      }
+      seatsByDept[dept.id] = list;
+    }
+
+    // 晨会点：走廊上离楼层中心最近的可走格
+    {
+      const mid = { cx: Math.floor(FLOOR_W / 2), cy: Math.floor(FLOOR_H / 2) };
+      const walk = floorWalkableSet();
+      let bestC = mid, bestD = 1e9;
+      for (const k of walk) {
+        const [cx, cy] = k.split(',').map(Number);
+        const d = (cx - mid.cx) ** 2 + (cy - mid.cy) ** 2;
+        if (d < bestD) { bestD = d; bestC = { cx, cy }; }
+      }
+      meetPoint = cellToWorld(bestC.cx, bestC.cy);
+    }
+    refreshPeopleAnchors();
+  }
+
+  function floorWalkableSet() {
+    const walk = new Set();
+    for (let cy = 0; cy < FLOOR_H; cy++) {
+      for (let cx = 0; cx < FLOOR_W; cx++) {
+        if (!roomCellKeys.has(cx + ',' + cy)) walk.add(cx + ',' + cy);
+      }
+    }
+    return walk;
+  }
+
+  // 人员锚点刷新：房间移动/调尺寸/家具变化后重新指派工位与房间中心
+  function refreshPeopleAnchors() {
+    const byDept = {};
+    for (const p of people) {
+      const dept = p.dept;
+      byDept[dept] = (byDept[dept] || 0) + 1;
+      const seats = seatsByDept[dept] || [];
+      p.seat = seats[(byDept[dept] - 1) % Math.max(1, seats.length)] || { x: deptWorld[dept]?.x || 0, z: (deptWorld[dept]?.z || 0) + 4, rot: Math.PI };
+      p.roomCenter = deptWorld[dept] || { x: 0, z: 0 };
+      p.path = [];
+    }
+  }
+
+
+  // ---------- 南侧前厅（入口区内侧）：logo 地环 + 前台 ----------
   const atrium = new THREE.Mesh(
-    new THREE.CylinderGeometry(8, 8, 0.16, 40),
+    new THREE.CylinderGeometry(7, 7, 0.16, 40),
     new THREE.MeshStandardMaterial({ color: 0x1e2833, roughness: 0.55, metalness: 0.35 })
   );
-  atrium.position.set(0, 0.2, 45);
+  atrium.position.set(0, 0.2, 36);
   atrium.receiveShadow = true;
   group.add(atrium);
 
   const logo = new THREE.Mesh(
-    new THREE.TorusGeometry(4.2, 0.62, 14, 44),
+    new THREE.TorusGeometry(3.8, 0.58, 14, 44),
     new THREE.MeshStandardMaterial({
       color: state.company.logoColor, emissive: state.company.logoColor,
       emissiveIntensity: 1.1, metalness: 0.7, roughness: 0.25,
     })
   );
   logo.rotation.x = -Math.PI / 2;
-  logo.position.set(0, 0.7, 45);
+  logo.position.set(0, 0.7, 36);
   group.add(logo);
 
   const reception = new THREE.Mesh(new THREE.BoxGeometry(14, 2.4, 3.2), MAT.desk);
-  reception.position.set(0, 1.6, 40);
+  reception.position.set(0, 1.6, 31);
   reception.castShadow = true;
   group.add(reception);
   const receptionTop = new THREE.Mesh(new THREE.BoxGeometry(15, 0.3, 4), new THREE.MeshStandardMaterial({
     color: new THREE.Color(state.company.logoColor), emissive: new THREE.Color(state.company.logoColor),
     emissiveIntensity: 0.35, roughness: 0.4, metalness: 0.5,
   }));
-  receptionTop.position.set(0, 2.95, 40);
+  receptionTop.position.set(0, 2.95, 31);
   group.add(receptionTop);
 
-  // ---------- 围墙（面朝相机时自动隐藏）与天花板 ----------
+  // ---------- 围墙（面朝相机时自动隐藏）与天花板（尺寸随楼层网格） ----------
   const wallH = 26;
+  const halfW = FLOOR_X / 2, halfD = FLOOR_Z / 2;
   // 北墙（-z）与西墙（-x）：常驻，剖面规则通用
-  const wallZ = new THREE.Mesh(new THREE.PlaneGeometry(104, wallH), MAT.wall);
-  wallZ.position.set(0, wallH / 2 + 0.6, -52);
+  const wallZ = new THREE.Mesh(new THREE.PlaneGeometry(FLOOR_X, wallH), MAT.wall);
+  wallZ.position.set(0, wallH / 2 + 0.6, -halfD);
   tagCutaway(wallZ, new THREE.Vector3(0, 0, -1));
   group.add(wallZ);
-  const wallX = new THREE.Mesh(new THREE.PlaneGeometry(104, wallH), MAT.wall);
-  wallX.position.set(-52, wallH / 2 + 0.6, 0);
+  const wallX = new THREE.Mesh(new THREE.PlaneGeometry(FLOOR_Z, wallH), MAT.wall);
+  wallX.position.set(-halfW, wallH / 2 + 0.6, 0);
   wallX.rotation.y = Math.PI / 2;
   tagCutaway(wallX, new THREE.Vector3(-1, 0, 0));
   group.add(wallX);
 
   // 南侧与东侧矮墙：面朝默认相机，同样参与剖面
   const parapetMat = new THREE.MeshStandardMaterial({ color: 0x141b24, roughness: 0.9, metalness: 0.08 });
-  const parapetZ = new THREE.Mesh(new THREE.BoxGeometry(104, 3.4, 1.6), parapetMat);
-  parapetZ.position.set(0, 2.3, 52);
+  const parapetZ = new THREE.Mesh(new THREE.BoxGeometry(FLOOR_X, 3.4, 1.6), parapetMat);
+  parapetZ.position.set(0, 2.3, halfD);
   tagCutaway(parapetZ, new THREE.Vector3(0, 0, 1));
   group.add(parapetZ);
-  const parapetX = new THREE.Mesh(new THREE.BoxGeometry(1.6, 3.4, 104), parapetMat);
-  parapetX.position.set(52, 2.3, 0);
+  const parapetX = new THREE.Mesh(new THREE.BoxGeometry(1.6, 3.4, FLOOR_Z), parapetMat);
+  parapetX.position.set(halfW, 2.3, 0);
   tagCutaway(parapetX, new THREE.Vector3(1, 0, 0));
   group.add(parapetX);
 
-  // 窗
+  // 窗（北墙 6 扇沿 x、西墙 5 扇沿 z）
   const frameMat = new THREE.MeshStandardMaterial({ color: 0x39485c, roughness: 0.6, metalness: 0.5 });
   for (let i = 0; i < 6; i++) {
-    const wx = -40 + i * 16;
-    for (const [axis] of [['z'], ['x']]) {
-      const win = new THREE.Mesh(new THREE.PlaneGeometry(11.5, 12), MAT.win);
-      win.position.set(axis === 'z' ? wx : -51.5, 14.5, axis === 'z' ? -51.5 : wx);
-      if (axis === 'x') win.rotation.y = Math.PI / 2;
-      tagCutaway(win, axis === 'z' ? new THREE.Vector3(0, 0, -1) : new THREE.Vector3(-1, 0, 0));
-      group.add(win);
-      const fr = new THREE.Mesh(new THREE.BoxGeometry(axis === 'z' ? 12.4 : 0.6, 0.6, axis === 'z' ? 0.6 : 12.4), frameMat);
-      fr.position.set(axis === 'z' ? wx : -51.3, 20.7, axis === 'z' ? -51.3 : wx);
-      tagCutaway(fr, axis === 'z' ? new THREE.Vector3(0, 0, -1) : new THREE.Vector3(-1, 0, 0));
+    const wx = -halfW + FLOOR_X / 6 * (i + 0.5);
+    const win = new THREE.Mesh(new THREE.PlaneGeometry(12, 12), MAT.win);
+    win.position.set(wx, 14.5, -halfD + 0.5);
+    tagCutaway(win, new THREE.Vector3(0, 0, -1));
+    group.add(win);
+    for (const fy of [20.7, 8.3]) {
+      const fr = new THREE.Mesh(new THREE.BoxGeometry(12.8, 0.6, 0.6), frameMat);
+      fr.position.set(wx, fy, -halfD + 0.7);
+      tagCutaway(fr, new THREE.Vector3(0, 0, -1));
       group.add(fr);
-      const fr2 = fr.clone();
-      fr2.position.y = 8.3;
-      tagCutaway(fr2, axis === 'z' ? new THREE.Vector3(0, 0, -1) : new THREE.Vector3(-1, 0, 0));
-      group.add(fr2);
+    }
+  }
+  for (let i = 0; i < 5; i++) {
+    const wz = -halfD + FLOOR_Z / 5 * (i + 0.5);
+    const win = new THREE.Mesh(new THREE.PlaneGeometry(11, 12), MAT.win);
+    win.position.set(-halfW + 0.5, 14.5, wz);
+    win.rotation.y = Math.PI / 2;
+    tagCutaway(win, new THREE.Vector3(-1, 0, 0));
+    group.add(win);
+    for (const fy of [20.7, 8.3]) {
+      const fr = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.6, 11.8), frameMat);
+      fr.position.set(-halfW + 0.7, fy, wz);
+      tagCutaway(fr, new THREE.Vector3(-1, 0, 0));
+      group.add(fr);
     }
   }
 
   // 天花板：正俯视时可见，45° 时隐藏（看室内）
-  const ceiling = new THREE.Mesh(new THREE.BoxGeometry(104, 0.8, 104), MAT.ceil);
+  const ceiling = new THREE.Mesh(new THREE.BoxGeometry(FLOOR_X, 0.8, FLOOR_Z), MAT.ceil);
   ceiling.position.set(0, wallH + 1.2, 0);
   ceiling.castShadow = false;
   group.add(ceiling);
   const ceilingLampMat = new THREE.MeshStandardMaterial({ color: 0xfff4d8, emissive: 0xffe9b8, emissiveIntensity: 0.5 });
   for (let gx = -1; gx <= 1; gx++) {
     for (let gz = -1; gz <= 1; gz++) {
-      const lamp = new THREE.Mesh(new THREE.BoxGeometry(18, 0.3, 18), ceilingLampMat);
-      lamp.position.set(gx * 30, wallH + 0.7, gz * 30);
+      const lamp = new THREE.Mesh(new THREE.BoxGeometry(16, 0.3, 10), ceilingLampMat);
+      lamp.position.set(gx * halfW * 0.55, wallH + 0.7, gz * halfD * 0.55);
       ceiling.add(lamp);
     }
   }
 
   // ---------- 总部大门（园区大道一侧） ----------
   const gateL = new THREE.Mesh(new THREE.BoxGeometry(2, 12, 2), frameMat);
-  gateL.position.set(-7, 6, 56);
+  gateL.position.set(-7, 6, halfD + 5);
   group.add(gateL);
   const gateR = gateL.clone();
   gateR.position.x = 7;
   group.add(gateR);
   const gateTop = new THREE.Mesh(new THREE.BoxGeometry(17, 2, 2.2), frameMat);
-  gateTop.position.set(0, 13, 56);
+  gateTop.position.set(0, 13, halfD + 5);
   group.add(gateTop);
   // 公司牌匾：挂在横梁正中（左 logo / 右中英文两行，整体居中，任何视角不被遮挡）
   const gateSign = makeCompanyPlaque(
@@ -594,7 +665,7 @@ export function createOfficeScene(container, state) {
     state.company.logoColor || '#4aa3ff',
     state.company.logoData || '',
   );
-  gateSign.position.set(0, 13.4, 57.4);
+  gateSign.position.set(0, 13.4, halfD + 6.4);
   group.add(gateSign);
 
   // ============================================================
@@ -724,17 +795,9 @@ export function createOfficeScene(container, state) {
   road(0, 80, 150, 10); road(0, -80, 160, 10);
 
   // ============================================================
-  // 三、室内家具与隔墙（state.officeLayout）
+  // 三、家具造型（渲染在 rebuildDyn 内；数据与校验见 floorplan.js）
   // ============================================================
-  const layout = state.officeLayout || { items: [], edges: [] };
-  const half = (LAYOUT_GRID * LAYOUT_CELL) / 2;
-
-  function cellCenter(deptIdx, cx, cy) {
-    const dc = deptCenter(deptIdx);
-    return { x: dc.x - half + LAYOUT_CELL * (cx + 0.5), z: dc.z - half + LAYOUT_CELL * (cy + 0.5) };
-  }
-
-  function makeFurniture(typeId, pos) {
+  function makeFurniture(typeId, pos, rot = 0) {
     const g = new THREE.Group();
     switch (typeId) {
       case 'desk': {
@@ -793,55 +856,474 @@ export function createOfficeScene(container, state) {
       }
       default: break;
     }
+    g.rotation.y = rot * Math.PI / 2;
     g.position.set(pos.x, 0.6, pos.z);
     return g;
   }
 
-  for (const it of layout.items || []) {
-    const deptIdx = DEPT_DEFS.findIndex((d) => d.id === it.dept);
-    if (deptIdx < 0 || deptIdx > 8) continue;
-    const pos = cellCenter(deptIdx, it.cx, it.cy);
-    group.add(makeFurniture(it.type, pos));
+  // ---------- 员工实体（外观随机，工位由 rebuildDyn 指派） ----------
+  const ENTRANCE_W = cellToWorld(ENTRANCE_CELL.cx, ENTRANCE_CELL.cy);
+  function spawnPeople() {
+    for (const emp of state.employees) {
+      const dept = DEPT_DEFS.slice(0, 9).find((d) => d.id === emp.deptId);
+      if (!dept) continue;
+      const col = new THREE.Color(dept.color);
+      const k = people.filter((p) => p.dept === dept.id).length;
+      const shirt = new THREE.Color(SHIRT_COLORS[(emp.name.charCodeAt(0) + k) % SHIRT_COLORS.length]).lerp(col, 0.35);
+      const hairCol = HAIR_COLORS[(emp.name.charCodeAt(1) || 7) % HAIR_COLORS.length];
+      const person = new THREE.Group();
+      const body = new THREE.Mesh(GEO.torso, new THREE.MeshStandardMaterial({ color: shirt, roughness: 0.78 }));
+      body.position.y = 2.55;
+      body.castShadow = true;
+      const head = new THREE.Mesh(GEO.head, MAT.skin);
+      head.position.y = 3.75;
+      head.castShadow = true;
+      const hair = new THREE.Mesh(GEO.hair, new THREE.MeshStandardMaterial({ color: hairCol, roughness: 0.9 }));
+      hair.position.y = 3.82;
+      person.add(body, head, hair);
+      person.position.set(ENTRANCE_W.x, 0, ENTRANCE_W.z);
+      group.add(person);
+      people.push({
+        group: person,
+        empId: emp.id,
+        dept: dept.id,
+        seat: null,
+        roomCenter: deptWorld[dept.id] || { x: 0, z: 0 },
+        path: [],
+        seg: 0,
+        speed: 5.2 + ((emp.name.length * 7) % 5) * 0.4,
+        phase: 'toDesk',
+        timer: 2 + k * 0.7,
+        bob: Math.random() * Math.PI * 2,
+      });
+    }
+    refreshPeopleAnchors();
   }
 
-  // 隔墙与门（放在部门边缘线上）
-  for (const ed of layout.edges || []) {
-    const deptIdx = DEPT_DEFS.findIndex((d) => d.id === ed.dept);
-    if (deptIdx < 0 || deptIdx > 8) continue;
-    const dc = deptCenter(deptIdx);
-    // 边缘坐标：ex/ey 是 0..GRID 边界序号
-    const isH = ed.orient === 'h';
-    const wx = dc.x - half + LAYOUT_CELL * ed.ex;
-    const wz = dc.z - half + LAYOUT_CELL * ed.ey;
-    const len = LAYOUT_CELL;
-    const g = new THREE.Group();
-    if (ed.type === 'wall') {
-      const seg = new THREE.Mesh(
-        isH ? new THREE.BoxGeometry(len, 6, 0.7) : new THREE.BoxGeometry(0.7, 6, len),
-        MAT.roomWall
-      );
-      seg.position.y = 3;
-      seg.castShadow = true;
-      g.add(seg);
-    } else if (ed.type === 'door') {
-      // 门 = 两段门柱 + 上梁，中间留 60% 的开口
-      const post = isH ? new THREE.BoxGeometry(len * 0.2, 6, 0.7) : new THREE.BoxGeometry(0.7, 6, len * 0.2);
-      const lintel = isH ? new THREE.BoxGeometry(len * 0.6, 1.8, 0.7) : new THREE.BoxGeometry(0.7, 1.8, len * 0.6);
-      const p1 = new THREE.Mesh(post, MAT.roomWall);
-      p1.position.set(isH ? -len * 0.4 : 0, 3, isH ? 0 : -len * 0.4);
-      const p2 = new THREE.Mesh(post, MAT.roomWall);
-      p2.position.set(isH ? len * 0.4 : 0, 3, isH ? 0 : len * 0.4);
-      const top = new THREE.Mesh(lintel, MAT.roomWall);
-      top.position.set(0, 5.1, 0);
-      g.add(p1, p2, top);
-    }
-    g.position.set(wx, 0.6, wz);
-    group.add(g);
-    // 剖面：横墙面向 ±z，竖墙面向 ±x
-    if (ed.type === 'wall') {
-      tagCutaway(g, isH ? new THREE.Vector3(0, 0, 1) : new THREE.Vector3(1, 0, 0));
+  // ============================================================
+  // 三·五、3D 布局编辑模式（房间拖放/调尺寸、家具放置/移动/旋转/卖出、隔墙/门）
+  // 校验一律走 floorplan.js；变更走 rebuildDyn() 增量更新 + onChanged 回调（autoSave/顶栏刷新）
+  // ============================================================
+  let editMode = false;
+  let editTool = 'select';            // select | furniture:<id> | wall | door | move-room | resize | remove
+  let editDept = DEPT_IDS_9[0];
+  let ghost = null;                   // 当前幽灵 { group, kind, valid, reason, data }
+  let dragRoom = null;                // 拖房中：{ dept }
+  let dragItem = null;                // 拖家具中：{ uid }
+  let resizeRoom = null;              // 调尺寸中：{ dept, corner:[x,y] 固定对角 }
+  let ghostRot = 0;
+  let selectedUid = null;
+  let onChangedCb = null;
+  let onToastCb = null;
+  const ray = new THREE.Raycaster();
+  const floorPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+
+  // 编辑工具条（DOM，编辑模式显示）
+  const editbar = document.createElement('div');
+  editbar.style.cssText = 'position:absolute;left:10px;top:10px;display:none;flex-direction:column;gap:6px;z-index:6;max-width:380px';
+  container.appendChild(editbar);
+  function renderEditbar() {
+    const tools = [
+      ['select', '☝ 选择/移动'], ['move-room', '⇄ 拖动房间'], ['resize', '⤡ 调整尺寸'],
+      ...FURNITURE.map((f) => [`furniture:${f.id}`, `${f.icon} ${f.name}`]),
+      ['wall', '▯ 隔墙'], ['door', '⊓ 移门'], ['remove', '✕ 拆除(退一半)'],
+    ];
+    editbar.innerHTML = `
+      <div class="row" style="flex-wrap:wrap;gap:5px;background:rgba(8,11,16,.92);border:1px solid #2a3546;border-radius:10px;padding:8px">
+        ${DEPT_DEFS.slice(0, 9).map((d) => `<button class="btn tiny ${editDept === d.id ? 'primary' : ''}" data-ed="${d.id}">${d.name}</button>`).join('')}
+      </div>
+      <div class="row" style="flex-wrap:wrap;gap:5px;background:rgba(8,11,16,.92);border:1px solid #2a3546;border-radius:10px;padding:8px">
+        ${tools.map(([id, name]) => `<button class="btn tiny ${editTool === id ? 'primary' : ''}" data-et="${id}">${name}</button>`).join('')}
+      </div>
+      <div class="tiny dim" style="background:rgba(8,11,16,.8);border-radius:8px;padding:6px 8px;line-height:1.6">
+        左键放置/拖拽 · R 旋转 · 右键/Esc 取消 · 移动免费，卖出退一半 · 隔墙会真的挡住员工</div>`;
+  }
+  editbar.addEventListener('click', (e) => {
+    const d = e.target.closest('[data-ed]');
+    if (d) { editDept = d.dataset.ed; renderEditbar(); return; }
+    const t = e.target.closest('[data-et]');
+    if (t) setTool(t.dataset.et);
+  });
+
+  function setTool(t) {
+    editTool = t;
+    cancelGhost();
+    renderEditbar();
+    dom.style.cursor = 'crosshair';
+  }
+
+  function setEditMode(on) {
+    editMode = !!on;
+    editbar.style.display = editMode ? 'flex' : 'none';
+    gridGroup.visible = editMode;
+    cancelGhost();
+    if (editMode) {
+      goal.phi = 0.62; goal.radius = 170;
+      orbit.target.set(0, 0, 0);
+      renderEditbar();
+      if (onToastCb) onToastCb('布局编辑：选择工具后左键操作，R 旋转，Esc 取消', 'info');
+    } else {
+      goal.phi = Math.PI * 0.27; goal.radius = 150;
+      dom.style.cursor = 'grab';
     }
   }
+
+  function cancelGhost() {
+    if (ghost) { scene.remove(ghost.group); disposeObj(ghost.group); ghost = null; }
+    dragRoom = null; dragItem = null; resizeRoom = null;
+  }
+
+  function pointerWorld(e) {
+    const rect = dom.getBoundingClientRect();
+    const ndc = new THREE.Vector2(
+      ((e.clientX - rect.left) / rect.width) * 2 - 1,
+      -((e.clientY - rect.top) / rect.height) * 2 + 1
+    );
+    ray.setFromCamera(ndc, camera);
+    const pt = new THREE.Vector3();
+    if (!ray.ray.intersectPlane(floorPlane, pt)) return null;
+    return { x: pt.x, z: pt.z };
+  }
+
+  function ghostMat(valid) {
+    return new THREE.MeshStandardMaterial({
+      color: valid ? 0x37c9a5 : 0xf56b6b, transparent: true, opacity: 0.45,
+      emissive: valid ? 0x1d6b4f : 0x7a2a2a, emissiveIntensity: 0.6, depthWrite: false,
+    });
+  }
+
+  function clearGhost() {
+    if (ghost) { scene.remove(ghost.group); disposeObj(ghost.group); ghost = null; }
+  }
+
+  function showFurnitureGhost(cell, type, rot, deptId) {
+    if (ghost && ghost.kind === 'furniture' && ghost.data.cell.cx === cell.cx && ghost.data.cell.cy === cell.cy
+      && ghost.data.rot === rot && ghost.data.type === type && ghost.data.dept === deptId) return;
+    clearGhost();
+    const headcountsNow = deptHeadcounts(state);
+    const room = layout.rooms[deptId];
+    const v = validateFurniturePlace(layout, deptId, { type, cx: cell.cx - room.cx, cy: cell.cy - room.cy, rot }, headcountsNow);
+    const w = roomCellWorld(layout, deptId, cell.cx - room.cx, cell.cy - room.cy);
+    const g = new THREE.Group();
+    const box = new THREE.Mesh(new THREE.BoxGeometry(CELL * 0.85, 2.6, CELL * 0.85), ghostMat(v.ok));
+    box.position.set(w.x, 1.5, w.z);
+    g.add(box);
+    scene.add(g);
+    ghost = { group: g, kind: 'furniture', valid: v.ok, reason: v.reason, data: { cell, type, rot, dept: deptId } };
+  }
+
+  function showRoomGhost(deptId, topLeft) {
+    if (ghost && ghost.kind === 'room' && ghost.data.dept === deptId
+      && ghost.data.cx === topLeft.cx && ghost.data.cy === topLeft.cy) return;
+    clearGhost();
+    const room = layout.rooms[deptId];
+    const headcountsNow = deptHeadcounts(state);
+    const v = validateRoomPlace(layout, deptId, { cx: topLeft.cx, cy: topLeft.cy, w: room.w, h: room.h }, headcountsNow);
+    const g = new THREE.Group();
+    const x0 = topLeft.cx * CELL - FLOOR_X / 2, z0 = topLeft.cy * CELL - FLOOR_Z / 2;
+    const w = room.w * CELL, h = room.h * CELL;
+    const pad = new THREE.Mesh(new THREE.BoxGeometry(w, 0.3, h), ghostMat(v.ok));
+    pad.position.set(x0 + w / 2, 0.9, z0 + h / 2);
+    g.add(pad);
+    const outline = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(x0, 0.4, z0), new THREE.Vector3(x0 + w, 0.4, z0),
+      new THREE.Vector3(x0 + w, 0.4, z0 + h), new THREE.Vector3(x0, 0.4, z0 + h),
+    ]), new THREE.LineBasicMaterial({ color: v.ok ? 0x37c9a5 : 0xf56b6b }));
+    g.add(outline);
+    scene.add(g);
+    ghost = { group: g, kind: 'room', valid: v.ok, reason: v.reason, data: { dept: deptId, ...topLeft } };
+  }
+
+  function showResizeGhost(deptId, rect) {
+    if (ghost && ghost.kind === 'resize' && ghost.data.rect.cx === rect.cx && ghost.data.rect.cy === rect.cy
+      && ghost.data.rect.w === rect.w && ghost.data.rect.h === rect.h) return;
+    clearGhost();
+    const headcountsNow = deptHeadcounts(state);
+    const v = validateRoomPlace(layout, deptId, rect, headcountsNow);
+    const g = new THREE.Group();
+    const x0 = rect.cx * CELL - FLOOR_X / 2, z0 = rect.cy * CELL - FLOOR_Z / 2;
+    const w = rect.w * CELL, h = rect.h * CELL;
+    const pad = new THREE.Mesh(new THREE.BoxGeometry(w, 0.3, h), ghostMat(v.ok));
+    pad.position.set(x0 + w / 2, 0.9, z0 + h / 2);
+    g.add(pad);
+    scene.add(g);
+    ghost = { group: g, kind: 'resize', valid: v.ok, reason: v.reason, data: { dept: deptId, rect } };
+  }
+
+  // ---------- 操作应用（校验 → 改数据 → rebuildDyn → 回调） ----------
+  function notify(msg, kind) {
+    if (onToastCb) onToastCb(msg, kind || 'info');
+  }
+  function fmtCost(n) { return '¥' + (n >= 1e4 ? (n / 1e4).toFixed(1) + '万' : String(n)); }
+  function afterChange() {
+    try { autoSave(state); } catch (e) { /* 忽略 */ }
+    if (onChangedCb) onChangedCb();
+  }
+
+  function applyPlaceFurniture(deptId, cell, type, rot) {
+    const f = FURNITURE_MAP[type];
+    const room = layout.rooms[deptId];
+    const headcountsNow = deptHeadcounts(state);
+    const v = validateFurniturePlace(layout, deptId, { type, cx: cell.cx - room.cx, cy: cell.cy - room.cy, rot }, headcountsNow);
+    if (!v.ok) { notify(v.reason, 'warn'); return false; }
+    if (state.company.cash < f.cost) { notify('资金不足', 'bad'); return false; }
+    state.company.cash -= f.cost;
+    layout.items.push({
+      uid: 'f' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
+      type, dept: deptId,
+      cx: cell.cx - room.cx, cy: cell.cy - room.cy, rot,
+    });
+    state.log.unshift({ t: `${state.date.year}/${state.date.month + 1}`, type: 'system', text: `购置家具：${f.name}（${fmtCost(f.cost)}）` });
+    rebuildDyn();
+    afterChange();
+    return true;
+  }
+
+  function applyMoveFurniture(uidKey, cell) {
+    const it = layout.items.find((x) => x.uid === uidKey);
+    if (!it) return false;
+    const room = layout.rooms[it.dept];
+    const nlx = cell.cx - room.cx, nly = cell.cy - room.cy;
+    if (nlx === it.cx && nly === it.cy) return false;
+    const headcountsNow = deptHeadcounts(state);
+    const v = validateFurniturePlace(layout, it.dept, { type: it.type, cx: nlx, cy: nly, rot: it.rot }, headcountsNow, { skipItem: uidKey });
+    if (!v.ok) { notify(v.reason, 'warn'); return true; } // 无效落点保持拖拽态
+    it.cx = nlx; it.cy = nly;
+    rebuildDyn();
+    afterChange();
+    return true;
+  }
+
+  function applyRotateFurniture(uidKey) {
+    const it = layout.items.find((x) => x.uid === uidKey);
+    if (!it) return false;
+    it.rot = ((it.rot || 0) + 1) % 4;
+    rebuildDyn();
+    afterChange();
+    return true;
+  }
+
+  function applySellFurniture(uidKey) {
+    const idx = layout.items.findIndex((x) => x.uid === uidKey);
+    if (idx < 0) return false;
+    const it = layout.items[idx];
+    const f = FURNITURE_MAP[it.type];
+    const refund = Math.round(f.cost / 2);
+    state.company.cash += refund;
+    layout.items.splice(idx, 1);
+    state.log.unshift({ t: `${state.date.year}/${state.date.month + 1}`, type: 'system', text: `拆除家具：${f.name}（退还 ${fmtCost(refund)}）` });
+    rebuildDyn();
+    afterChange();
+    return true;
+  }
+
+  function applyMoveRoom(deptId, topLeft) {
+    const room = layout.rooms[deptId];
+    const headcountsNow = deptHeadcounts(state);
+    const v = validateRoomPlace(layout, deptId, { ...room, cx: topLeft.cx, cy: topLeft.cy }, headcountsNow);
+    if (!v.ok) { notify(v.reason, 'warn'); return false; }
+    room.cx = topLeft.cx; room.cy = topLeft.cy;
+    autoDoor(layout, deptId);
+    rebuildDyn();
+    afterChange();
+    return true;
+  }
+
+  function applyResizeRoom(deptId, rect) {
+    const headcountsNow = deptHeadcounts(state);
+    const v = validateRoomPlace(layout, deptId, rect, headcountsNow);
+    if (!v.ok) { notify(v.reason, 'warn'); return false; }
+    const room = layout.rooms[deptId];
+    const outside = layout.items.filter((i) => i.dept === deptId && (i.cx >= rect.w || i.cy >= rect.h));
+    for (const it of outside) {
+      state.company.cash += FURNITURE_MAP[it.type].cost;
+      layout.items.splice(layout.items.indexOf(it), 1);
+    }
+    room.cx = rect.cx; room.cy = rect.cy; room.w = rect.w; room.h = rect.h;
+    autoDoor(layout, deptId);
+    rebuildDyn();
+    if (outside.length) notify(`房间缩小：${outside.length} 件界外家具已按原价回收`, 'info');
+    afterChange();
+    return true;
+  }
+
+  function applyToggleWall(deptId, edge) {
+    const p = PARTITIONS_MAP.wall;
+    const headcountsNow = deptHeadcounts(state);
+    const v = validateEdgeToggle(layout, deptId, edge, headcountsNow);
+    if (!v.ok) { notify(v.reason, 'warn'); return false; }
+    if (v.removed) {
+      const idx = layout.edges.findIndex((e) => e.dept === deptId && e.orient === edge.orient && e.ex === edge.ex && e.ey === edge.ey);
+      state.company.cash += Math.round(p.cost / 2);
+      layout.edges.splice(idx, 1);
+    } else {
+      if (state.company.cash < p.cost) { notify('资金不足', 'bad'); return false; }
+      state.company.cash -= p.cost;
+      layout.edges.push({ ...edge, dept: deptId });
+    }
+    rebuildDyn();
+    afterChange();
+    return true;
+  }
+
+  function applyMoveDoor(deptId, side, t) {
+    const v = validateDoorMove(layout, deptId, side, t);
+    if (!v.ok) { notify(v.reason, 'warn'); return false; }
+    layout.rooms[deptId].door = { side, t };
+    rebuildDyn();
+    afterChange();
+    return true;
+  }
+
+  // ---------- 编辑态指针交互 ----------
+  function roomAtCell(cell) {
+    return roomAt(layout, cell.cx, cell.cy);
+  }
+  function furnitureAt(cell) {
+    const deptId = roomAtCell(cell);
+    if (!deptId) return null;
+    const room = layout.rooms[deptId];
+    const lx = cell.cx - room.cx, ly = cell.cy - room.cy;
+    const hit = layout.items.find((i) => i.dept === deptId && i.cx === lx && i.cy === ly);
+    if (hit) return { ...hit, world: roomCellWorld(layout, deptId, lx, ly) };
+    const bd = builtinDesks(layout, deptHeadcounts(state)).find((d) => d.dept === deptId && d.lx === lx && d.ly === ly);
+    if (bd) return { builtin: true, type: 'desk', dept: deptId, uid: null, cx: lx, cy: ly, world: roomCellWorld(layout, deptId, lx, ly) };
+    return null;
+  }
+
+  function onEditPointerDown(e) {
+    if (e.button === 2) { cancelGhost(); dragItem = null; return true; }
+    const wpt = pointerWorld(e);
+    if (!wpt) return true;
+    const cell = worldToCell(wpt.x, wpt.z);
+    if (ghost && ghost.kind === 'room') {
+      if (ghost.valid && applyMoveRoom(ghost.data.dept, { cx: ghost.data.cx, cy: ghost.data.cy })) cancelGhost();
+      else if (!ghost.valid) notify(ghost.reason, 'warn');
+      return true;
+    }
+    if (ghost && ghost.kind === 'resize') {
+      if (ghost.valid) applyResizeRoom(ghost.data.dept, ghost.data.rect);
+      else notify(ghost.reason, 'warn');
+      cancelGhost();
+      return true;
+    }
+    if (dragItem) {
+      applyMoveFurniture(dragItem.uid, cell);
+      return true;
+    }
+    if (editTool === 'select') {
+      const f = furnitureAt(cell);
+      if (f && !f.builtin) { dragItem = { uid: f.uid }; selectedUid = f.uid; dom.style.cursor = 'move'; }
+      else if (f && f.builtin) notify('内置工位随部门人数自动增减；可购买工位桌自定义位置', 'info');
+      else { selectedUid = null; cancelGhost(); }
+      return true;
+    }
+    if (editTool.startsWith('furniture:')) {
+      const deptId = roomAtCell(cell);
+      if (!deptId) { notify('请点击部门房间内部', 'info'); return true; }
+      applyPlaceFurniture(deptId, cell, editTool.split(':')[1], ghostRot);
+      return true;
+    }
+    if (editTool === 'remove') {
+      const f = furnitureAt(cell);
+      if (!f) { notify('这里没有家具', 'info'); return true; }
+      if (f.builtin) { notify('内置工位不可拆除（随人数自动变化）', 'info'); return true; }
+      applySellFurniture(f.uid);
+      return true;
+    }
+    if (editTool === 'move-room') {
+      const deptId = roomAtCell(cell);
+      if (!deptId) { notify('请点击要移动的房间', 'info'); return true; }
+      dragRoom = { dept: deptId };
+      return true;
+    }
+    if (editTool === 'resize') {
+      const deptId = roomAtCell(cell);
+      if (!deptId) { notify('请点击要调整的房间', 'info'); return true; }
+      const r = layout.rooms[deptId];
+      const fx = cell.cx < r.cx + r.w / 2 ? r.cx + r.w : r.cx;
+      const fy = cell.cy < r.cy + r.h / 2 ? r.cy + r.h : r.cy;
+      resizeRoom = { dept: deptId, corner: [fx, fy] };
+      return true;
+    }
+    if (editTool === 'wall' || editTool === 'door') {
+      const deptId = roomAtCell(cell);
+      if (!deptId) { notify('请点击部门房间', 'info'); return true; }
+      const room = layout.rooms[deptId];
+      const lx = cell.cx - room.cx, ly = cell.cy - room.cy;
+      const center = roomCellWorld(layout, deptId, lx, ly);
+      const dx = wpt.x - center.x, dz = wpt.z - center.z;
+      if (editTool === 'wall') {
+        const edge = Math.abs(dx) > Math.abs(dz)
+          ? { orient: 'v', ex: lx + (dx > 0 ? 1 : 0), ey: ly }
+          : { orient: 'h', ex: lx, ey: ly + (dz > 0 ? 1 : 0) };
+        applyToggleWall(deptId, edge);
+      } else {
+        const onEdge = lx === 0 || ly === 0 || lx === room.w - 1 || ly === room.h - 1;
+        if (!onEdge) { notify('点击房间边缘格来移动门位', 'info'); return true; }
+        let side, t;
+        if (lx === room.w - 1 && Math.abs(dx) >= Math.abs(dz)) { side = 'E'; t = ly; }
+        else if (lx === 0 && Math.abs(dx) >= Math.abs(dz)) { side = 'W'; t = ly; }
+        else if (ly === room.h - 1) { side = 'S'; t = lx; }
+        else { side = 'N'; t = lx; }
+        applyMoveDoor(deptId, side, t);
+      }
+      return true;
+    }
+    return true;
+  }
+
+  function onEditPointerMove(e) {
+    const wpt = pointerWorld(e);
+    if (!wpt) return;
+    const cell = worldToCell(wpt.x, wpt.z);
+    if (dragItem) {
+      const it = layout.items.find((x) => x.uid === dragItem.uid);
+      if (!it) { dragItem = null; return; }
+      showFurnitureGhost(cell, it.type, it.rot, it.dept);
+      return;
+    }
+    if (dragRoom) {
+      const room = layout.rooms[dragRoom.dept];
+      showRoomGhost(dragRoom.dept, { cx: cell.cx - Math.floor(room.w / 2), cy: cell.cy - Math.floor(room.h / 2) });
+      return;
+    }
+    if (resizeRoom) {
+      const room = layout.rooms[resizeRoom.dept];
+      const [fx, fy] = resizeRoom.corner;
+      const nw = Math.max(ROOM_MIN, Math.min(ROOM_MAX, Math.abs(cell.cx - fx) + 1));
+      const nh = Math.max(ROOM_MIN, Math.min(ROOM_MAX, Math.abs(cell.cy - fy) + 1));
+      const rx = fx <= cell.cx ? fx : fx - nw + 1;
+      const ry = fy <= cell.cy ? fy : fy - nh + 1;
+      showResizeGhost(resizeRoom.dept, { cx: rx, cy: ry, w: nw, h: nh });
+      return;
+    }
+    if (editTool.startsWith('furniture:')) {
+      const deptId = roomAtCell(cell);
+      if (deptId) showFurnitureGhost(cell, editTool.split(':')[1], ghostRot, deptId);
+      else clearGhost();
+    }
+  }
+
+  function onEditKey(e) {
+    if (!editMode) return;
+    if (e.key === 'r' || e.key === 'R') {
+      ghostRot = (ghostRot + 1) % 4;
+      if (ghost && ghost.kind === 'furniture') {
+        const d = ghost.data;
+        showFurnitureGhost(d.cell, d.type, ghostRot, d.dept);
+      } else if (dragItem) applyRotateFurniture(dragItem.uid);
+    }
+    if (e.key === 'Escape') { cancelGhost(); dragItem = null; dom.style.cursor = 'crosshair'; }
+  }
+  window.addEventListener('keydown', onEditKey);
+
+  function updateLayout() {
+    rebuildDyn();
+  }
+
+  rebuildDyn();
+  spawnPeople();
 
   // ============================================================
   // 四、相机：双视角切换 + 平移 + 剖面
@@ -865,7 +1347,8 @@ export function createOfficeScene(container, state) {
     <button class="btn small primary" data-day="1">×1</button>
     <button class="btn small" data-day="3" title="快速日程">×3</button>
     <button class="btn small primary" data-view="iso">45° 视角</button>
-    <button class="btn small" data-view="top">俯视</button>`;
+    <button class="btn small" data-view="top">俯视</button>
+    <button class="btn small" data-edit title="在 3D 内拖放房间与家具">布局编辑</button>`;
   container.style.position = 'relative';
   container.appendChild(ctrl);
   ctrl.addEventListener('click', (e) => {
@@ -873,6 +1356,11 @@ export function createOfficeScene(container, state) {
     if (d) {
       daySpeed = Number(d.dataset.day);
       ctrl.querySelectorAll('[data-day]').forEach((x) => x.classList.toggle('primary', x === d));
+      return;
+    }
+    if (e.target.closest('[data-edit]')) {
+      setEditMode(!editMode);
+      e.target.closest('[data-edit]').classList.toggle('primary', editMode);
       return;
     }
     const b = e.target.closest('[data-view]');
@@ -892,14 +1380,41 @@ export function createOfficeScene(container, state) {
   // 触摸设备上禁止画布区域触发页面滚动/缩放，手势只作用于视角
   dom.style.touchAction = 'none';
   dom.addEventListener('pointerdown', (e) => {
+    if (editMode) {
+      if (e.pointerType !== 'mouse') e.preventDefault();
+      // 编辑模式：左键=编辑操作，右键=视角平移
+      if (e.button === 2 || e.ctrlKey) {
+        dragging = true; panning = true;
+        lx = e.clientX; ly = e.clientY;
+        dom.setPointerCapture(e.pointerId);
+        return;
+      }
+      lx = e.clientX; ly = e.clientY;
+      dom.setPointerCapture(e.pointerId);
+      onEditPointerDown(e);
+      return;
+    }
     if (e.pointerType !== 'mouse') e.preventDefault();
     dragging = true; panning = e.button === 2 || e.ctrlKey;
     lx = e.clientX; ly = e.clientY;
     dom.setPointerCapture(e.pointerId);
     dom.style.cursor = 'grabbing';
   });
-  dom.addEventListener('pointerup', () => { dragging = false; panning = false; dom.style.cursor = 'grab'; });
+  dom.addEventListener('pointerup', (e) => {
+    if (editMode && !panning) {
+      // 拖拽中的家具在 pointerup 落定（与 onEditPointerDown 的点击放置共用逻辑）
+      dragging = false; panning = false;
+      dom.style.cursor = editMode ? 'crosshair' : 'grab';
+      return;
+    }
+    dragging = false; panning = false;
+    dom.style.cursor = editMode ? 'crosshair' : 'grab';
+  });
   dom.addEventListener('pointermove', (e) => {
+    if (editMode && !panning) {
+      onEditPointerMove(e);
+      return;
+    }
     if (!dragging) return;
     const dx = e.clientX - lx, dy = e.clientY - ly;
     lx = e.clientX; ly = e.clientY;
@@ -938,7 +1453,6 @@ export function createOfficeScene(container, state) {
   const DAY_LEN = 160;
   let dayT = 0.30; // 从上午开始
   let daySpeed = 1;
-  const MEET = { x: 0, z: 0 }; // 中央走廊集合点（晨会）
   function activityAt(t) {
     if (t < 0.16) return 'desk';        // 9:00-11:00 工作
     if (t < 0.22) return 'meet';        // 11:00-11:45 晨会
@@ -977,26 +1491,29 @@ export function createOfficeScene(container, state) {
       if (p.phase === 'gone') continue;
       if (p.phase === 'toDesk' || p.phase === 'toBreak' || p.phase === 'toMeet' || p.phase === 'toLeave') {
         if (!p.path.length) {
-          // 规划路径：房内一律先经房门走到走廊，杜绝穿墙；房外按目标直线
+          // 规划路径：一律走 floorplan 校验层（出房经门、走廊 BFS、隔墙与家具阻挡）
           const from = p.group.position;
-          let dest;
-          if (p.phase === 'toDesk') dest = new THREE.Vector3(p.seat.x, 0, p.seat.z);
-          else if (p.phase === 'toMeet') dest = new THREE.Vector3(MEET.x + (Math.random() - 0.5) * 10, 0, MEET.z + (Math.random() - 0.5) * 2.2);
-          else if (p.phase === 'toLeave') dest = new THREE.Vector3(ENTRANCE.x, 0, ENTRANCE.z);
-          else dest = new THREE.Vector3(p.deptCx + (Math.random() - 0.5) * 16, 0, p.deptCz + (Math.random() - 0.5) * 16);
-          const inRoom = Math.abs(from.x - p.deptCx) < 11.5 && Math.abs(from.z - p.deptCz) < 11.5;
-          if ((p.phase === 'toMeet' || p.phase === 'toLeave') && inRoom) {
-            // 出房路径（经门洞）→ 目的地
-            p.path = planExit(p.seat, p.deptCx, p.deptCz).map((v) => new THREE.Vector3(v.x, 0, v.z));
-            p.path.push(dest);
-          } else if (p.phase === 'toDesk' && !inRoom) {
-            p.path = planEntry(p.seat, p.deptCx, p.deptCz).map((v) => new THREE.Vector3(v.x, 0, v.z));
-          } else if (p.phase === 'toMeet' && !inRoom) {
-            // 在走廊内：沿走廊走（先回走廊中线再过去，避免斜穿房间）
-            p.path = [new THREE.Vector3(from.x, 0, MEET.z), dest];
+          let pts;
+          if (p.phase === 'toDesk') {
+            pts = routePath(layout, headcounts, { x: from.x, z: from.z }, p.dept, { lx: p.seat.lx ?? 0, ly: p.seat.ly ?? 0 }).slice(1);
+            // 终点落在工位坐位（seat.x/z），航点最后一段直接指向坐位
+            if (pts.length) pts[pts.length - 1] = { x: p.seat.x, z: p.seat.z };
+            else pts = [{ x: p.seat.x, z: p.seat.z }];
+          } else if (p.phase === 'toMeet') {
+            const jc = worldToCell(meetPoint.x + (Math.random() - 0.5) * 8, meetPoint.z + (Math.random() - 0.5) * 2);
+            pts = routeToCell(layout, { x: from.x, z: from.z }, jc).slice(1);
+          } else if (p.phase === 'toLeave') {
+            pts = routeToCell(layout, { x: from.x, z: from.z }, ENTRANCE_CELL).slice(1);
           } else {
-            p.path = [dest];
+            // 茶歇：房内随机空闲格
+            const r = layout.rooms[p.dept];
+            const occ = new Set(layout.items.filter((i) => i.dept === p.dept).map((i) => i.cx + ',' + i.cy));
+            const cand = [];
+            for (let lx = 0; lx < r.w; lx++) for (let ly = 0; ly < r.h; ly++) if (!occ.has(lx + ',' + ly)) cand.push({ lx, ly });
+            const pickL = cand.length ? cand[Math.floor(Math.random() * cand.length)] : { lx: Math.floor(r.w / 2), ly: Math.floor(r.h / 2) };
+            pts = routePath(layout, headcounts, { x: from.x, z: from.z }, p.dept, pickL).slice(1);
           }
+          p.path = pts.map((v) => new THREE.Vector3(v.x, 0, v.z));
           p.seg = 0;
         }
         const tgt = p.path[p.seg];
@@ -1086,10 +1603,31 @@ export function createOfficeScene(container, state) {
   loop();
 
   return {
+    setEditMode,
+    updateLayout,
+    setOnChanged(cb) { onChangedCb = cb; },
+    setOnToast(cb) { onToastCb = cb; },
+    // 测试钩子（CDP 验收用）：不经指针事件直接驱动编辑操作
+    __test: {
+      setTool: (t) => setTool(t),
+      isActive: () => editMode,
+      moveRoom: (deptId, cx, cy) => applyMoveRoom(deptId, { cx, cy }),
+      resizeRoom: (deptId, w, h) => {
+        const r = layout.rooms[deptId];
+        return applyResizeRoom(deptId, { cx: r.cx, cy: r.cy, w, h });
+      },
+      placeFurniture: (deptId, type, cx, cy) => applyPlaceFurniture(deptId, { cx: layout.rooms[deptId].cx + cx, cy: layout.rooms[deptId].cy + cy }, type, 0),
+      toggleWall: (deptId, edge) => applyToggleWall(deptId, edge),
+      layout: () => JSON.parse(JSON.stringify(layout)),
+      seats: () => ({ ...seatsByDept }),
+      reach: () => reachability(layout),
+    },
     destroy() {
       cancelAnimationFrame(raf);
       ro.disconnect();
       ctrl.remove();
+      editbar.remove();
+      window.removeEventListener('keydown', onEditKey);
       scene.traverse((o) => {
         if (o.geometry) o.geometry.dispose();
         if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) => {
