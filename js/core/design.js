@@ -93,8 +93,9 @@ export function defaultDesign(year = 2020, unlocked = []) {
       // 顶底开孔配置：双扬声器 / 顶部麦克风 / 充电口类型 / 扬声器开孔样式 / 各开孔横向位置（mm）
       ports: { dualSpeaker: modern, topMic: !modern, charge: modern ? 'typec' : (year >= 2005 ? 'micro' : 'custom'), chargeShape: { style: 'round', w: 6, h: 3 }, speakerStyle: 'dot5' },
       fold: 'none',
-      // 折叠外屏（cover screen）：flip 必备小外屏；fold 可选中尺寸外屏；0 = 无
-      coverScreen: { inch: 0 },
+      // 折叠外屏（cover screen）：inch=0 为无（开关在 UI 的 body.coverOn，切换时记忆 last）；
+      // ratio 高/宽比（0=按折叠结构默认）、x/y 半区内偏移 mm——外屏不默认占满、可精准调节
+      coverScreen: { inch: 0, last: 2.6, ratio: 0, x: 0, y: 0 },
     },
     screen: {
       inch,
@@ -710,17 +711,20 @@ export function validate(design, year, opts = {}) {
       issues.push({ level: 'error', text: '背面文字位置超出机身范围。' });
     }
   }
-  // 折叠外屏：可选配置——竖向翻折无外屏仅提示（闭合状态功能受限），不再强制报错
-  if (b.fold === 'flip') {
-    const cv = b.coverScreen?.inch || 0;
-    if (cv <= 0) issues.push({ level: 'warn', text: '竖向翻折机型未设计外屏，闭合状态下无法查看时间与通知。' });
-    else if (cv * 25.4 * 0.72 > b.width - 5) {
-      issues.push({ level: 'warn', text: `外屏 ${cv}″ 宽度接近机身极限，闭合后可能放不下。` });
+  // 折叠外屏：可选配置——竖向翻折无外屏仅提示（闭合状态功能受限），不再强制报错；
+  // 幅面按「宽 = inch×11.8mm、高 = 宽×ratio（0=按结构默认）」实算，须装进闭合半区（单半 W×L 减边距）
+  if (b.fold !== 'none') {
+    const cs = b.coverScreen || {};
+    const cv = cs.inch || 0;
+    if (b.fold === 'flip' && cv <= 0) issues.push({ level: 'warn', text: '竖向翻折机型未设计外屏，闭合状态下无法查看时间与通知。' });
+    if (cv > 0) {
+      const cw = cv * 11.8, ch = cw * (cs.ratio || (b.fold === 'flip' ? 1.05 : 1.42));
+      if (cw > b.width - 6 || ch > b.length - 6) {
+        issues.push({ level: 'warn', text: `外屏 ${cv}″ 超出闭合半区幅面，闭合后可能放不下。` });
+      } else if (Math.abs(cs.x || 0) + cw / 2 > b.width / 2 - 1.5 || Math.abs(cs.y || 0) + ch / 2 > b.length / 2 - 1.5) {
+        issues.push({ level: 'warn', text: '外屏位置偏移过大，超出闭合半区范围。' });
+      }
     }
-  }
-  if (b.fold === 'fold' && (b.coverScreen?.inch || 0) > 0) {
-    const cv = b.coverScreen.inch;
-    if (cv * 25.4 * 0.45 > b.width - 6) issues.push({ level: 'warn', text: `外屏 ${cv}″ 对横向折叠机型偏大，闭合后可能装不下。` });
   }
   if (design.screen.inch > 9) issues.push({ level: 'warn', text: '屏幕尺寸超过 9 英寸，便携性极差。' });
   if (design.camera.count > 1 && year < 2016) issues.push({ level: 'warn', text: '多摄系统在当前年代成本过高、收益有限。' });

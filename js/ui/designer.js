@@ -271,6 +271,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
           ${[['none', '无开孔'], ['punch', '单孔'], ['notch', '刘海'], ['waterdrop', '水滴']].map(([v, n]) => `<option value="${v}" ${d.screen.notch === v ? 'selected' : ''}>${n}</option>`).join('')}
         </select>
       </label>
+      ${d.screen.notch === 'punch' && !d.parts.extras.includes('x_udc') ? sliderRow('挖孔位置（0=居中，折叠机默认右半屏）', 'screen.holeX', d.screen.holeX ?? (d.body.fold !== 'none' ? 25 : 0), -45, 45, 1, '%') : ''}
       <label class="field"><span>屏幕面板</span>
         <select data-k="screen.panel">
           ${panelOptions(d)}
@@ -436,9 +437,21 @@ export function renderDesigner(container, state, model, hooks = {}) {
           ? `展开 <b>${body.width}×${Math.round(body.length * 2 * 10) / 10}mm</b>（单层）<br>折叠 <b>${body.width}×${body.length}mm</b>（双层，厚约 ${Math.round((body.thickness * 2 - 0.6) * 10) / 10}mm）`
           : `展开 <b>${Math.round(body.width * 2 * 10) / 10}×${body.length}mm</b>（单层）<br>折叠 <b>${body.width}×${body.length}mm</b>（双层，厚约 ${Math.round((body.thickness * 2 - 0.6) * 10) / 10}mm）`}
       </div>
-      <div class="tiny dim" style="margin:2px 0 4px">${body.fold === 'flip' ? '竖向翻折：机身尺寸为折叠态单半，内屏=展开态全幅，必须设计外屏' : '横向折叠：机身尺寸为折叠态单半，内屏=展开态全幅，可选配外屏'}</div>
-      ${sliderRow('外屏尺寸', 'body.coverScreen.inch', body.coverScreen?.inch || 0, 0, body.fold === 'flip' ? 6.4 : 6.9, 0.1, '″')}
-      ${(body.coverScreen?.inch || 0) > 0 ? `
+      <div class="tiny dim" style="margin:2px 0 4px">${body.fold === 'flip' ? '竖向翻折：机身尺寸为折叠态单半，内屏=展开态全幅' : '横向折叠：机身尺寸为折叠态单半，内屏=展开态全幅'}</div>
+      ${(() => {
+        const cvOn = (body.coverScreen?.inch || 0) > 0;
+        const maxInch = Math.max(0.8, Math.round(((body.width - 8) / 11.8) * 10) / 10);
+        const cvRatio = body.coverScreen?.ratio || (body.fold === 'flip' ? 1.05 : 1.42);
+        return `
+      <label class="opt ${cvOn ? 'on' : ''}" style="display:flex;gap:6px;align-items:center;padding:6px 8px;margin-bottom:6px">
+        <input type="checkbox" data-k="body.coverOn" data-bool="1" ${cvOn ? 'checked' : ''} style="width:auto" />
+        <span>外屏（cover screen）</span>
+      </label>
+      ${cvOn ? `
+      ${sliderRow('外屏尺寸', 'body.coverScreen.inch', body.coverScreen?.inch || 2.6, 0.8, maxInch, 0.1, '″')}
+      ${sliderRow('外屏比例（高/宽）', 'body.coverScreen.ratio', cvRatio, 0.5, 2.4, 0.05, '')}
+      ${sliderRow('外屏位置 · 横', 'body.coverScreen.x', body.coverScreen?.x || 0, -(body.width / 2 - 3), body.width / 2 - 3, 0.5, 'mm')}
+      ${sliderRow('外屏位置 · 纵', 'body.coverScreen.y', body.coverScreen?.y || 0, -(body.length / 2 - 3), body.length / 2 - 3, 0.5, 'mm')}
       <label class="field"><span>外屏供应商</span>
         <select data-k="body.coverScreen.panelVendor">
           <option value="" ${!body.coverScreen?.panelVendor ? 'selected' : ''}>公版</option>
@@ -455,8 +468,8 @@ export function renderDesigner(container, state, model, hooks = {}) {
             return `<option value="${r.id}" ${(body.coverScreen?.res || 'res1080') === r.id ? 'selected' : ''} ${ok ? '' : 'disabled'}>${r.name}${ok ? '' : `（${r.year} 年）`}</option>`;
           }).join('')}
         </select>
-      </label>` : ''}
-      ${body.fold === 'flip' && !(body.coverScreen?.inch || 0) ? '<div class="tiny" style="color:var(--warn,#f5a542);margin-bottom:6px">⚠ 竖向翻折机型没有外屏，闭合状态下无法查看时间与通知。</div>' : ''}
+      </label>` : ''}`;
+      })()})
       ` : ''}`)
       + section('hw', '硬件配置', `
       ${selectRow('处理器', 'parts.cpu', CPUS, (x) => `${x.name} · 性能 ${Math.round(x.perf)}`, 'tech', divs)}
@@ -937,15 +950,18 @@ export function renderDesigner(container, state, model, hooks = {}) {
         ctx.font = '10px -apple-system, sans-serif';
         ctx.textAlign = 'center';
         if (cv > 0) {
+          const cvRatio = b.coverScreen?.ratio || (b.fold === 'flip' ? 1.05 : 1.42);
           const cvW = Math.min(W - 8 * scale, cv * 25.4 / 2.15 * scale);
-          const cvH = Math.min(H - 10 * scale, cv * 25.4 / 2.15 * scale * (d.body.fold === 'flip' ? 1.02 : 1.42));
-          const cg = ctx.createLinearGradient(x + W / 2 - cvW / 2, y + H / 2 - cvH / 2, x + W / 2 + cvW / 2, y + H / 2 + cvH / 2);
+          const cvH = Math.min(cvW * cvRatio, H - 10 * scale);
+          const ccx = x + W / 2 + (b.coverScreen?.x || 0) * scale;
+          const ccy = y + H / 2 - (b.coverScreen?.y || 0) * scale;
+          const cg = ctx.createLinearGradient(ccx - cvW / 2, ccy - cvH / 2, ccx + cvW / 2, ccy + cvH / 2);
           cg.addColorStop(0, '#0e1826'); cg.addColorStop(0.5, '#2b5a8c'); cg.addColorStop(1, '#0a1018');
           ctx.fillStyle = cg;
-          roundRect(ctx, x + (W - cvW) / 2, y + (H - cvH) / 2, cvW, cvH, Math.max(2, d.body.corner * scale * 0.5));
+          roundRect(ctx, ccx - cvW / 2, ccy - cvH / 2, cvW, cvH, Math.max(2, d.body.corner * scale * 0.5));
           ctx.fill();
           ctx.fillStyle = 'rgba(255,255,255,.4)';
-          ctx.fillText(`外屏 ${cv}″`, x + W / 2, y + H / 2 - cvH / 2 - 5);
+          ctx.fillText(`外屏 ${cv}″`, ccx, ccy - cvH / 2 - 5);
         } else {
           ctx.fillText('后盖（未设计外屏）', x + W / 2, y + H / 2);
         }
@@ -1004,11 +1020,12 @@ export function renderDesigner(container, state, model, hooks = {}) {
         ctx.restore();
       }
 
-      // 开孔（屏下摄像头时隐藏单孔）
+      // 开孔（屏下摄像头时隐藏单孔）；挖孔横向位置可调（%屏宽，折叠机默认右半屏中心）
       ctx.fillStyle = '#05080c';
       if (d.screen.notch === 'punch' && !d.parts.extras.includes('x_udc')) {
+        const holeFrac = (d.screen.holeX ?? (d.body.fold !== 'none' ? 25 : 0)) / 100;
         ctx.beginPath();
-        ctx.arc(x + W / 2, sy + Math.max(3, 4 * scale), 2.2 * Math.max(1, scale * 0.7), 0, Math.PI * 2);
+        ctx.arc(x + W / 2 + sw * holeFrac, sy + Math.max(3, 4 * scale), 2.2 * Math.max(1, scale * 0.7), 0, Math.PI * 2);
         ctx.fill();
       } else if (d.screen.notch === 'notch') {
         const nw = Math.min(sw * 0.34, 26 * scale), nh = 5 * scale;
@@ -1046,20 +1063,28 @@ export function renderDesigner(container, state, model, hooks = {}) {
         if (b.fold === 'fold') { ctx.moveTo(x + W / 2, y - 2); ctx.lineTo(x + W / 2, y + H + 2); }
         else { ctx.moveTo(x - 2, y + H / 2); ctx.lineTo(x + W + 2, y + H / 2); }
         ctx.stroke();
-        // 外屏半区（fold=背视右半 / flip=下半）
+        // 外屏（fold=背视右半 / flip=下半）：按尺寸+比例+位置偏移实绘，不默认占满半区
         if (cv > 0) {
-          const gx = b.fold === 'fold' ? x + W / 2 : x;
-          const gy = b.fold === 'flip' ? y + H / 2 : y;
-          const gw = b.fold === 'fold' ? W / 2 : W;
-          const gh = b.fold === 'flip' ? H / 2 : H;
-          const cg = ctx.createLinearGradient(gx, gy, gx + gw, gy + gh);
+          const cvRatio = b.coverScreen?.ratio || (b.fold === 'flip' ? 1.05 : 1.42);
+          const halfPxW = b.fold === 'fold' ? W / 2 : W;
+          const halfPxH = b.fold === 'flip' ? H / 2 : H;
+          const cw = Math.min(cv * 25.4 / 2.15 * scale, halfPxW - 6 * scale);
+          const chh = Math.min(cw * cvRatio, halfPxH - 6 * scale);
+          const hx = b.fold === 'fold' ? x + W * 0.75 : x + W / 2;
+          const hy = b.fold === 'flip' ? y + H * 0.75 : y + H / 2;
+          const ccx = hx + (b.coverScreen?.x || 0) * scale;
+          const ccy = hy - (b.coverScreen?.y || 0) * scale;
+          const cg = ctx.createLinearGradient(ccx - cw / 2, ccy - chh / 2, ccx + cw / 2, ccy + chh / 2);
           cg.addColorStop(0, '#0e1826'); cg.addColorStop(0.5, '#2b5a8c'); cg.addColorStop(1, '#0a1018');
           ctx.fillStyle = cg;
-          ctx.fillRect(gx, gy, gw, gh);
-          ctx.fillStyle = 'rgba(255,255,255,.4)';
-          ctx.font = '10px -apple-system, sans-serif';
-          ctx.textAlign = 'center';
-          ctx.fillText(`外屏 ${cv}″`, gx + gw / 2, gy + gh / 2 + 3);
+          roundRect(ctx, ccx - cw / 2, ccy - chh / 2, cw, chh, Math.max(2, Math.min(cw, chh) * 0.16));
+          ctx.fill();
+          if (cw > 44) {
+            ctx.fillStyle = 'rgba(255,255,255,.4)';
+            ctx.font = '10px -apple-system, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(`外屏 ${cv}″`, ccx, ccy + 3);
+          }
         }
         ctx.restore();
       }
@@ -1781,9 +1806,10 @@ export function renderDesigner(container, state, model, hooks = {}) {
 
     // 开孔（屏下摄像头时单孔隐藏于屏幕下）
     if (d.screen.notch === 'punch' && !d.parts.extras.includes('x_udc')) {
+      const holeFrac = (d.screen.holeX ?? (b.fold !== 'none' ? 25 : 0)) / 100;
       const hole = new THREE.Mesh(new THREE.CircleGeometry(1.6, 20), new THREE.MeshBasicMaterial({ color: 0x000000 }));
       hole.userData.part = 'screen';
-      hole.position.set(0, sh / 2 - 4, FACE + 0.19);
+      hole.position.set(sw * holeFrac, sh / 2 - 4, FACE + 0.19);
       g.add(hole);
     } else if (d.screen.notch === 'notch') {
       const notch = new THREE.Mesh(new THREE.PlaneGeometry(Math.min(sw * 0.34, 18), 4.4), new THREE.MeshBasicMaterial({ color: 0x000000 }));
@@ -2259,12 +2285,13 @@ export function renderDesigner(container, state, model, hooks = {}) {
       g.add(screen);
     }
 
-    // 外屏（cover screen）：贴在 halfB 背面（折叠时朝外）
+    // 外屏（cover screen）：贴在 halfB 背面（折叠时朝外）；尺寸/比例/位置可调，钳制到半区幅面
     const cvInch = b.coverScreen?.inch || 0;
     if (cvInch > 0) {
       const cvTex = makeWallpaper();
-      const cvW = isFlip ? cvInch * 25.4 / 2.15 : Math.min(cvInch * 25.4 / 2.15, halfW - 3);
-      const cvH = isFlip ? cvInch * 25.4 / 2.15 * 1.05 : Math.min(cvInch * 25.4 / 2.15 * 1.45, halfL - 3);
+      const cvRatio = b.coverScreen?.ratio || (isFlip ? 1.05 : 1.42);
+      const cvW = Math.min(cvInch * 25.4 / 2.15, halfW - 4);
+      const cvH = Math.min(cvW * cvRatio, halfL - 4);
       const cvShape = roundedShape(cvW, cvH, Math.max(0.8, b.corner * 0.4));
       const cvGeo = new THREE.ShapeGeometry(cvShape, 12);
       normalizeUV(cvGeo);
@@ -2275,7 +2302,10 @@ export function renderDesigner(container, state, model, hooks = {}) {
       cvMesh.userData.part = 'screen';
       cvMesh.rotation.y = Math.PI;
       // 与背盖保持 0.14mm 间距（背盖在 -(T/2+0.58)）：太近会深度冲突被背盖吞掉（flip 展开背面外屏消失的根因）
-      cvMesh.position.set(isFlip ? 0 : -halfW / 2, isFlip ? -halfL / 2 : 0, -(T / 2 + 0.72));
+      cvMesh.position.set(
+        (isFlip ? 0 : -halfW / 2) + (b.coverScreen?.x || 0),
+        (isFlip ? -halfL / 2 : 0) + (b.coverScreen?.y || 0),
+        -(T / 2 + 0.72));
       halfB.add(cvMesh);
     }
 
@@ -2610,14 +2640,30 @@ export function renderDesigner(container, state, model, hooks = {}) {
         d.screen.inch = fitted;
         syncSliderUI('screen.inch', fitted);
       }
+      // 机身变小时外屏尺寸钳制到新幅面（滑杆上限同步收缩）
+      const cs = d.body.coverScreen;
+      if (cs && (cs.inch || 0) > 0) {
+        const maxInch = Math.max(0.8, Math.round(((d.body.width - 8) / 11.8) * 10) / 10);
+        if (cs.inch > maxInch) { cs.inch = maxInch; syncSliderUI('body.coverScreen.inch', cs.inch); }
+      }
+    }
+    // 外屏开关：关→记住尺寸并清零（inch=0 即无外屏，所有渲染/校验沿用该语义）；开→恢复记忆尺寸
+    if (key === 'body.coverOn') {
+      const cs = d.body.coverScreen || (d.body.coverScreen = { inch: 0, last: 2.6, ratio: 0, x: 0, y: 0 });
+      if (!v) { cs.last = cs.inch || cs.last || 2.6; cs.inch = 0; }
+      else {
+        const maxInch = Math.max(0.8, Math.round(((d.body.width - 8) / 11.8) * 10) / 10);
+        cs.inch = Math.min(cs.last || 2.6, maxInch);
+      }
+      syncSliderUI('body.coverScreen.inch', cs.inch);
+      delete d.body.coverOn; // 开关状态以 inch>0 为唯一真源，不落库
     }
     if (!fromInput) syncSliderUI(key, v);
     else if (key !== 'screen.inch') { /* 输入源控件保持用户输入 */ }
-    // 比例预设切到「自由」时需重建控件，出现长宽比滑杆；充电口切自定义时出现形状编辑
     // 比例预设切到「自由」时需重建控件，出现长宽比滑杆；充电口切自定义时出现形状编辑；
-    // 折叠结构切换时出现外屏设计与视图切换按钮；闪光灯样式切换时出现宽/长或大小滑杆；
-    // 勾选背面 Logo/文字时出现位置、颜色与材质编辑
-    if (key === 'screen.aspect' || key === 'screen.panelVendor' || key === 'body.ports.charge' || key === 'body.ports.micStyle' || key === 'body.fold' || key === 'camera.flash.style' || key === 'logoOnBack' || key === 'brandText'
+    // 折叠结构/外屏开关切换时出现外屏编辑组；闪光灯样式切换时出现宽/长或大小滑杆；
+    // 勾选背面 Logo/文字时出现位置、颜色与材质编辑；开孔样式切单孔时出现挖孔位置滑杆
+    if (key === 'screen.aspect' || key === 'screen.panelVendor' || key === 'body.ports.charge' || key === 'body.ports.micStyle' || key === 'body.fold' || key === 'camera.flash.style' || key === 'logoOnBack' || key === 'brandText' || key === 'body.coverOn' || key === 'screen.notch'
       || (key.startsWith('camera.lenses.') && key.endsWith('.type'))) { // 镜头类型切换时出现潜望凸台厚度/方向控件
       renderControls();
       syncFoldToggle();
@@ -3063,9 +3109,10 @@ export function phoneFrontDataUrl(design, thumbW = 92) {
   const sr = Math.max(1, (rMm - (design.screen.bezel || 2.2)) * scale * 0.8);
   let sx = x + bez, sy = y + bez, sw = W - bez * 2, sh = H - bez * 2;
   if (b.fold && b.fold !== 'none' && cvInch > 0) {
+    const cvRatio = b.coverScreen?.ratio || (b.fold === 'flip' ? 1.05 : 1.42);
     const cvWpx = Math.min(sw - 4, cvInch * 25.4 / 2.15 * scale);
-    const cvHpx = Math.min(sh - 5, cvInch * 25.4 / 2.15 * scale * (b.fold === 'flip' ? 1.02 : 1.42));
-    sx = x + (W - cvWpx) / 2; sy = y + (H - cvHpx) / 2;
+    const cvHpx = Math.min(sh - 5, cvWpx * cvRatio);
+    sx = x + (W - cvWpx) / 2 + (b.coverScreen?.x || 0) * scale; sy = y + (H - cvHpx) / 2 - (b.coverScreen?.y || 0) * scale;
     sw = cvWpx; sh = cvHpx;
   }
   const grad = ctx.createLinearGradient(sx, sy, sx + sw * 0.4, sy + sh);
@@ -3099,9 +3146,10 @@ export function phoneFrontDataUrl(design, thumbW = 92) {
   // 开孔：挖孔 / 刘海（屏下摄像头不画）
   const udc = (design.parts.extras || []).includes('x_udc');
   if (design.screen.notch === 'punch' && !udc) {
+    const holeFrac = (design.screen.holeX ?? (b.fold && b.fold !== 'none' ? 25 : 0)) / 100;
     ctx.fillStyle = '#02040a';
     ctx.beginPath();
-    ctx.arc(sx + sw / 2, sy + Math.max(5, sh * 0.045), Math.max(1.3, sh * 0.014), 0, Math.PI * 2);
+    ctx.arc(sx + sw / 2 + sw * holeFrac, sy + Math.max(5, sh * 0.045), Math.max(1.3, sh * 0.014), 0, Math.PI * 2);
     ctx.fill();
   } else if (design.screen.notch === 'notch') {
     ctx.fillStyle = '#02040a';
