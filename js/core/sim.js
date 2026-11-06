@@ -1,9 +1,9 @@
 // 月度模拟核心
 import { clamp, rand, randInt, pick, chance, fmtMoney, fmtNum, fmtUnit, sum } from './util.js';
-import { MARKETS, MARKET_MAP, eraFactor, EVENTS, COUNTRIES, expectedPrice, makeCompetitorPhone, LINEUP_MAP } from '../data/world.js';
+import { MARKETS, MARKET_MAP, eraFactor, EVENTS, COUNTRIES, expectedPrice, makeCompetitorPhone, LINEUP_MAP, COMPETITORS } from '../data/world.js';
 import { derive, validate, eraBaseline, eraRel } from './design.js';
 import { TECHS, TECH_MAP } from '../data/tech.js';
-import { addLog, staffPower, deptById, DIFFICULTY } from './state.js';
+import { addLog, staffPower, deptById, DIFFICULTY, makeCompetitors } from './state.js';
 import { checkMilestones } from './milestones.js';
 import { campusBonus, stepConstruction, buildingCount } from './campus.js';
 import { stepSupply, consumeComponents, stockCoverage, SPOT_PREMIUM, supplyCostMul, addDisruption } from './supply.js';
@@ -509,6 +509,36 @@ function stepEmployees(state, report) {
 }
 
 function stepCompetitors(state, report) {
+  const yr = state.date.year;
+  // 新竞品入场
+  const activeIds = new Set(state.competitors.map((c) => c.id));
+  for (const def of COMPETITORS) {
+    if (!activeIds.has(def.id) && (def.foundedYear || 1980) <= yr) {
+      const nc = makeCompetitors(def.foundedYear).find((x) => x.id === def.id);
+      if (nc) {
+        state.competitors.push(nc);
+        report.notes.push(nc.name + ' 正式进入手机市场！');
+        addLog(state, 'market', nc.name + ' 宣布进军手机行业。');
+      }
+    }
+  }
+  // 竞品退出
+  state.competitors = state.competitors.filter((c) => {
+    if (c.exitYear && yr >= c.exitYear) {
+      report.notes.push(c.name + ' 正式退出手机市场。');
+      addLog(state, 'market', c.name + ' 宣布退出手机业务。');
+      return false;
+    }
+    return true;
+  });
+  // 衰退
+  for (const c of state.competitors) {
+    if (c.declineYear && yr >= c.declineYear) {
+      c.brand = clamp(c.brand - 0.5, 5, 100);
+      c.techLevel = clamp(c.techLevel - 0.001, 0.3, 2);
+      if (!c._declineNoted) { report.notes.push(c.name + ' 市场表现持续下滑。'); c._declineNoted = true; }
+    } else { c._declineNoted = false; }
+  }
   const year = state.date.year;
   // 宏观环境对竞品同样生效：政策需求/成本、行业事件
   const demandMul = activeMul(state, 'demandMul') * policyMul(state, 'demandMul');

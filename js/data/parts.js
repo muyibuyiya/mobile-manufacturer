@@ -1,38 +1,12 @@
 // 零件目录（BOM）。每个零件都有价格、性能、功耗、体积/重量与科技门槛。
 // 2015 年起加入现实厂商 SoC：同代多供应商、按版本迭代（Gen 递增）。
+import { CPU_DB } from './cpu-db.js';
+
 export const CPUS = [
-  { id: 'c8', name: '8 位 MCU', tech: 'cpu8', year: 1980, perf: 3, power: 0.4, size: 2, weight: 4, price: 160 },
-  { id: 'c16', name: '16 位处理器', tech: 'cpu16', year: 1988, perf: 8, power: 0.7, size: 3, weight: 5, price: 240 },
-  { id: 'c32', name: '32 位 ARM7', tech: 'arm', year: 1995, perf: 15, power: 0.9, size: 4, weight: 6, price: 320 },
-  { id: 'carm9', name: 'ARM9 应用处理器', tech: 'arm', year: 2002, perf: 24, power: 1.2, size: 5, weight: 7, price: 420 },
-  { id: 'cdual', name: '双核 Cortex-A9', tech: 'dualcore', year: 2008, perf: 38, power: 1.8, size: 7, weight: 9, price: 520 },
-  { id: 'cquad', name: '四核 A15', tech: 'quadcore', year: 2012, perf: 52, power: 2.6, size: 9, weight: 11, price: 640 },
-  // 64 位 SoC 世代（2015）：多家供应商
-  { id: 'csoc', name: '公版 64 位 SoC', tech: 'soc', year: 2015, perf: 64, power: 3.1, size: 10, weight: 12, price: 760 },
-  { id: 'c_sq810', name: '骁龙 810 · 高通', vendor: '高通', tech: 'soc', year: 2015, perf: 67, power: 3.3, size: 10, weight: 12, price: 830 },
-  { id: 'c_ex7420', name: 'Exynos 7420 · 三星', vendor: '三星', tech: 'soc', year: 2015, perf: 65, power: 3.0, size: 10, weight: 12, price: 800 },
-  { id: 'c_kr950', name: '麒麟 950 · 华为', vendor: '华为', tech: 'soc', year: 2015, perf: 64, power: 3.0, size: 10, weight: 12, price: 770 },
-  { id: 'c_mtkx10', name: 'Helio X10 · 联发科', vendor: '联发科', tech: 'soc', year: 2015, perf: 61, power: 2.9, size: 10, weight: 12, price: 690 },
-  // 7nm 旗舰世代（2018）
-  { id: 'cnm7', name: '公版 7nm 旗舰 SoC', tech: 'nm7', year: 2018, perf: 78, power: 3.6, size: 11, weight: 13, price: 980 },
-  { id: 'c_sq855', name: '骁龙 855 · 高通', vendor: '高通', tech: 'nm7', year: 2018, perf: 81, power: 3.7, size: 11, weight: 13, price: 1060 },
-  { id: 'c_a12', name: 'A12 仿生 · Apple', vendor: 'Apple', tech: 'nm7', year: 2018, perf: 83, power: 3.5, size: 11, weight: 13, price: 1120 },
-  { id: 'c_kr980', name: '麒麟 980 · 华为', vendor: '华为', tech: 'nm7', year: 2018, perf: 78, power: 3.6, size: 11, weight: 13, price: 990 },
-  { id: 'c_mt1000', name: '天玑 1000 · 联发科', vendor: '联发科', tech: 'nm7', year: 2018, perf: 76, power: 3.5, size: 11, weight: 13, price: 920 },
-  // 3nm 旗舰世代（2022）
-  { id: 'cnm3', name: '公版 3nm 旗舰 SoC', tech: 'nm3', year: 2022, perf: 90, power: 4.2, size: 12, weight: 14, price: 1280 },
-  { id: 'c_sq8g2', name: '骁龙 8 Gen2 · 高通', vendor: '高通', tech: 'nm3', year: 2022, perf: 93, power: 4.2, size: 12, weight: 14, price: 1360 },
-  { id: 'c_a16', name: 'A16 仿生 · Apple', vendor: 'Apple', tech: 'nm3', year: 2022, perf: 94, power: 4.0, size: 12, weight: 14, price: 1420 },
-  { id: 'c_mt9200', name: '天玑 9200 · 联发科', vendor: '联发科', tech: 'nm3', year: 2022, perf: 90, power: 4.1, size: 12, weight: 14, price: 1260 },
-  { id: 'c_kr9000s', name: '麒麟 9000s · 华为', vendor: '华为', tech: 'nm3', year: 2023, perf: 87, power: 4.3, size: 12, weight: 14, price: 1310 },
-  // AI 异构世代（2024）
-  { id: 'cai', name: '公版 AI 异构 SoC', tech: 'aicpu', year: 2024, perf: 96, power: 4.6, size: 13, weight: 15, price: 1560 },
-  { id: 'c_sq8e', name: '骁龙 8 Elite · 高通', vendor: '高通', tech: 'aicpu', year: 2024, perf: 99, power: 4.5, size: 13, weight: 15, price: 1680 },
-  { id: 'c_a18p', name: 'A18 Pro · Apple', vendor: 'Apple', tech: 'aicpu', year: 2024, perf: 99, power: 4.4, size: 13, weight: 15, price: 1720 },
-  { id: 'c_mt9400', name: '天玑 9400 · 联发科', vendor: '联发科', tech: 'aicpu', year: 2024, perf: 97, power: 4.5, size: 13, weight: 15, price: 1580 },
-  // 自研 SoC（需成立半导体研发中心，性能由研发中心等级动态写入）
-  { id: 'c_own', name: '自研 SoC', tech: 'chip_own', year: 1995, perf: 40, power: 3.0, size: 10, weight: 12, price: 700, own: true },
-  { id: 'cq', name: '量子协处理平台', tech: 'quantum_cpu', year: 2040, perf: 100, power: 5.2, size: 15, weight: 17, price: 2600 },
+  ...CPU_DB.map((c) => ({
+    ...c,
+    name: c.vendor === '公版' ? c.name : `${c.name} · ${c.vendor}`,
+  })),
 ];
 
 export const RAMS = [
