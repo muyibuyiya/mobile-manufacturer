@@ -47,6 +47,7 @@ export function ensureDivisions(state) {
     }
     if (!state.divisions[id].proj) state.divisions[id].proj = null; // 升级研发时间线
     if (!state.divisions[id].latest) state.divisions[id].latest = null; // 最近一次完工的自研规格（带名字）
+    if (!Array.isArray(state.divisions[id].products)) state.divisions[id].products = []; // 多产品设计池
   }
   // 自研 OS 流行度体系
   if (!state.osPop) {
@@ -131,6 +132,31 @@ export function buildDivision(state, id) {
   div.level = 1;
   div.builtAt = { ...state.date };
   return { ok: true, msg: `${def.name} 已成立（Lv.1）` };
+}
+
+// ---------- 设计新产品（与升级解耦，同一等级下可设计多款） ----------
+// 设计只是计划 → 需要研发时间（月） → 完工后进 products 池供手机设计器选用
+export function designProduct(state, id, form) {
+  const def = DIVISION_DEFS[id];
+  const div = ensureDivisions(state)[id];
+  if (div.level <= 0) return { ok: false, msg: '请先成立该部门' };
+  const spec = computeCustomSpec(state, id, form);
+  if (!spec || !spec.ok) return { ok: false, msg: spec ? spec.errors.join('；') : '规格设计错误' };
+  // 研发时间 = 复杂度决定（规格越激进越久）
+  const complexity = spec.perf ? Math.round(spec.perf / 8) : Math.round((spec.score || spec.quality || 50) / 10);
+  const months = Math.max(3, Math.min(18, complexity));
+  const cost = Math.round(def.upgradeBase * 0.35); // 设计费用远低于升级
+  if (state.company.cash < cost) return { ok: false, msg: '资金不足' };
+  state.company.cash -= cost;
+  const uid = 'dp' + Date.now().toString(36) + Math.random().toString(36).slice(2, 4);
+  div.products.push({
+    uid, name: spec.name, type: id, level: div.level,
+    specs: { ...spec, level: div.level },
+    status: 'designing', monthsLeft: months, monthsTotal: months,
+    startedAt: { ...state.date },
+  });
+  addLog(state, 'rnd', `${def.name} 立项新产品「${spec.name}」（${months} 个月研发，预算 ${Math.round(cost / 1e4)} 万）`);
+  return { ok: true, msg: `${def.name} 新产品「${spec.name}」已立项（${months} 个月研发）` };
 }
 
 // ---------- 自研项目规格设计 ----------
@@ -353,6 +379,20 @@ export function stepDivisions(state, report) {
     const div = divs[id];
     if (div.level <= 0) continue;
     upkeep += DIVISION_DEFS[id].upkeep * div.level;
+    // 产品研发推进（多款并行）
+    for (const prod of div.products || []) {
+      if (prod.status !== 'designing') continue;
+      const rate = clamp(rndPower * 8, 4, 25);
+      prod.monthsLeft -= Math.max(0.3, rate / 12); // rate 是工作量/月，折算为月进度
+      if (prod.monthsLeft <= 0) {
+        prod.status = 'completed';
+        prod.completedAt = { ...state.date };
+        // 同步到 latest 供旧管线兼容
+        div.latest = { ...prod.specs, level: prod.level };
+        addLog(state, 'rnd', `${DIVISION_DEFS[id].name} 新产品「${prod.name}」研发完成！`);
+        if (report) report.notes.push(`自研产品「${prod.name}」研发完成，可在设计器选用`);
+      }
+    }
     // 升级研发推进
     if (div.proj) {
       const rate = clamp(rndPower * 6.5, 3, 30);
