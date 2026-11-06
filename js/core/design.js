@@ -199,6 +199,9 @@ export function ensureLenses(design) {
   if (!c.flash.style) c.flash.style = 'round';
   if (c.flash.w === undefined) c.flash.w = 4;
   if (c.flash.l === undefined) c.flash.l = 6;
+  // 潜望凸台厚度（外部凸出 mm，不影响内部空间）与方向（v 竖 / h 横）：旧档幂等补齐
+  if (!Number.isFinite(Number(c.periT))) c.periT = 0.6;
+  if (c.periDir !== 'h' && c.periDir !== 'v') c.periDir = 'v';
   if (Array.isArray(c.lenses) && c.lenses.length) {
     c.count = c.lenses.length;
     // 旧档镜头补 size 字段（幂等）

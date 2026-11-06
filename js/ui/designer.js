@@ -346,7 +346,15 @@ export function renderDesigner(container, state, model, hooks = {}) {
         <input type="checkbox" data-k="camera.step" data-bool="1" ${d.camera.step ? 'checked' : ''} style="width:auto" />
         <span>摄像头凸台（台阶）</span>
       </label>
-      ${d.camera.step ? sliderRow('模组凸起', 'camera.bump', d.camera.bump, 0, 5, 0.1, 'mm') : ''}`)
+      ${d.camera.step ? sliderRow('模组凸起', 'camera.bump', d.camera.bump, 0, 5, 0.1, 'mm') : ''}
+      ${(d.camera.lenses || []).some((l) => l.type === 'periscope') ? `
+      ${sliderRow('潜望凸台厚度', 'camera.periT', d.camera.periT ?? 0.6, 0.3, 3, 0.1, 'mm')}
+      <label class="field"><span>潜望方向</span>
+        <select data-k="camera.periDir">
+          <option value="v" ${(d.camera.periDir || 'v') === 'v' ? 'selected' : ''}>竖向（长边沿机身纵向）</option>
+          <option value="h" ${d.camera.periDir === 'h' ? 'selected' : ''}>横向（长边沿机身横向）</option>
+        </select>
+      </label>` : ''}`)
       + section('material', '材质与外观', `
       <label class="field"><span>中框</span>
         <select data-k="body.frame">
@@ -1084,18 +1092,23 @@ export function renderDesigner(container, state, model, hooks = {}) {
           const look = LENS_LOOK[l.type] || LENS_LOOK.main;
           const rad = (lensRadiusMm(sn ? sn.format : '1/2.4″')) * (l.size || 1) * scale * 0.82;
           const lx = px(rect.cx + l.x), ly = py(rect.cy + l.y);
-          // 潜望长焦：立式棱镜模组（竖长圆角矩形，镜组偏上、下端棱镜反光窗）
+          // 潜望长焦：棱镜模组外壳（竖/横方向可调；镜组偏一端、另一端棱镜反光窗）
           if (look.plate !== null) {
-            const pw = rad * 2.4, ph = rad * 3.5;
-            const py0 = ly - ph * 0.42;
+            const horiz = (d.camera.periDir ?? 'v') === 'h';
+            const pw = horiz ? rad * 3.5 : rad * 2.4, ph = horiz ? rad * 2.4 : rad * 3.5;
+            const px0 = horiz ? lx - pw * 0.42 : lx - pw / 2;
+            const py0 = horiz ? ly - ph / 2 : ly - ph * 0.42;
             ctx.fillStyle = 'rgba(10,14,20,.88)';
-            roundRect(ctx, lx - pw / 2, py0, pw, ph, pw * 0.34);
+            roundRect(ctx, px0, py0, pw, ph, Math.min(pw, ph) * 0.34);
             ctx.fill();
             ctx.strokeStyle = 'rgba(255,255,255,.10)';
-            roundRect(ctx, lx - pw / 2 + 0.5, py0 + 0.5, pw - 1, ph - 1, pw * 0.34);
+            roundRect(ctx, px0 + 0.5, py0 + 0.5, pw - 1, ph - 1, Math.min(pw, ph) * 0.34);
             ctx.stroke();
             ctx.fillStyle = 'rgba(150,190,235,.16)';
-            roundRect(ctx, lx - pw * 0.3, py0 + ph * 0.6, pw * 0.6, ph * 0.3, pw * 0.14);
+            const wx = horiz ? px0 + pw * 0.62 : px0 + pw * 0.2;
+            const wy = horiz ? py0 + ph * 0.2 : py0 + ph * 0.62;
+            const ww = horiz ? pw * 0.3 : pw * 0.6, wh = horiz ? ph * 0.6 : ph * 0.3;
+            roundRect(ctx, wx, wy, ww, wh, Math.min(ww, wh) * 0.45);
             ctx.fill();
           }
           // 镜筒玻璃（高光偏移渐变，色膜随焦段不同）
@@ -1830,22 +1843,24 @@ export function renderDesigner(container, state, model, hooks = {}) {
         const lensR = lensRadiusMm(sn ? sn.format : '1/2.4″') * (l.size || 1);
         const lx = rect.cx + l.x, ly = rect.cy + l.y;
         const zBase = modTopZ; // 模组表面（无凸台时=后壳表面）
-        // 潜望长焦：真实潜望结构靠棱镜在机身内部折转光路，外部只露浅凸台——
-        // 竖长浅盒（镜组横置），镜圈开在盒体正面；不再画外露棱镜片（会凸出盒缘）
+        // 潜望长焦：浅凸台 + 镜组贴装在凸台面上——外部凸出量与普通镜头接近（真实潜望
+        // 结构在机身内部折转光路）；凸台厚度 camera.periT 与方向 periDir 用户可调
         let periShift = 0;
         if (look.plate !== null) {
-          const pd = Math.max(1.5, lensR * 0.65);
-          const bw = lensR * 2.35, bh = lensR * 3.4;
+          const pd = Math.max(0.35, d.camera.periT ?? 0.6);
+          const horiz = (d.camera.periDir ?? 'v') === 'h';
+          const bw = horiz ? lensR * 3.4 : lensR * 2.35;
+          const bh = horiz ? lensR * 2.35 : lensR * 3.4;
           const boxGeo = new THREE.ExtrudeGeometry(roundedShape(bw, bh, lensR * 0.6), {
-            depth: pd, bevelEnabled: true, bevelThickness: 0.22, bevelSize: 0.22, bevelSegments: 2, curveSegments: 8,
+            depth: pd, bevelEnabled: true, bevelThickness: 0.18, bevelSize: 0.18, bevelSegments: 2, curveSegments: 8,
           });
           boxGeo.translate(0, 0, -pd);
           const box = new THREE.Mesh(boxGeo, new THREE.MeshStandardMaterial({ color: 0x10151c, metalness: 0.5, roughness: 0.42 }));
           box.userData.part = 'camera';
-          box.position.set(lx, ly - lensR * 0.35, zBase + 0.02);
+          box.position.set(horiz ? lx + lensR * 0.35 : lx, horiz ? ly : ly - lensR * 0.35, zBase + 0.02);
           box.castShadow = true;
           g.add(box);
-          periShift = pd + 0.25;
+          periShift = pd + 0.08; // 镜组贴装在凸台外表面，金属圈半嵌进台面
         }
         const zL = zBase - periShift;
         // 金属装饰圈：主摄/潜望亮银、长焦近黑（粗糙度更高）
@@ -2308,22 +2323,23 @@ export function renderDesigner(container, state, model, hooks = {}) {
         const look = LENS_LOOK[l.type] || LENS_LOOK.main;
         const lensR = lensRadiusMm(sn ? sn.format : '1/2.4″') * (l.size || 1);
         const lx = rect.cx + cxOff + l.x, ly = cy + l.y;
-        // 潜望：立式棱镜模组（与主机型一致，镜组前移贴到盒体表面）
+        // 潜望：浅凸台 + 镜组贴装台面（与主机型一致），厚度/方向可调
         let periShift = 0;
         if (look.plate !== null) {
-          // 与主机型一致：浅凸台（棱镜反射在机身内部），不画外露棱镜片
-          const pd = Math.max(1.5, lensR * 0.65);
-          const bw = lensR * 2.35, bh = lensR * 3.4;
+          const pd = Math.max(0.35, d.camera.periT ?? 0.6);
+          const horiz = (d.camera.periDir ?? 'v') === 'h';
+          const bw = horiz ? lensR * 3.4 : lensR * 2.35;
+          const bh = horiz ? lensR * 2.35 : lensR * 3.4;
           const boxGeo = new THREE.ExtrudeGeometry(roundedShape(bw, bh, lensR * 0.6), {
-            depth: pd, bevelEnabled: true, bevelThickness: 0.22, bevelSize: 0.22, bevelSegments: 2, curveSegments: 8,
+            depth: pd, bevelEnabled: true, bevelThickness: 0.18, bevelSize: 0.18, bevelSegments: 2, curveSegments: 8,
           });
           boxGeo.translate(0, 0, -pd);
           const box = new THREE.Mesh(boxGeo, new THREE.MeshStandardMaterial({ color: 0x10151c, metalness: 0.5, roughness: 0.42 }));
           box.userData.part = 'camera';
-          box.position.set(lx, ly - lensR * 0.35, modTopZ + 0.02);
+          box.position.set(horiz ? lx + lensR * 0.35 : lx, horiz ? ly : ly - lensR * 0.35, modTopZ + 0.02);
           box.castShadow = true;
           halfA.add(box);
-          periShift = pd + 0.25;
+          periShift = pd + 0.08;
         }
         const zL = modTopZ - periShift;
         const ring2 = new THREE.Mesh(new THREE.TorusGeometry(lensR * 0.96, Math.max(0.32, lensR * 0.13), 10, 28),
@@ -2601,7 +2617,8 @@ export function renderDesigner(container, state, model, hooks = {}) {
     // 比例预设切到「自由」时需重建控件，出现长宽比滑杆；充电口切自定义时出现形状编辑；
     // 折叠结构切换时出现外屏设计与视图切换按钮；闪光灯样式切换时出现宽/长或大小滑杆；
     // 勾选背面 Logo/文字时出现位置、颜色与材质编辑
-    if (key === 'screen.aspect' || key === 'screen.panelVendor' || key === 'body.ports.charge' || key === 'body.ports.micStyle' || key === 'body.fold' || key === 'camera.flash.style' || key === 'logoOnBack' || key === 'brandText') {
+    if (key === 'screen.aspect' || key === 'screen.panelVendor' || key === 'body.ports.charge' || key === 'body.ports.micStyle' || key === 'body.fold' || key === 'camera.flash.style' || key === 'logoOnBack' || key === 'brandText'
+      || (key.startsWith('camera.lenses.') && key.endsWith('.type'))) { // 镜头类型切换时出现潜望凸台厚度/方向控件
       renderControls();
       syncFoldToggle();
     }
