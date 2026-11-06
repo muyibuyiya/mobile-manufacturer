@@ -1170,6 +1170,9 @@ export function renderGame(root, state, opts = {}) {
               ${m.review ? `<div class="between"><span class="dim">故障率 / 退货率</span><b class="${m.review.defect > 0.05 ? 'warn' : ''}">${(m.review.defect * 100).toFixed(1)}% / ${(m.review.returns * 100).toFixed(1)}%</b></div>` : ''}
             </div>
             ${!v.ok ? `<div class="issue error" style="margin-top:8px">${v.issues.filter((i) => i.level === 'error').length} 项设计问题，无法量产</div>` : ''}
+            ${(m.awards || []).length ? `<div class="row wrap" style="gap:5px;margin-top:8px">
+              ${(m.awards || []).map((a) => `<span class="chip" style="border-color:rgba(245,165,66,.5);color:#f5a542">🏆 ${esc(a.name)} · ${a.year}</span>`).join('')}
+            </div>` : ''}
             ${(m.comments || []).length ? `<div class="tiny dim" style="margin-top:8px;line-height:1.8">
               <span style="color:#8fd0ff">用户评论</span><br/>
               ${(m.comments || []).map((c) => `<span>“${esc(c)}”</span>`).join('<br/>')}
@@ -1177,6 +1180,7 @@ export function renderGame(root, state, opts = {}) {
             <div class="row wrap" style="margin-top:10px;gap:6px">
               <button class="btn small" data-act="design" data-id="${m.id}">设计</button>
               <button class="btn small ghost" data-act="rename-model" data-id="${m.id}" title="按「系列 代数 版本」规范命名">✏️ 改名</button>
+              <button class="btn small" data-act="open-poster" data-id="${m.id}">🖼 宣传图</button>
               ${m.status === 'draft' ? `<button class="btn small primary" data-act="launch" data-id="${m.id}" ${!v.ok ? 'disabled' : ''}>量产上市</button>` : ''}
               ${m.status === 'production' ? `<button class="btn small" data-act="goto" data-tab="market">定价</button><button class="btn small danger" data-act="discontinue" data-id="${m.id}">下市</button>` : ''}
               ${m.status === 'draft' ? `<button class="btn small ghost danger" data-act="delete-model" data-id="${m.id}">删除</button>` : ''}
