@@ -1,6 +1,6 @@
 {
   "name": "mobile-manufacturer",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "private": true,
   "type": "module",
   "description": "《手机开发商》浏览器原型：3D 手机设计与深度经营模拟",
@@ -17,6 +17,7 @@
     "test:eras": "node tests/eras.mjs",
     "test:save": "node tests/saveload.mjs http://127.0.0.1:8124/index.html",
     "test:long": "node tests/longrun.mjs",
-    "test:chip": "node tests/chip-rules.test.mjs"
+    "test:chip": "node tests/chip-rules.test.mjs",
+    "test:layout": "node tests/layout.test.mjs"
   }
 }

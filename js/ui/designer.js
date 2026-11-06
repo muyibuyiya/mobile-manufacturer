@@ -316,6 +316,14 @@ export function renderDesigner(container, state, model, hooks = {}) {
             return `<option value="${r.id}" ${d.screen.res === r.id ? 'selected' : ''} ${ok ? '' : 'disabled'}>${r.name} · ${r.w}×${r.h}${ok ? '' : `（${r.year} 年）`}</option>`;
           }).join('')}
         </select>
+      </label>
+      <label class="field"><span>刷新率（独立于面板）</span>
+        <select data-k="screen.hz">
+          ${[[60, '60Hz', 0], [90, '90Hz', 2014], [120, '120Hz', 2019], [144, '144Hz', 2021], [165, '165Hz', 2022]].map(([v, n, y]) => {
+            const ok = availYear >= y;
+            return `<option value="${v}" ${(d.screen.hz || 60) === v ? 'selected' : ''} ${ok ? '' : 'disabled'}>${n}${ok ? '' : `（${y} 年解锁）`}</option>`;
+          }).join('')}
+        </select>
       </label>`)
       + section('camera', '影像模组', `
       ${d.camera.lenses.map((l, i) => lensCard(l, i, d, divs)).join('')}
@@ -494,7 +502,10 @@ export function renderDesigner(container, state, model, hooks = {}) {
       ${selectRow('内存', 'parts.ram', RAMS, (x) => `${x.name}${x.gb >= 0.1 ? ` · ${x.gb}GB` : ''}`, 'tech', divs)}
       ${selectRow('存储', 'parts.storage', STORAGES, (x) => x.name, 'tech', divs)}
       ${selectRow('电池', 'parts.battery', BATTERIES, (x) => `${x.name} · ${x.mah}mAh`, 'tech', divs)}
-      ${selectRow('操作系统', 'parts.os', SYSTEMS, (x) => `${x.name} · ${x.kind === 'open' ? '开源' : x.kind === 'third' ? '三方' : x.kind === 'own' ? '自研' : '内置'}`, 'tech', divs)}`)
+      ${selectRow('操作系统', 'parts.os', SYSTEMS, (x) => `${x.name} · ${x.kind === 'open' ? '开源' : x.kind === 'third' ? '三方' : x.kind === 'own' ? '自研' : '内置'}`, 'tech', divs)}
+      <div class="tiny dim" style="margin:8px 0 4px">配置版本（同机型多配置，如 12+256 / 12+512 / 12+1T；库存共用，按定价倍率分配销量）</div>
+      ${(d.variants || []).map((v, i) => variantCard(v, i)).join('')}
+      ${(d.variants || []).length < 6 ? `<button type="button" class="btn small" data-variant-add style="margin:4px 0 8px">＋ 添加配置版本</button>` : ''}`)
       + section('charge', '充电', `
       <label class="field"><span>有线快充</span>
         <select data-k="parts.charge.wired">
@@ -674,6 +685,30 @@ export function renderDesigner(container, state, model, hooks = {}) {
         ${sliderRow('镜头位置 · 横', `camera.lenses.${i}.x`, l.x, -(d.camera.deco.w / 2), d.camera.deco.w / 2, 0.5, 'mm')}
         ${sliderRow('镜头位置 · 纵', `camera.lenses.${i}.y`, l.y, -(d.camera.deco.h / 2), d.camera.deco.h / 2, 0.5, 'mm')}
         ${sliderRow('镜头大小', `camera.lenses.${i}.size`, l.size ?? 1, 0.75, 1.5, 0.05, '×')}
+      </div>`;
+  }
+
+  const fmtGb = (gb) => gb >= 1 ? `${Math.round(gb * 10) / 10}GB` : gb >= 0.001 ? `${Math.round(gb * 1024)}MB` : `${Math.round(gb * 1024 * 1024)}KB`;
+  function variantCard(v, i) {
+    const ram = RAMS.find((r) => r.id === v.ram) || RAMS[0];
+    const stg = STORAGES.find((r) => r.id === v.stg) || STORAGES[0];
+    const opt = (list, cur) => list.map((x) => {
+      const ok = unlocked.includes(x.tech) && x.year <= availYear;
+      return `<option value="${x.id}" ${cur === x.id ? 'selected' : ''} ${ok ? '' : 'disabled'}>${x.name}${ok ? '' : '（未解锁）'}</option>`;
+    }).join('');
+    return `
+      <div style="border:1px solid var(--line-2);border-radius:8px;padding:8px;margin-bottom:6px">
+        <div class="between" style="margin-bottom:5px">
+          <b>版本 ${i + 1} · ${fmtGb(ram.gb)} + ${fmtGb(stg.gb)}</b>
+          <button type="button" class="btn small ghost danger" data-variant-del="${i}">移除</button>
+        </div>
+        <label class="field"><span>内存</span>
+          <select data-k="variants.${i}.ram">${opt(RAMS, v.ram)}</select>
+        </label>
+        <label class="field"><span>存储</span>
+          <select data-k="variants.${i}.stg">${opt(STORAGES, v.stg)}</select>
+        </label>
+        ${sliderRow('定价倍率', `variants.${i}.priceMul`, v.priceMul || 1, 0.7, 2, 0.05, '×')}
       </div>`;
   }
 
@@ -2753,6 +2788,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
     if (key.startsWith('body.ports') && !d.body.ports) d.body.ports = { dualSpeaker: false, topMic: false, charge: 'typec' };
     if (key.startsWith('body.colors') && !d.body.colors) d.body.colors = { frame: d.body.color, back: d.body.color, cover: '#05070a' };
     if (key.startsWith('branding')) ensureBranding(d);
+    if (key.startsWith('variants') && !Array.isArray(d.variants)) d.variants = [];
     setPath(d, key, v);
     // 换面板供应商时校验发光材料世代归属，失效则回退标准材料
     if (key === 'screen.panelVendor') {
@@ -2972,6 +3008,29 @@ export function renderDesigner(container, state, model, hooks = {}) {
       model.design.body.schemeName = name;
       schemeEdit = null;
       schemeSnapshot = null;
+      renderControls();
+      renderAssessment();
+      return;
+    }
+    // 配置版本：添加 / 移除
+    const vAdd = e.target.closest('[data-variant-add]');
+    if (vAdd) {
+      e.preventDefault();
+      const d = model.design;
+      d.variants = d.variants || [];
+      if (d.variants.length < 6) {
+        d.variants.push({ uid: 'v' + Date.now().toString(36) + Math.random().toString(36).slice(2, 4), ram: d.parts.ram, stg: d.parts.storage, priceMul: 1 });
+        renderControls();
+        renderAssessment();
+      }
+      return;
+    }
+    const vDel = e.target.closest('[data-variant-del]');
+    if (vDel) {
+      e.preventDefault();
+      const d = model.design;
+      d.variants = d.variants || [];
+      d.variants.splice(Number(vDel.dataset.variantDel), 1);
       renderControls();
       renderAssessment();
       return;

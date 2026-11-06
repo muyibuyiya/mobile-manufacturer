@@ -10,6 +10,7 @@ import {
 } from '../core/state.js';
 import { newModel, derive, validate, bomCost } from '../core/design.js';
 import { phoneBackDataUrl, phoneFrontDataUrl } from './designer.js';
+import { openFloorplanPlanner } from './floorplan2d.js';
 import { TECHS, TECH_MAP, TECH_CATS, techState } from '../data/tech.js';
 import { MARKETS, MARKET_MAP, COUNTRIES, eraFactor, expectedPrice, SEGMENTS, SEGMENT_MAP, LINEUPS, LINEUP_MAP, marketMix, suggestModelName } from '../data/world.js';
 import { DIVISION_DEFS, DIVISION_IDS, buildDivision, startUpgrade, upgradeCost, computeCustomSpec, ownCpuSpec, ownCmrSpec, ownOsSpec, ownPanelSpec, releaseOsVersion, toggleOsLicense, osReleaseCost } from '../core/divisions.js';
@@ -25,7 +26,6 @@ import {
 } from '../core/supply.js';
 import { activePolicies } from '../core/policy.js';
 import { overseasOf, overseasInvest, overseasUpkeepSingle, effectiveTariff, buildOverseas, sellOverseas } from '../core/overseas.js';
-import { FURNITURE, FURNITURE_MAP, PARTITIONS } from '../data/furniture.js';
 import {
   RANKS, TRAININGS, TRAINING_MAP, rankOf, startTraining, cancelTraining, trainingSummary,
   rankDistribution, trainingCost,
@@ -106,8 +106,6 @@ export function renderGame(root, state, opts = {}) {
   let lastReport = null;
   let pendingDesignId = null;
   let activeModal = null;
-  let layoutDept = 'rnd';
-  let layoutTool = 'plant';
   let rivalChart = 'bar';
   let rivalRank = 'month';
   let renameTargetId = null;
@@ -350,11 +348,17 @@ export function renderGame(root, state, opts = {}) {
         if (!cur) break;
         const s = suggestModelName(state, state.models.map((x) => x.name).filter((n) => n !== cur.name));
         renameTargetId = ds.id;
-        modalShell('机型命名', `当前名称：${cur.name} · 建议沿用「系列 代数 版本」规范（如 Nova 2 Pro）`, `
+        const curSeries = cur.series || String(cur.name).trim().split(/\s+/)[0] || '';
+        const rest = cur.series ? String(cur.name).trim().slice(cur.series.length).trim() : String(cur.name).trim().split(/\s+/).slice(1).join(' ');
+        modalShell('机型命名', `当前名称：${cur.name} · 系列是自由命名的产品家族（如 Apex），可归属任意产品线`, `
           <div class="field">
-            <span>新名称</span>
-            <input type="text" id="rename-input" value="${esc(cur.name)}" maxlength="24" style="margin-bottom:8px" />
-            <div class="tiny dim">规范建议：<b>${esc(s)}</b>（点击右侧按钮采用） <button class="btn small" data-act="use-suggest-name" data-s="${esc(s)}">采用建议</button></div>
+            <span>系列名（自由命名，如 Apex / Nova）</span>
+            <input type="text" id="rename-series" value="${esc(curSeries)}" maxlength="14" style="margin-bottom:8px" />
+          </div>
+          <div class="field">
+            <span>型号名（代数/后缀，如 2 / one / 3 Pro）</span>
+            <input type="text" id="rename-input" value="${esc(rest)}" maxlength="18" style="margin-bottom:8px" />
+            <div class="tiny dim">完整名称 = 系列 + 型号 · 规范建议：<b>${esc(s)}</b> <button class="btn small" data-act="use-suggest-name" data-s="${esc(s)}">采用建议</button></div>
           </div>
           <div class="row" style="margin-top:14px;justify-content:flex-end">
             <button class="btn" data-act="close-modal">取消</button>
@@ -364,15 +368,25 @@ export function renderGame(root, state, opts = {}) {
       }
       case 'use-suggest-name': {
         const inp = document.querySelector('#rename-input');
-        if (inp) inp.value = ds.s;
+        const ser = document.querySelector('#rename-series');
+        const parts = String(ds.s || '').trim().split(/\s+/);
+        if (inp) inp.value = parts.length > 1 ? parts.slice(1).join(' ') : parts[0] || '';
+        if (ser) ser.value = parts.length > 1 ? parts[0] : '';
         break;
       }
       case 'confirm-rename': {
         const inp = document.querySelector('#rename-input');
+        const ser = document.querySelector('#rename-series');
         const m = state.models.find((x) => x.id === renameTargetId);
-        if (inp && m && inp.value.trim()) {
-          m.name = inp.value.trim();
-          addLog(state, 'product', `机型更名为「${m.name}」。`);
+        if (m) {
+          const series = (ser?.value || '').trim();
+          const rest = (inp?.value || '').trim();
+          const full = [series, rest].filter(Boolean).join(' ');
+          if (full) {
+            m.name = full;
+            m.series = series || null;
+            addLog(state, 'product', `机型更名为「${m.name}」${series ? `（系列：${series}）` : ''}。`);
+          }
         }
         closeModal();
         render();
@@ -510,17 +524,18 @@ export function renderGame(root, state, opts = {}) {
       case 'open-layout':
         tab = 'hq';
         render();
-        openLayoutModal();
+        // 3D 内直接编辑：场景已挂载即进入编辑模式
+        if (scene) {
+          scene.setEditMode(true);
+          opts.onToast?.('布局编辑已开启：左键操作，R 旋转，再次点击按钮退出', 'info');
+        } else {
+          opts.onToast?.('园区场景未就绪', 'warn');
+        }
         break;
-      case 'layout-dept':
-        layoutDept = ds.dept;
-        closeModal();
-        openLayoutModal();
-        break;
-      case 'layout-tool':
-        layoutTool = ds.tool;
-        closeModal();
-        openLayoutModal();
+      case 'open-floorplan':
+        tab = 'hq';
+        render();
+        openFloorplan();
         break;
       case 'rival-chart':
         rivalChart = ds.v;
@@ -645,15 +660,6 @@ export function renderGame(root, state, opts = {}) {
         opts.onToast?.(r.msg, r.ok ? 'good' : 'bad');
         if (r.ok) addLog(state, 'company', r.msg);
         render();
-        break;
-      }
-      case 'layout-place': {
-        const changed = layoutPlace(Number(ds.u), Number(ds.v));
-        if (changed) {
-          addLog(state, 'company', `办公室布置调整（${DEPT_DEFS.find((d) => d.id === layoutDept)?.name || ''}）。`);
-          render();
-          openLayoutModal();
-        }
         break;
       }
       case 'open-head': openHeadModal(ds.dept); break;
@@ -818,6 +824,7 @@ export function renderGame(root, state, opts = {}) {
 
   // ---------- 渲染 ----------
   function render() {
+    if (floorplanUI) { floorplanUI.destroy(); floorplanUI = null; }
     if (designer) designer.destroy();
     designer = null;
     if (scene) { scene.destroy(); scene = null; }
@@ -1155,6 +1162,11 @@ export function renderGame(root, state, opts = {}) {
               <div class="between"><span class="dim">整机成本</span><b class="warn">¥${fmtNum(unitCost(state, m))}</b></div>
               <div class="between"><span class="dim">建议零售</span><b>¥${fmtNum(m.price.cn || suggestedPrice(state, m, 'cn'))}</b></div>
               ${m.status === 'production' ? `<div class="between"><span class="dim">上月销量 / 库存</span><b>${fmtNum(m.lastSold || 0)} / ${fmtNum(m.inventory)}</b></div>` : ''}
+              ${(m.design?.variants || []).length ? `<div class="between" style="align-items:flex-start"><span class="dim">配置版本</span><span class="tiny" style="text-align:right;line-height:1.7">${m.design.variants.map((v) => {
+                const r = RAMS.find((x) => x.id === v.ram), st = STORAGES.find((x) => x.id === v.stg);
+                const gb = (g) => g >= 1 ? `${Math.round(g * 10) / 10}G` : `${Math.round(g * 1024)}M`;
+                return `${gb(r?.gb || 0)}+${gb(st?.gb || 0)} ×${(v.priceMul || 1).toFixed(2)}${m.status === 'production' ? ` · ${fmtNum(v.sold || 0)}台` : ''}`;
+              }).join('<br/>')}</span></div>` : ''}
               ${m.review ? `<div class="between"><span class="dim">故障率 / 退货率</span><b class="${m.review.defect > 0.05 ? 'warn' : ''}">${(m.review.defect * 100).toFixed(1)}% / ${(m.review.returns * 100).toFixed(1)}%</b></div>` : ''}
             </div>
             ${!v.ok ? `<div class="issue error" style="margin-top:8px">${v.issues.filter((i) => i.level === 'error').length} 项设计问题，无法量产</div>` : ''}
@@ -2065,7 +2077,8 @@ export function renderGame(root, state, opts = {}) {
     ];
     return `
       ${head('公司园区', `${util.owned} 块地块 · ${util.used} 栋建筑 · 工位 ${officeCapacity(state)}`,
-        `<button class="btn small" data-act="open-layout">室内编辑</button>
+        `<button class="btn small" data-act="open-layout">3D 布局编辑</button>
+         <button class="btn small" data-act="open-floorplan">平面规划</button>
          <button class="btn small" data-act="expand-office">租用临时工位（${fmtMoney(2000000 * o.level)}）</button>`)}
       <div class="two-col" style="grid-template-columns:1.25fr 1fr">
         <div class="card" style="padding:8px">
@@ -2232,6 +2245,9 @@ export function renderGame(root, state, opts = {}) {
     if (!el) return;
     try {
       scene = createOfficeScene(el, state);
+      el.__office = scene; // 测试/自动化句柄
+      scene.setOnChanged(() => paintTopbar());
+      scene.setOnToast((m, k) => opts.onToast?.(m, k));
     } catch (e) {
       el.innerHTML = `<div class="empty">3D 场景初始化失败：${esc(e.message)}</div>`;
     }
@@ -2418,127 +2434,20 @@ export function renderGame(root, state, opts = {}) {
       body, 'modal-wide');
   }
 
-  // ---------- 室内编辑（房间级家具 / 隔墙摆放） ----------
-  function openLayoutModal() {
-    ensureLayout(state);
-    const items = state.officeLayout.items;
-    const edges = state.officeLayout.edges;
-    const G = 6;
-    // 部门索引
-    const deptIdx = DEPT_DEFS.findIndex((d) => d.id === layoutDept);
-    const dc = DEPT_DEFS[deptIdx];
-    const cellItem = (cx, cy) => items.find((i) => i.dept === layoutDept && i.cx === cx && i.cy === cy);
-    const edgeItem = (orient, ex, ey) => edges.find((e) => e.dept === layoutDept && e.orient === orient && e.ex === ex && e.ey === ey);
-    // 13×13 网格：奇数坐标是格子，偶数坐标是边缘
-    let gridHtml = '';
-    for (let v = 0; v <= G * 2; v++) {
-      for (let u = 0; u <= G * 2; u++) {
-        const cellOdd = u % 2 === 1 && v % 2 === 1;
-        const edgeH = v % 2 === 0 && u % 2 === 1; // 横向边（沿 x）
-        const edgeV = u % 2 === 0 && v % 2 === 1; // 纵向边（沿 z）
-        if (cellOdd) {
-          const cx = (u - 1) / 2, cy = (v - 1) / 2;
-          const it = cellItem(cx, cy);
-          const f = it ? FURNITURE_MAP[it.type] : null;
-          gridHtml += `<div class="lc-cell ${it ? 'filled' : ''}" data-act="layout-place" data-u="${u}" data-v="${v}" title="${f ? f.name : '空'}">${f ? f.icon : ''}</div>`;
-        } else if (edgeH || edgeV) {
-          const orient = edgeH ? 'h' : 'v';
-          const ex = edgeH ? (u - 1) / 2 : u / 2;
-          const ey = edgeH ? v / 2 : (v - 1) / 2;
-          const ed = edgeItem(orient, ex, ey);
-          gridHtml += `<div class="lc-edge ${orient} ${ed ? 'filled' : ''}" data-act="layout-place" data-u="${u}" data-v="${v}" title="${ed ? (ed.type === 'wall' ? '隔墙' : '门') : ''}">${ed ? (ed.type === 'wall' ? '' : '·') : ''}</div>`;
-        } else {
-          gridHtml += '<div class="lc-corner"></div>';
-        }
-      }
-    }
-    const palette = `
-      <div class="section-label">家具设备</div>
-      <div class="row" style="flex-wrap:wrap;gap:6px">
-        ${FURNITURE.map((f) => `<button class="btn small ${layoutTool === f.id ? 'primary' : ''}" data-act="layout-tool" data-tool="${f.id}" title="${f.desc} · ¥${fmtNum(f.cost)}">${f.icon} ${f.name}</button>`).join('')}
-      </div>
-      <div class="section-label">隔断</div>
-      <div class="row" style="flex-wrap:wrap;gap:6px">
-        ${PARTITIONS.map((p) => `<button class="btn small ${layoutTool === p.id ? 'primary' : ''}" data-act="layout-tool" data-tool="${p.id}">${p.icon} ${p.name}</button>`).join('')}
-        <button class="btn small ${layoutTool === 'remove' ? 'primary' : ''}" data-act="layout-tool" data-tool="remove">✕ 拆除（退一半）</button>
-      </div>`;
-    const body = `
-      <div class="row" style="flex-wrap:wrap;gap:6px;margin-bottom:12px">
-        ${DEPT_DEFS.slice(0, 9).map((d) => `<button class="btn small ${layoutDept === d.id ? 'primary' : ''}" data-act="layout-dept" data-dept="${d.id}">${d.icon} ${d.name}</button>`).join('')}
-      </div>
-      <div class="two-col" style="grid-template-columns:auto 1fr;align-items:start">
-        <div class="lc-wrap"><div class="lc-grid" data-dept-color="${dc.color}">${gridHtml}</div></div>
-        <div>${palette}
-          <div class="tiny dim" style="margin-top:10px;line-height:1.8">
-            选中工具后点击网格：格子放家具，格间细线放隔墙 / 门。<br/>
-            当前工具：<b>${layoutTool === 'remove' ? '拆除' : layoutTool}</b> ·
-            现金 <b class="mono">${fmtMoney(state.company.cash)}</b><br/>
-            家具效果：工位桌 +1 工位 · 绿植/沙发/咖啡机/打印机 提升满意度 · 机架 +3% 研发
-          </div>
-        </div>
-      </div>`;
-    modalShell('室内编辑', `${dc.name} · 已摆放 ${items.filter((i) => i.dept === layoutDept).length} 件家具 · ${edges.filter((e) => e.dept === layoutDept).length} 段隔断`, body, 'modal-wide');
+  // ---------- 布局编辑：3D 内直接编辑（office.js 编辑模式）+ 2D 平面规划页（floorplan2d.js） ----------
+  // 两端共用 state.officeLayout 与 floorplan.js 校验层，任一端改动实时同步
+  let floorplanUI = null;
+  function afterLayoutChange() {
+    paintTopbar();
+    if (scene) scene.updateLayout();
   }
-
-  function layoutPlace(u, v) {
-    const G = 6;
-    const items = state.officeLayout.items;
-    const edges = state.officeLayout.edges;
-    const cellOdd = u % 2 === 1 && v % 2 === 1;
-    const edgeH = v % 2 === 0 && u % 2 === 1;
-    const edgeV = u % 2 === 0 && v % 2 === 1;
-    // 拆除
-    if (layoutTool === 'remove') {
-      if (cellOdd) {
-        const cx = (u - 1) / 2, cy = (v - 1) / 2;
-        const idx = items.findIndex((i) => i.dept === layoutDept && i.cx === cx && i.cy === cy);
-        if (idx < 0) { opts.onToast?.('这里没有家具', 'warn'); return false; }
-        const refund = Math.round((FURNITURE_MAP[items[idx].type]?.cost || 0) * 0.5);
-        state.company.cash += refund;
-        items.splice(idx, 1);
-        opts.onToast?.(`已拆除，退还 ${fmtMoney(refund)}`, 'good');
-        return true;
-      }
-      if (edgeH || edgeV) {
-        const orient = edgeH ? 'h' : 'v';
-        const ex = edgeH ? (u - 1) / 2 : u / 2;
-        const ey = edgeH ? v / 2 : (v - 1) / 2;
-        const idx = edges.findIndex((e) => e.dept === layoutDept && e.orient === orient && e.ex === ex && e.ey === ey);
-        if (idx < 0) { opts.onToast?.('这里没有隔断', 'warn'); return false; }
-        const refund = Math.round(((edges[idx].type === 'wall' ? 3000 : 5000)) * 0.5);
-        state.company.cash += refund;
-        edges.splice(idx, 1);
-        opts.onToast?.(`已拆除，退还 ${fmtMoney(refund)}`, 'good');
-        return true;
-      }
-      return false;
-    }
-    // 摆放
-    if (cellOdd) {
-      if (!FURNITURE_MAP[layoutTool]) { opts.onToast?.('隔墙要放在格子之间的线上', 'warn'); return false; }
-      const cx = (u - 1) / 2, cy = (v - 1) / 2;
-      if (items.some((i) => i.dept === layoutDept && i.cx === cx && i.cy === cy)) { opts.onToast?.('这个格子已经被占了', 'warn'); return false; }
-      const cost = FURNITURE_MAP[layoutTool].cost;
-      if (state.company.cash < cost) { opts.onToast?.('现金不足', 'bad'); return false; }
-      state.company.cash -= cost;
-      items.push({ type: layoutTool, dept: layoutDept, cx, cy });
-      opts.onToast?.(`${FURNITURE_MAP[layoutTool].name} 已就位（-${fmtMoney(cost)}）`, 'good');
-      return true;
-    }
-    if (edgeH || edgeV) {
-      if (layoutTool !== 'wall' && layoutTool !== 'door') { opts.onToast?.('家具要放在格子里', 'warn'); return false; }
-      const orient = edgeH ? 'h' : 'v';
-      const ex = edgeH ? (u - 1) / 2 : u / 2;
-      const ey = edgeH ? v / 2 : (v - 1) / 2;
-      if (edges.some((e) => e.dept === layoutDept && e.orient === orient && e.ex === ex && e.ey === ey)) { opts.onToast?.('这条边已经有隔断了', 'warn'); return false; }
-      const cost = layoutTool === 'wall' ? 3000 : 5000;
-      if (state.company.cash < cost) { opts.onToast?.('现金不足', 'bad'); return false; }
-      state.company.cash -= cost;
-      edges.push({ type: layoutTool, dept: layoutDept, orient, ex, ey });
-      opts.onToast?.(`${layoutTool === 'wall' ? '隔墙' : '门'} 已安装（-${fmtMoney(cost)}）`, 'good');
-      return true;
-    }
-    return false;
+  function openFloorplan() {
+    if (floorplanUI) return;
+    floorplanUI = openFloorplanPlanner(document.body, state, {
+      onChanged: afterLayoutChange,
+      onToast: (m, k) => opts.onToast?.(m, k),
+      onClose: () => { floorplanUI = null; },
+    });
   }
 
   function openStage(modelId) {

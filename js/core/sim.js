@@ -391,7 +391,21 @@ function stepSales(state, report) {
       const take = Math.min(demand, model.inventory);
       model.inventory -= take;
       model.sold += take;
-      const rev = take * price;
+      // 多配置变体：库存共用，按定价倍率的反比分配销量与收入
+      const variants = (model.design?.variants || []).filter((v) => v && v.ram && v.stg);
+      let rev = take * price;
+      if (variants.length) {
+        const raw = variants.map((v) => Math.pow(1 / Math.max(0.3, v.priceMul || 1), 1.5));
+        const wSum = raw.reduce((a, b) => a + b, 0) || 1;
+        rev = 0;
+        variants.forEach((v, vi) => {
+          const vTake = take * (raw[vi] / wSum);
+          const vRev = vTake * price * (v.priceMul || 1);
+          v.sold = (v.sold || 0) + vTake;
+          v.revenue = (v.revenue || 0) + vRev;
+          rev += vRev;
+        });
+      }
       model.revenue += rev;
       model.lastSold = (model.lastSold || 0) + take;
       mUnits += take;
