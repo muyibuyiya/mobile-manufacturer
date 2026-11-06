@@ -1924,8 +1924,8 @@ export function renderDesigner(container, state, model, hooks = {}) {
         ring.userData.part = 'camera';
         ring.position.set(lx, ly, zL - 0.06);
         g.add(ring);
-        // 镜身（外大内小阶梯圆柱；openEnded——端盖会挡住玻璃，且镜口本该是空的）
-        const barrel = new THREE.Mesh(new THREE.CylinderGeometry(lensR * 0.98, lensR * 1.05, bump + 1.5, 26, 1, true),
+        // 镜身（标准圆柱上下等径；openEnded——端盖会挡住玻璃，且镜口本该是空的）
+        const barrel = new THREE.Mesh(new THREE.CylinderGeometry(lensR * 0.98, lensR * 0.98, bump + 1.5, 26, 1, true),
           new THREE.MeshStandardMaterial({ color: look.barrel, metalness: 0.55, roughness: 0.32 }));
         barrel.userData.part = 'camera';
         barrel.rotation.x = Math.PI / 2;
@@ -1963,12 +1963,13 @@ export function renderDesigner(container, state, model, hooks = {}) {
         flashPos = [rect.cx + clamp(fl.x, -mw / 2, mw / 2), rect.cy + clamp(fl.y, -mh / 2, mh / 2)];
       }
       const flash = makeFlashMesh(fl);
-      flash.position.set(flashPos[0], flashPos[1], -FACE);
+      // deco 内的闪光灯必须贴在凸台表面（deco 板凸出至 modTopZ，贴 -FACE 会被板埋住）
+      flash.position.set(flashPos[0], flashPos[1], stepOn ? modTopZ - 0.02 : -FACE);
       g.add(flash);
       if (flStyle === 'round') { // 圆形保留装饰圈；矩形/槽形/环形自身即造型
         const flashRing = new THREE.Mesh(new THREE.TorusGeometry(fr + 0.1, 0.22, 6, 18), new THREE.MeshStandardMaterial({ color: 0xaebccd, metalness: 1, roughness: 0.22 }));
         flashRing.userData.part = 'camera';
-        flashRing.position.set(flashPos[0], flashPos[1], -FACE - 0.05);
+        flashRing.position.set(flashPos[0], flashPos[1], stepOn ? modTopZ - 0.07 : -FACE - 0.05);
         g.add(flashRing);
       }
     }
@@ -2417,7 +2418,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
         ring2.userData.part = 'camera';
         ring2.position.set(lx, ly, zL - 0.06);
         halfA.add(ring2);
-        const lens = new THREE.Mesh(new THREE.CylinderGeometry(lensR * 0.98, lensR * 1.05, bump + 1.5, 26, 1, true),
+        const lens = new THREE.Mesh(new THREE.CylinderGeometry(lensR * 0.98, lensR * 0.98, bump + 1.5, 26, 1, true),
           new THREE.MeshStandardMaterial({ color: look.barrel, metalness: 0.55, roughness: 0.32 }));
         lens.userData.part = 'camera';
         lens.rotation.x = Math.PI / 2;
@@ -2434,7 +2435,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
       const flash = makeFlashMesh(fl2);
       const flashX = (fl2.offDeco ? rect.cx + rect.w / 2 + 2.6 : rect.cx + clamp(fl2.x, -rect.w / 2, rect.w / 2)) + cxOff;
       const flashY = fl2.offDeco ? cy - rect.h * 0.18 : cy + clamp(fl2.y, -rect.h / 2, rect.h / 2);
-      flash.position.set(flashX, flashY, -halfFace);
+      flash.position.set(flashX, flashY, d.camera.step ? modTopZ - 0.02 : -halfFace);
       halfA.add(flash);
     }
 
@@ -2697,6 +2698,22 @@ export function renderDesigner(container, state, model, hooks = {}) {
       }
       syncSliderUI('body.coverScreen.inch', cs.inch);
       delete d.body.coverOn; // 开关状态以 inch>0 为唯一真源，不落库
+    }
+    // 闪光灯放进 deco：默认中心位会压在纵列镜头上——底部腾出闪光灯条带（deco 只增不减）并自动落位
+    if (key === 'camera.flash.offDeco' && v === false) {
+      const fl = d.camera.flash, deco = d.camera.deco;
+      if (fl && deco && !fl.x && !fl.y) {
+        const fh = (fl.style === 'rounded' || fl.style === 'slot') ? (fl.l || 6) : (fl.r || 1.5) * 2;
+        let bottom = 0;
+        for (const l of d.camera.lenses || []) {
+          const r = lensRadiusMm((sensorById(l.sensor) || {}).format) * (l.size || 1) * (l.type === 'periscope' ? 1.25 : 1);
+          bottom = Math.max(bottom, Math.abs(l.y || 0) + r);
+        }
+        const needH = Math.ceil((bottom + fh + 2.6) * 2);
+        if (needH > deco.h) { deco.h = needH; syncSliderUI('camera.deco.h', deco.h); }
+        fl.y = -Math.round((deco.h / 2 - fh / 2 - 1.3) * 10) / 10;
+        syncSliderUI('camera.flash.y', fl.y);
+      }
     }
     if (!fromInput) syncSliderUI(key, v);
     else if (key !== 'screen.inch') { /* 输入源控件保持用户输入 */ }
