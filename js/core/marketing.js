@@ -1,6 +1,6 @@
 // 媒体渠道投放：把单一营销预算拆成按渠道的细分配
 // 效果：品牌加成 + 市场认知(awareness)，渠道与产品定位匹配时有加成
-import { clamp, sum } from './util.js';
+import { clamp, sum, rand } from './util.js';
 import { MEDIA_CHANNELS, MEDIA_MAP, DEMO_LINEUP } from '../data/media.js';
 import { addLog } from './state.js';
 
@@ -66,3 +66,54 @@ export function channelSummary(state) {
     fit: +channelFit(state, ch).toFixed(2),
   }));
 }
+
+// ---------- 销售渠道关系：运营商 / 电商 / 线下零售 ----------
+// 关系 0~100：影响全局销量系数（0.85~1.15），过低有下架风险，过高给推广位；每月自然滑落
+export const SALES_CHANNELS = [
+  { id: 'operator', name: '运营商渠道', desc: '合约机补贴与门店铺货，走量依赖关系' },
+  { id: 'online', name: '电商渠道', desc: '官方旗舰店与平台大促资源位' },
+  { id: 'retail', name: '线下零售', desc: '连锁卖场与体验店陈列位' },
+];
+
+export function ensureSalesChannels(state) {
+  if (!state.salesChannels) state.salesChannels = {};
+  for (const c of SALES_CHANNELS) {
+    if (!state.salesChannels[c.id]) state.salesChannels[c.id] = { rel: 50 };
+  }
+  return state.salesChannels;
+}
+
+export function channelInvest(state, id) {
+  const sc = ensureSalesChannels(state);
+  if (!sc[id]) return { ok: false, msg: '未知渠道' };
+  const cur = sc[id].rel;
+  const cost = Math.round(600000 * (1 + cur / 40)); // 关系越好，维护越贵
+  if (state.company.cash < cost) return { ok: false, msg: '资金不足' };
+  state.company.cash -= cost;
+  sc[id].rel = clamp(cur + rand(7, 12), 0, 100);
+  addLog(state, 'market', `向${SALES_CHANNELS.find((c) => c.id === id).name}投入关系维护费用。`);
+  return { ok: true, msg: '渠道关系提升' };
+}
+
+export function channelSalesMul(state) {
+  const sc = ensureSalesChannels(state);
+  const avg = sum(SALES_CHANNELS.map((c) => sc[c.id].rel), (v) => v) / SALES_CHANNELS.length;
+  return 0.85 + (avg / 100) * 0.3; // 0.85 ~ 1.15
+}
+
+export function stepChannels(state, report) {
+  const sc = ensureSalesChannels(state);
+  for (const c of SALES_CHANNELS) {
+    const rel = sc[c.id].rel;
+    sc[c.id].rel = clamp(rel + (45 - rel) * 0.02 - 0.4, 0, 100);
+    if (rel < 22 && chance01()) {
+      report.notes.push(`${c.name}关系恶化，渠道可能减少你的曝光。`);
+      addLog(state, 'market', `${c.name}关系恶化（${Math.round(rel)}）。`);
+    }
+    if (rel > 78 && chance01()) {
+      report.notes.push(`${c.name}为你安排了推广位，品牌曝光提升。`);
+      state.company.brand = clamp(state.company.brand + 0.4, 0, 100);
+    }
+  }
+}
+function chance01() { return Math.random() < 0.22; }

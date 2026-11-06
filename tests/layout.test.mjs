@@ -17,7 +17,7 @@ const mkState = (counts) => ({ employees: Object.entries(counts).flatMap(([deptI
 // ---------- 默认布局 ----------
 const rooms = defaultRooms();
 const layout = { v: 2, rooms, items: [], edges: [] };
-ok(Object.keys(rooms).length === 9, '默认布局含 9 个部门房间');
+ok(Object.keys(rooms).length === 10, '默认布局含 10 个部门房间');
 ok(reachability(layout).ok, '默认布局全部房间可达');
 let allValid = true;
 for (const [id, r] of Object.entries(rooms)) {
@@ -89,7 +89,7 @@ ok(bd0.length === 0, '无人时无内置工位');
 // ---------- 迁移 ----------
 const v1save = { items: [{ type: 'desk', dept: 'rnd', cx: 1, cy: 1 }], edges: [{ type: 'wall', dept: 'rnd', orient: 'h', ex: 0, ey: 2 }] };
 const m1 = migrateV1(v1save);
-ok(m1.v === 2 && Object.keys(m1.rooms).length === 9, 'v1→v2 迁移生成 9 房间');
+ok(m1.v === 2 && Object.keys(m1.rooms).length === 10, 'v1→v2 迁移生成 10 房间');
 ok(m1.items.length === 1 && m1.items[0].cx === 1, '迁移保留家具');
 // 坏数据被清洗
 const bad = normalizeLayout({ v: 2, rooms: { rnd: { cx: -5, cy: 0, w: 99, h: 2 } }, items: [{ type: 'bomb', dept: 'rnd', cx: 0, cy: 0 }], edges: [] });

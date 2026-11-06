@@ -22,7 +22,7 @@ import { migrateV1, normalizeLayout } from './floorplan.js';
 
 export { DEPT_DEFS, ROLE_BY_DEPT };
 
-export const GAME_VERSION = '1.2.0'; // 全局唯一版本号（启动页/关于/存档兼容判断）
+export const GAME_VERSION = '1.3.0'; // 全局唯一版本号（启动页/关于/存档兼容判断）
 
 // 室内布局（v2）：房间可拖放/调尺寸 + 家具/隔墙单数据源。
 // 旧档（v1：仅 items/edges，房间位置硬编码）经 migrateV1 迁移：rooms 取默认双排布局，items/edges 原样保留
@@ -134,7 +134,7 @@ export function staffPower(state, deptId) {
     const morale = clamp(e.satisfaction / 75, 0.45, 1.25);
     const stress = clamp(1 - e.stress / 180, 0.55, 1);
     const rankMul = 1 + (rankOf(e.skill).lv - 1) * 0.03;
-    return s + (e.skill * 0.6 + e.eff * 0.4) * morale * stress * rankMul;
+    return s + (e.skill * 0.6 + e.eff * 0.4) * morale * stress * rankMul * (e.star ? 1.12 : 1);
   }, 0);
   return raw / 60; // 60 分水平 ≈ 1 个标准人力
 }

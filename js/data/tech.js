@@ -45,6 +45,8 @@ export const TECHS = [
   { id: 'ltpo', name: 'LTPO 自适应刷新', cat: 'screen', year: 2020, cost: 380000, prereq: ['high_refresh'], desc: '1-120Hz 自适应，兼顾流畅与功耗。' },
   { id: 'flexible', name: '柔性屏', cat: 'screen', year: 2019, cost: 460000, prereq: ['amoled'], desc: '可弯折基板，折叠形态的前提。' },
   { id: 'foldable', name: '折叠屏结构', cat: 'screen', year: 2020, cost: 720000, prereq: ['flexible'], desc: '铰链、折痕控制与超薄堆叠。' },
+  { id: 'fold_cpi', name: 'CPI 聚合物盖板', cat: 'screen', year: 2019, cost: 260000, prereq: ['flexible'], excludes: ['fold_utg'], desc: '柔性聚合物盖板，成本低、耐刮一般——折叠屏经济之选。' },
+  { id: 'fold_utg', name: 'UTG 超薄玻璃', cat: 'screen', year: 2020, cost: 440000, prereq: ['foldable'], excludes: ['fold_cpi'], desc: '30μm 级超薄玻璃，折痕更浅、透光更好、耐久更佳。' },
   { id: 'rollable', name: '卷轴屏', cat: 'screen', year: 2026, cost: 1100000, prereq: ['foldable'], desc: '电动伸缩，形态自由度更高。' },
   { id: 'hologram', name: '全息显示', cat: 'screen', year: 2040, cost: 2800000, prereq: ['rollable'], desc: '裸眼三维成像。' },
 
@@ -100,6 +102,7 @@ export function techState(t, year, unlocked, researching) {
   if (unlocked.includes(t.id)) return 'done';
   if (researching && researching.techId === t.id) return 'doing';
   if (year < t.year) return 'future';
+  if (t.excludes && t.excludes.some((x) => unlocked.includes(x))) return 'route';
   if (!t.prereq.every((p) => unlocked.includes(p))) return 'locked';
   return 'ready';
 }

@@ -1,6 +1,7 @@
 // 资本运作：估值、融资轮次、IPO 上市、收购竞品
-import { clamp, rand, uid } from './util.js';
-import { addLog } from './state.js';
+import { clamp, rand, uid, chance, fmtMoney } from './util.js';
+import { addLog, generateEmployee } from './state.js';
+import { TECHS } from '../data/tech.js';
 
 const SHARES = 1e8; // 上市后总股本
 
@@ -270,6 +271,7 @@ export function sellSubsidiary(state, subId) {
 export function stepSubsidiaries(state, report) {
   const subs = ensureSubsidiaries(state);
   let income = 0;
+  const year = state.date.year;
   for (const sub of subs) {
     sub.brand = clamp(sub.brand + (Math.random() - 0.42) * 0.5, 5, 92);
     const base = (sub.source === 'acquired' ? 1.4e6 : 6e5)
@@ -279,9 +281,66 @@ export function stepSubsidiaries(state, report) {
     const profit = Math.round(base * share);
     sub.lastProfit = profit;
     income += profit;
+    // ---- 集团矩阵：自主发品（集团声量）----
+    sub.lastRelease = (sub.lastRelease || 0) + 1;
+    if (sub.lastRelease >= 9 && chance(0.35)) {
+      sub.lastRelease = 0;
+      sub.lineup = sub.lineup || [];
+      const series = ['X', 'S', 'Air', 'Note'][Math.floor(Math.random() * 4)];
+      sub.lineup.push({ name: `${sub.name} ${series}${sub.lineup.length + 1}`, price: Math.round((1200 + sub.brand * 42) * (0.9 + Math.random() * 0.3)), age: 0 });
+      if (sub.lineup.length > 3) sub.lineup.shift();
+      state.company.brand = clamp(state.company.brand + 0.5, 0, 100);
+      const title = `子公司 ${sub.name} 发布新品`;
+      report.notes.push(`${title}，集团声量上升（品牌 +0.5）。`);
+      addLog(state, 'finance', `${title}。`);
+      state.news = state.news || [];
+      state.news.unshift({ time: `${year}/${state.date.month + 1}`, type: 'group', title, text: `${sub.name} 新品上市，集团品牌 +0.5。`, read: false });
+      if (state.news.length > 100) state.news.length = 100;
+    }
+    // ---- 技术转让要约：价约为市面引进价一半（1.3×研发成本 vs 2.4×）----
+    if (chance(0.045) && !state.subTechOffer) {
+      const cands = TECHS.filter((t) => t.year <= year && !state.tech.unlocked.includes(t.id) && t.prereq.every((p2) => state.tech.unlocked.includes(p2)));
+      if (cands.length) {
+        const t = cands[Math.floor(Math.random() * cands.length)];
+        state.subTechOffer = { subId: sub.id, subName: sub.name, techId: t.id, techName: t.name, price: Math.round(t.cost * 1.3), months: 3 };
+        addLog(state, 'tech', `${sub.name} 提出转让技术「${t.name}」的要约。`);
+      }
+    }
+    // ---- 员工互派：子公司输送 1 名成熟工程师（免入职费）----
+    if (chance(0.04) && !state.subEmployeeOffer) {
+      state.subEmployeeOffer = { subId: sub.id, subName: sub.name, emp: generateEmployee(year, { skillMean: 66 + sub.brand * 0.12 }), months: 3 };
+    }
+    if (state.subTechOffer && --state.subTechOffer.months <= 0) state.subTechOffer = null;
+    if (state.subEmployeeOffer && --state.subEmployeeOffer.months <= 0) state.subEmployeeOffer = null;
   }
   return income;
 }
+
+// 要约响应
+export function acceptSubTech(state) {
+  const o = state.subTechOffer;
+  if (!o) return { ok: false, msg: '没有待处理的转让要约' };
+  if (!ensureSubsidiaries(state).some((s2) => s2.id === o.subId)) { state.subTechOffer = null; return { ok: false, msg: '子公司不存在' }; }
+  if (state.tech.unlocked.includes(o.techId)) { state.subTechOffer = null; return { ok: false, msg: '已掌握该技术' }; }
+  if (state.company.cash < o.price) return { ok: false, msg: '资金不足' };
+  state.company.cash -= o.price;
+  state.tech.unlocked.push(o.techId);
+  addLog(state, 'tech', `${o.subName} 转让技术「${o.techName}」，支出 ${fmtMoney(o.price)}。`);
+  state.subTechOffer = null;
+  return { ok: true, msg: `已受让技术「${o.techName}」` };
+}
+export function declineSubTech(state) { state.subTechOffer = null; return { ok: true, msg: '已婉拒转让要约' }; }
+export function acceptSubEmployee(state) {
+  const o = state.subEmployeeOffer;
+  if (!o || !o.emp) return { ok: false, msg: '没有待处理的推荐' };
+  const emp = o.emp;
+  emp.salary = Math.round(emp.salary * 1.05 / 100) * 100;
+  state.employees.push(emp);
+  addLog(state, 'hr', `${o.subName} 推荐的 ${emp.name}（${emp.role}，能力 ${emp.skill}）入职，免入职费。`);
+  state.subEmployeeOffer = null;
+  return { ok: true, msg: `${emp.name} 已入职` };
+}
+export function declineSubEmployee(state) { state.subEmployeeOffer = null; return { ok: true, msg: '已婉拒推荐' }; }
 
 function eraFactorSafe(state) {
   try {

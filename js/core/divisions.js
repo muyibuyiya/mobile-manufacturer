@@ -6,7 +6,7 @@ import { eraFactor } from '../data/world.js';
 import { CPUS, CAMERAS, SCREENS } from '../data/parts.js';
 import { CPU_CORES, GPU_ARCHS, OS_BASES, PANEL_VENDORS, RES_TIERS, LENS_TYPES, formatFactor, lensThicknessMm } from '../data/hardware.js';
 import { staffPower as staffPowerRef, addLog } from './state.js';
-import { OS_TECH_MAP } from '../data/os-tech.js';
+import { OS_TECH_MAP, OS_ROUTE_MAP } from '../data/os-tech.js';
 
 export const DIVISION_DEFS = {
   optics: {
@@ -133,7 +133,7 @@ export function startOsTech(state, techId) {
   return { ok: true, msg: `系统技术「${t.name}」已立项` };
 }
 
-// 已掌握系统技术的加成汇总
+// 已掌握系统技术的加成汇总（含互斥路线）
 export function osTechBonuses(state) {
   const out = { scoreBonus: 0, appsBonus: 0, popCap: 0, popGrowth: 0, licRate: 0 };
   for (const id of (state.osTech && state.osTech.unlocked) || []) {
@@ -141,7 +141,25 @@ export function osTechBonuses(state) {
     if (!t || !t.effect) continue;
     for (const [k, v] of Object.entries(t.effect)) out[k] = (out[k] || 0) + v;
   }
+  const route = OS_ROUTE_MAP[state.osTech && state.osTech.route];
+  if (route) for (const [k, v] of Object.entries(route.effect || {})) out[k] = (out[k] || 0) + v;
   return out;
+}
+
+// 选定系统路线：三选一，一经选定不可更换
+export function chooseOsRoute(state, id) {
+  const r = OS_ROUTE_MAP[id];
+  if (!r) return { ok: false, msg: '未知路线' };
+  const ot = state.osTech;
+  if (ot.route === id) return { ok: false, msg: '已是当前路线' };
+  if (ot.route) return { ok: false, msg: `已选定「${OS_ROUTE_MAP[ot.route].name}」路线，互斥不可更换` };
+  if (r.year > state.date.year) return { ok: false, msg: `${r.name} 需要 ${r.year} 年及以后` };
+  if ((state.divisions?.osd?.level || 0) < r.osdLv) return { ok: false, msg: `需要系统开发部 Lv.${r.osdLv}` };
+  if (state.company.cash < r.cost) return { ok: false, msg: '资金不足' };
+  state.company.cash -= r.cost;
+  ot.route = id;
+  addLog(state, 'tech', `自研系统选定「${r.name}」技术路线（${r.year} 年可用性）。`);
+  return { ok: true, msg: `技术路线已定为「${r.name}」` };
 }
 
 export function toggleOsLicense(state) {
@@ -459,7 +477,7 @@ export function stepDivisions(state, report) {
   const ot = state.osTech;
   if (ot && ot.proj) {
     const swPower = Math.max(0.3, staffPowerRef(state, 'sw'));
-    const rate = clamp(swPower * 8, 3, 25);
+    const rate = clamp(swPower * 8, 3, 25) * (state.osTech && state.osTech.route === 'light' ? 1.15 : 1);
     ot.proj.monthsLeft -= Math.max(0.3, rate / 12);
     if (ot.proj.monthsLeft <= 0) {
       const t = OS_TECH_MAP[ot.proj.id];
