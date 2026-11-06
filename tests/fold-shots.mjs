@@ -61,6 +61,15 @@ async function main() {
         return sel.value;
       })()`);
       await sleep(500);
+      // 竖向翻折必须配外屏（展开背面下半部可见）
+      await ev(`(()=>{
+        const r = document.querySelector('#dz-left input[data-k="body.coverScreen.inch"]');
+        if (!r) return 'no-cover-input';
+        r.value = '2.6';
+        r.dispatchEvent(new Event('input', { bubbles: true }));
+        return 'cover 2.6';
+      })()`);
+      await sleep(500);
     }
     // 本轮新特性配置：4 扬声器 + 麦克风槽形样式 + 潜望长焦镜头 + 背面 Logo 金属材质
     await ev(`(()=>{
@@ -98,15 +107,17 @@ async function main() {
     await ev("document.querySelector('[data-fold=folded]')?.click()");
     await sleep(400);
     await shot(`11-${kind}-2d-folded`);
-    // 3D：正面 / 背面 / 45° + 折叠态
+    // 3D：正面 / 背面 / 45° + 折叠态（进 3D 先切回展开态，foldView 会从 2D 步骤遗留 folded）
     await ev("document.querySelectorAll('[data-vm]')[1].click()"); await sleep(900);
+    await ev("document.querySelector('[data-fold=open]')?.click()"); await sleep(600);
     for (const cam of ['front', 'back', 'hero']) {
       await ev(`document.querySelector('[data-cam=${cam}]').click()`); await sleep(700);
       await shot(`12-${kind}-3d-${cam}`);
     }
     await ev("document.querySelector('[data-fold=folded]')?.click()"); await sleep(800);
-    for (const cam of ['front', 'hero']) {
-      await ev(`document.querySelector('[data-cam=${cam}]').click()`); await sleep(700);
+    for (const cam of ['front', 'side', 'hero']) {
+      await ev(`(()=>{const b=document.querySelector('[data-cam=${cam}]');if(b)b.click();return b?'cam ${cam}':'no ${cam}'})()`);
+      await sleep(700);
       await shot(`13-${kind}-3d-folded-${cam}`);
     }
     await ev("document.querySelector('[data-fold=open]')?.click()"); await sleep(600);

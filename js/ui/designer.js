@@ -2202,13 +2202,15 @@ export function renderDesigner(container, state, model, hooks = {}) {
       grp.add(bodyMesh);
 
       // 背盖（几何居中于原点，必须随半体平移到半区中心，否则折叠/展开都会偏出机身）
+      // 注意：不能用 rotation.y=π 朝后——那会把圆角形状水平镜像（圆角跑到铰链侧，与机身圆角错位）；
+      // 改用 DoubleSide 不旋转，形状方向与机身完全一致
       const backShape = roundedShape(halfW - 1.2, halfL - 1.2, Math.max(1, b.corner * 0.9), radii.map((v) => Math.max(0, v - 0.3)));
       const backMesh = new THREE.Mesh(new THREE.ShapeGeometry(backShape, 12), new THREE.MeshStandardMaterial({
         color: backColor.clone().multiplyScalar(1.35).offsetHSL(0, 0, 0.04),
         metalness: matBack.id === 'glass' ? 0.18 : 0.5, roughness: b.finish === 'gloss' ? 0.14 : 0.46,
+        side: THREE.DoubleSide,
       }));
       backMesh.userData.part = 'back';
-      backMesh.rotation.y = Math.PI;
       backMesh.position.set(isFlip ? 0 : sign * halfW / 2, isFlip ? sign * halfL / 2 : 0, -(T / 2 + 0.58));
       grp.add(backMesh);
       return grp;
@@ -2223,7 +2225,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
       } else {
         halfB.rotation.y = Math.PI;          // 左半向右翻折，叠到右半上
       }
-      halfB.position.z = T / 2 + 0.7;        // 抬出缝隙（半B 背面朝外 = 折叠态正面）
+      halfB.position.z = T + 1.5;            // 抬到半A 正面上方：平面间隙 1.5mm，扣除两侧 0.5 倒角后侧视有 0.5mm 可见分层缝（与 2D 双层画法一致）；半B 背面朝外 = 折叠态正面
     } else if (isFlip) {
       halfA.rotation.x = 0;
       halfB.rotation.x = 0;
@@ -2238,7 +2240,8 @@ export function renderDesigner(container, state, model, hooks = {}) {
       const sShape = roundedShape(fullW, fullH, Math.max(0.8, b.corner * 0.55));
       const sGeo = new THREE.ShapeGeometry(sShape, 12);
       normalizeUV(sGeo);
-      const wallTex = makeWallpaper();
+      // 折叠机展开态用宽幅桌面贴图（与 2D 一致），普通机型用竖版壁纸
+      const wallTex = b.fold ? makeWideWallTex(b.fold, scr.h / scr.w) : makeWallpaper();
       const screen = new THREE.Mesh(sGeo, new THREE.MeshStandardMaterial({
         color: 0x0a0f16, metalness: 0.2, roughness: 0.08,
         emissive: 0xffffff, emissiveMap: wallTex, emissiveIntensity: 1.0, map: wallTex,
@@ -2263,7 +2266,8 @@ export function renderDesigner(container, state, model, hooks = {}) {
       }));
       cvMesh.userData.part = 'screen';
       cvMesh.rotation.y = Math.PI;
-      cvMesh.position.set(isFlip ? 0 : -halfW / 2, isFlip ? -halfL / 2 : 0, -(T / 2 + 0.6));
+      // 与背盖保持 0.14mm 间距（背盖在 -(T/2+0.58)）：太近会深度冲突被背盖吞掉（flip 展开背面外屏消失的根因）
+      cvMesh.position.set(isFlip ? 0 : -halfW / 2, isFlip ? -halfL / 2 : 0, -(T / 2 + 0.72));
       halfB.add(cvMesh);
     }
 
@@ -2273,6 +2277,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
       new THREE.MeshStandardMaterial({ color: 0x8a939e, metalness: 1, roughness: 0.25 }));
     hinge.userData.part = 'back';
     if (isFlip) hinge.rotation.z = Math.PI / 2; // 折线沿宽度方向（圆柱轴转到 X）
+    if (folded) hinge.position.z = (T + 1.5) / 2; // 折叠叠层的厚度中点，否则铰链偏心
     g.add(hinge);
 
     // 摄像头模组（放右半/上半的背面，半体局部坐标）
@@ -2490,6 +2495,18 @@ export function renderDesigner(container, state, model, hooks = {}) {
     roundRect(ctx, Wc / 2 - 28, Hc - 14, 56, 4, 2);
     ctx.fill();
 
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = 4;
+    return tex;
+  }
+
+  // 3D 折叠机内屏宽幅壁纸贴图：复用 2D 的 drawWideWallpaper，按屏幕纵横比重建画布
+  function makeWideWallTex(fold, aspectHW) {
+    const Wc = 1024, Hc = Math.max(256, Math.round(1024 * aspectHW));
+    const c = document.createElement('canvas');
+    c.width = Wc; c.height = Hc;
+    drawWideWallpaper(c.getContext('2d'), 0, 0, Wc, Hc, 0, fold);
     const tex = new THREE.CanvasTexture(c);
     tex.colorSpace = THREE.SRGBColorSpace;
     tex.anisotropy = 4;
