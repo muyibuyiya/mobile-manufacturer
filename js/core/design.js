@@ -535,10 +535,12 @@ export function derive(design, year, opts = {}) {
     + 9.5 + (design.parts.extras.length * 0.9) + (design.body.fold !== 'none' ? 9 : 0);
   const spaceUse = clamp((used / internal) * 100, 0, 160);
 
-  const thicknessNeed = Math.max(
-    design.camera.lenses.length ? (design.camera.step ? camThick + 1.2 : camThick * 0.62) : 0,
-    b.fold !== 'none' ? 11 : 0);
-  const moduleOver = clamp(thicknessNeed - b.thickness, 0, 20);
+  // 厚度需求：直板=最厚镜头+基板装进机身；折叠机相机模组在闭合叠层外侧（外凸不占对半厚度），
+  // 按「闭合总厚 2T-0.6 ≥ 11mm」的可用性下限校验（此前拿单半厚对比 11mm 下限会误报冲突）
+  const camNeed = design.camera.lenses.length ? (design.camera.step ? camThick + 1.2 : camThick * 0.62) : 0;
+  const tRef = b.fold !== 'none' ? b.thickness * 2 - 0.6 : b.thickness;
+  const thicknessNeed = Math.max(camNeed, b.fold !== 'none' ? 11 : 0);
+  const moduleOver = clamp(thicknessNeed - tRef, 0, 20);
 
   return {
     scr, perf, camera, battery, designScore, craft, eraFit, weight, cost,
@@ -708,10 +710,10 @@ export function validate(design, year, opts = {}) {
       issues.push({ level: 'error', text: '背面文字位置超出机身范围。' });
     }
   }
-  // 折叠外屏：竖向翻折必须有外屏；外屏尺寸受半机身约束
+  // 折叠外屏：可选配置——竖向翻折无外屏仅提示（闭合状态功能受限），不再强制报错
   if (b.fold === 'flip') {
     const cv = b.coverScreen?.inch || 0;
-    if (cv <= 0) issues.push({ level: 'error', text: '竖向翻折机型必须设计一块外屏（cover screen）。' });
+    if (cv <= 0) issues.push({ level: 'warn', text: '竖向翻折机型未设计外屏，闭合状态下无法查看时间与通知。' });
     else if (cv * 25.4 * 0.72 > b.width - 5) {
       issues.push({ level: 'warn', text: `外屏 ${cv}″ 宽度接近机身极限，闭合后可能放不下。` });
     }

@@ -947,7 +947,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
           ctx.fillStyle = 'rgba(255,255,255,.4)';
           ctx.fillText(`外屏 ${cv}″`, x + W / 2, y + H / 2 - cvH / 2 - 5);
         } else {
-          ctx.fillText('无外屏', x + W / 2, y + H / 2);
+          ctx.fillText('后盖（未设计外屏）', x + W / 2, y + H / 2);
         }
         return;
       }
