@@ -202,6 +202,7 @@ export function createGame(opts) {
     history: [],
     lastReport: null,
     settings: { autoSave: true, tickMs: 1500 },
+    recruitment: { campusEventMonths: 0, headhunterCount: 0 },
     flags: { tutorialDone: false },
     hints: { seen: {} },
   };
