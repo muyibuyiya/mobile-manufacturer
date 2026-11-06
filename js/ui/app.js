@@ -1591,10 +1591,13 @@ export function renderGame(root, state, opts = {}) {
               ${lv > 0 && !div.proj ? `<div class="tiny" style="color:${def.color};margin-bottom:6px">${specText || specText2 || specText3 || specText4}
                 ${lv < 5 ? ` · 下级升级费用 ${fmtMoney(upgradeCost(id, lv))}` : ' · 已满级'}</div>
               <div class="row" style="gap:6px">
-                ${lv < 5 ? `<button class="btn small" data-act="div-upgrade" data-id="${id}">立项升级 Lv.${lv + 1}（${fmtMoney(upgradeCost(id, lv))}）</button>` : ''}
+                ${lv < 5 ? `<button class="btn small" data-act="div-upgrade" data-id="${id}">部门升级 Lv.${lv + 1}（${fmtMoney(upgradeCost(id, lv))}）</button>` : ''}
+                <button class="btn small primary" data-act="div-design" data-id="${id}">＋ 设计新产品</button>
                 <button class="btn small ${div.supplyOn ? 'primary' : 'ghost'}" data-act="div-supply" data-id="${id}">${div.supplyOn ? '停止对外供货' : '开始对外供货'}</button>
                 <span class="tiny dim" style="margin-left:auto">月维护 ${fmtMoney(def.upkeep * lv)}${div.supplyOn ? ` · 供货收入约 ${fmtMoney(def.supplyRate * lv * eraFactor(state.date.year))}/月` : ''}</span>
-              </div>`
+              </div>
+              ${(div.products || []).length ? `<div class="tiny dim" style="margin-top:4px">产品池（${(div.products || []).filter((p2) => p2.status === 'completed').length} 款可用）：</div>
+              ${(div.products || []).map((p2) => `<div class="between tiny" style="padding:2px 0"><span>${p2.status === 'designing' ? `⏳ ${p2.name}（剩 ${Math.ceil(p2.monthsLeft)} 月）` : `✓ ${p2.name} · ${p2.specs?.perf ? `性能 ${p2.specs.perf}` : p2.specs?.score ? `评分 ${Math.round(p2.specs.score)}` : p2.specs?.quality ? `品质 ${Math.round(p2.specs.quality)}` : ''}`}</span></div>`).join('')}` : ''}`
               : !div.proj ? `<div class="row" style="gap:6px">
                 <button class="btn small primary" data-act="div-build" data-id="${id}">成立（${fmtMoney(def.buildCost)}）</button>
                 <span class="tiny dim">${def.unlockText}</span>
@@ -2498,7 +2501,7 @@ export function renderGame(root, state, opts = {}) {
 
   // 收购谈判弹窗：多轮出价，显示对方要价/情绪/回合
   // 研发立项弹窗：命名 + 规格设计（芯片核心构成/GPU、传感器底大小/像素、OS 底层、面板类型/分辨率）
-  function openRndModal(id) {
+  function openRndModal(id, mode = 'upgrade') {
     const def = DIVISION_DEFS[id];
     const lv = state.divisions?.[id]?.level || 0;
     const cost = upgradeCost(id, lv);
@@ -2595,7 +2598,12 @@ export function renderGame(root, state, opts = {}) {
     mask.querySelector('#rn-go').onclick = () => {
       const spec = computeCustomSpec(state, id, collect());
       if (!spec || !spec.ok) { opts.onToast?.(spec?.errors?.[0] || '规格不完整', 'bad'); return; }
-      const r = startUpgrade(state, id, spec);
+      let r;
+      if (mode === 'design') {
+        r = designProduct(state, id, spec);
+      } else {
+        r = startUpgrade(state, id, spec);
+      }
       opts.onToast?.(r.msg, r.ok ? 'good' : 'bad');
       if (r.ok) { sfx('build'); closeModal(); render(); }
     };
