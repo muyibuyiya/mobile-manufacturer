@@ -476,9 +476,9 @@ export function renderGame(root, state, opts = {}) {
         const preview = computeReview(state, m);
         m.review = preview;
         m.rating = Math.round(preview.user * 0.6 + preview.media * 0.4);
-        addLog(state, 'product', `${m.name} 正式量产上市。`);
+        addLog(state, 'product', `${m.name} 量产完成，待举办发布会后开始销售。`);
         sfx('launch');
-        opts.onToast?.(`${m.name} 已上市，推广费用 ${fmtMoney(launchCost)}`, 'good');
+        opts.onToast?.(`${m.name} 已量产，下一步：发布产品（推广费用 ${fmtMoney(launchCost)}）`, 'good');
         render(); break;
       }
       case 'discontinue': {
