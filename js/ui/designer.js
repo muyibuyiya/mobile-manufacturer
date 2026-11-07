@@ -1,7 +1,8 @@
 // 手机设计器：参数化 2D 六视图 + three.js 3D 模型 + 合理性校验
 import * as THREE from '../../vendor/three.module.js';
-import { derive, validate, bomCost, screenSize, SCREEN_ASPECTS, defaultDesign, maxScreenInch, cameraModuleRect, lensSpecs, ensureLenses, ensureBranding, speakerRowSpec, PORT_OPENINGS, layoutPos, makeLens } from '../core/design.js';
+import { derive, validate, bomCost, screenSize, SCREEN_ASPECTS, defaultDesign, maxScreenInch, cameraModuleRect, lensSpecs, ensureLenses, ensureBranding, speakerRowSpec, PORT_OPENINGS, layoutPos, makeLens, arrangeLenses } from '../core/design.js';
 import { CPUS, RAMS, STORAGES, SCREENS, CAMERAS, BATTERIES, SYSTEMS, EXTRAS, MATERIALS, FINISHES, CHARGERS, BODY_COLORS } from '../data/parts.js';
+import { PHONE_TEMPLATES, PHONE_TPL_MAP, tplCaps } from '../data/templates.js';
 import { IMAGE_SENSORS, LENS_TYPES, DECO_SHAPES, PANEL_VENDORS, RES_TIERS, lensTypeById, sensorById, lensRadiusMm } from '../data/hardware.js';
 import { TECHS } from '../data/tech.js';
 import { ownCpuSpec, ownCmrSpec, ownOsSpec, ownPanelSpec } from '../core/divisions.js';
@@ -147,6 +148,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
   let explodeVal = 0;
   let camAnim = null;
   let foldView = 'open'; // 折叠机型 2D 显示状态：open 展开 / folded 折叠
+  const lensFolded = new Set(); // 镜头卡片折叠状态（会话级）
   let schemeEdit = null;   // 配色方案编辑面板打开时保存 { name }（颜色实时写在机身上）
   let schemeSnapshot = null; // 打开编辑面板时的配色快照（取消时恢复）
   // 公司 Logo 预加载（预设 SVG 字符串 → dataURL；上传/绘制为 PNG dataURL），加载完成后重绘
@@ -256,35 +258,47 @@ export function renderDesigner(container, state, model, hooks = {}) {
     const d = model.design;
     const body = d.body;
     const divs = state.divisions || {};
+    const TPL = tplCaps(PHONE_TPL_MAP[d.template] || PHONE_TPL_MAP.full_screen, availYear);
     const freeAspect = d.screen.aspect === '自由';
     const ports = body.ports || {};
     const sp = speakerRowSpec(ports.speakerStyle);
     const micSpan = ports.micStyle && ports.micStyle !== 'hole' ? speakerRowSpec(ports.micStyle).span : 2.8;
-    return section('body', '机身', `
+    return section('tpl', '手机模板', `
+      <span class="tiny dim" style="display:block;margin-bottom:6px">形态世代决定可用板块：屏幕比例 / 开孔 / 键盘 / Home 键 / 折叠 / 附加功能——切换时自动适配参数</span>
+      <label class="field"><span>形态世代</span>
+        <select data-k="template">
+          ${PHONE_TEMPLATES.map((t) => `<option value="${t.id}" ${d.template === t.id ? 'selected' : ''} ${t.from > availYear ? 'disabled' : ''}>${t.name}${t.from > availYear ? `（${t.from} 年解锁）` : ''}</option>`).join('')}
+        </select>
+      </label>
+      <div class="tiny dim" style="margin-top:4px">${TPL.desc}</div>`)
+      + section('body', '机身', `
       ${sliderRow('长度', 'body.length', body.length, 70, 200, 1, 'mm')}
       ${sliderRow('宽度', 'body.width', body.width, 35, 100, 0.5, 'mm')}
       ${sliderRow('厚度', 'body.thickness', body.thickness, 5, 32, 0.1, 'mm')}
       ${sliderRow('边角弧度', 'body.corner', body.corner, 0, 20, 0.5, 'mm')}`)
       + section('screen', '屏幕', `
       <span class="tiny dim" style="display:block;margin-bottom:6px">调机身时屏幕自动贴合</span>
-      ${sliderRow('屏幕尺寸', 'screen.inch', d.screen.inch, 1, 8.2, 0.1, '″')}
+      ${sliderRow('屏幕尺寸', 'screen.inch', d.screen.inch, 1, TPL.screen.maxInch, 0.1, '″')}
       ${sliderRow('边框宽度', 'screen.bezel', d.screen.bezel, 0.6, 12, 0.1, 'mm')}
-      ${sliderRow('屏幕圆角（0=贴合机身）', 'screen.corner', d.screen.corner || 0, 0, 15, 0.1, 'mm')}
+      ${sliderRow('屏幕圆角（0=贴合机身）', 'screen.corner', d.screen.corner || 0, 0, TPL.screen.cornerMax, 0.1, 'mm')}
       <label class="field"><span>比例预设</span>
         <select data-k="screen.aspect">
-          ${Object.keys(SCREEN_ASPECTS).map((a) => `<option ${d.screen.aspect === a ? 'selected' : ''}>${a}</option>`).join('')}
+          ${Object.keys(SCREEN_ASPECTS).filter((a) => TPL.screen.aspects.includes(a)).map((a) => `<option ${d.screen.aspect === a ? 'selected' : ''}>${a}</option>`).join('')}
         </select>
       </label>
       ${freeAspect ? sliderRow('长宽比（自由，高/宽）', 'screen.aspectV', d.screen.aspectV || 2, 0.5, 2.6, 0.01, '') : ''}
       <label class="field"><span>前面板开孔</span>
         <select data-k="screen.notch">
-          ${[['none', '无开孔'], ['punch', '单孔'], ['notch', '刘海'], ['waterdrop', '水滴'], ['popup', '升降式前摄']].map(([v, n]) => {
+          ${[['none', '无开孔'], ['punch', '单孔'], ['notch', '刘海'], ['waterdrop', '水滴'], ['popup', '升降式前摄']].filter(([v]) => !TPL.notch.length || TPL.notch.includes(v)).map(([v, n]) => {
             const ok = v !== 'popup' || availYear >= 2018;
             return `<option value="${v}" ${d.screen.notch === v ? 'selected' : ''} ${ok ? '' : 'disabled'}>${n}${ok ? '' : '（2018 年）'}</option>`;
           }).join('')}
         </select>
       </label>
       ${d.screen.notch === 'punch' && !d.parts.extras.includes('x_udc') ? sliderRow('挖孔位置（0=居中，折叠机默认右半屏）', 'screen.holeX', d.screen.holeX ?? (d.body.fold !== 'none' ? 25 : 0), -45, 45, 1, '%') : ''}
+      ${d.screen.notch === 'none' || d.screen.notch === 'punch' ? `
+      ${sliderRow('听筒宽度（0=隐藏）', 'earpiece.w', d.earpiece?.w ?? 8, 0, 16, 0.5, 'mm')}
+      ${sliderRow('听筒位置（屏幕上方偏移）', 'earpiece.y', d.earpiece?.y ?? 0, -4, 24, 0.5, 'mm')}` : ''}
       ${d.body.fold && d.body.fold !== 'none' ? `<label class="field"><span>折叠盖板（技术路线）</span>
         <select data-k="parts.foldGlass">
           <option value="" ${!d.parts.foldGlass ? 'selected' : ''}>未指定（常规工艺，无加成）</option>
@@ -405,7 +419,11 @@ export function renderDesigner(container, state, model, hooks = {}) {
       + section('buttons', '按键与接口', `
       <label class="field"><span>侧键样式</span>
         <select data-k="body.buttons">
-          ${[['classic', '经典双键'], ['strip', '细长条'], ['split', '分离式音量键'], ['opposite', '电源键异侧'], ['hidden', '隐藏式（压感）']].map(([v, n]) => `<option value="${v}" ${(body.buttons || 'classic') === v ? 'selected' : ''}>${n}</option>`).join('')}
+          ${[['none', '无侧键'], ['classic', '经典双键'], ['strip', '细长条'], ['split', '分离式音量键'], ['opposite', '电源键异侧'], ['hidden', '隐藏式（压感）']].map(([v, n]) => {
+            const yr = { none: 1980, classic: 1998, strip: 2002, split: 2008, opposite: 2006, hidden: 2018 }[v] ?? 1980;
+            const okS = yr <= availYear;
+            return `<option value="${v}" ${(body.buttons || 'classic') === v ? 'selected' : ''} ${okS ? '' : 'disabled'}>${n}${okS ? '' : `（${yr} 年）`}</option>`;
+          }).join('')}
         </select>
       </label>
       ${sliderRow('音量键位置 · 纵', 'body.btnVolY', body.btnVolY || 0, -(body.length / 2 - 4), body.length / 2 - 4, 0.5, 'mm')}
@@ -457,6 +475,33 @@ export function renderDesigner(container, state, model, hooks = {}) {
         <span>顶部麦克风孔</span>
       </label>
       ${ports.topMic ? sliderRow('顶部麦克风 · 横', 'body.ports.topMicX', ports.topMicX ?? Math.round(-body.width * 0.2 * 10) / 10, -(body.width / 2 - 2), body.width / 2 - 2, 0.5, 'mm') : ''}`)
+      + (TPL.keypad.length > 1 || TPL.keypad[0] !== 'none' ? section('keypad', '键盘布局', `
+      <label class="field"><span>键盘类型</span>
+        <select data-k="keypad.kind">
+          ${[['t9', 'T9 数字键盘（导航簇 + 4×3）'], ['qwerty', 'QWERTY 全键盘'], ['none', '无键盘']].filter(([k]) => TPL.keypad.includes(k)).map(([v, n]) => `<option value="${v}" ${(d.keypad?.kind || 't9') === v ? 'selected' : ''}>${n}</option>`).join('')}
+        </select>
+      </label>
+      ${(d.keypad?.kind || 't9') !== 'none' ? `
+      <label class="field"><span>按键风格</span>
+        <select data-k="keypad.style">
+          ${[['grid', '网格键（Nokia 式，带间隙）'], ['full', '全宽贴片（大数字，细分隔）']].map(([v, n]) => `<option value="${v}" ${(d.keypad?.style || 'grid') === v ? 'selected' : ''}>${n}</option>`).join('')}
+        </select>
+      </label>
+      ${sliderRow('键面宽度', 'keypad.keyW', d.keypad?.keyW ?? 1, 0.7, 1.4, 0.05, '×')}
+      ${sliderRow('键面高度', 'keypad.keyH', d.keypad?.keyH ?? 1, 0.7, 1.4, 0.05, '×')}
+      ${(d.keypad?.kind || 't9') === 't9' ? `
+      ${sliderRow('导航键大小', 'keypad.navScale', d.keypad?.navScale ?? 1, 0.7, 1.4, 0.05, '×')}
+      ${sliderRow('软键大小', 'keypad.softScale', d.keypad?.softScale ?? 1, 0.7, 1.4, 0.05, '×')}
+      ${sliderRow('导航键间距', 'keypad.navSpread', d.keypad?.navSpread ?? 1, 0.7, 1.5, 0.05, '×')}
+      ${sliderRow('导航簇位置', 'keypad.navY', d.keypad?.navY ?? 0, -6, 10, 0.5, 'mm')}` : ''}` : ''}
+      <div class="tiny dim" style="margin-top:4px">屏幕仅占正面上部，键盘位于下方——正视图可预览布局</div>`) : '')
+      + (TPL.home ? section('home', 'Home 键', `
+      <label class="field"><span>Home 键样式</span>
+        <select data-k="homeStyle">
+          ${[['circle', '圆形 Home 键'], ['pill', '胶囊条']].filter(([v]) => TPL.home.includes(v)).map(([v, n]) => `<option value="${v}" ${d.homeStyle === v ? 'selected' : ''}>${n}</option>`).join('')}
+        </select>
+      </label>
+      <div class="tiny dim" style="margin-top:4px">屏幕下方留出 Home 键区，屏占比相应收窄</div>`) : '')
       + section('fold', '折叠形态', `
       <label class="field"><span>结构</span>
         <select data-k="body.fold">
@@ -566,11 +611,13 @@ export function renderDesigner(container, state, model, hooks = {}) {
       + section('extras', '附加功能', `
       <div class="grid" style="grid-template-columns:1fr 1fr;gap:5px">
         ${EXTRAS.map((x) => {
-          const ok = unlocked.includes(x.tech) && (x.year || 0) <= availYear;
+          const tplOk = TPL.extras.includes(x.id);
+          const ok = tplOk && unlocked.includes(x.tech) && (x.year || 0) <= availYear;
           const on = model.design.parts.extras.includes(x.id);
-          return `<label class="opt ${on ? 'on' : ''} ${ok ? '' : 'disabled'}" style="text-align:left;padding:6px 8px;display:flex;gap:6px;align-items:center">
+          const tip = !tplOk ? `${TPL.name}形态不可用` : '';
+          return `<label class="opt ${on ? 'on' : ''} ${ok ? '' : 'disabled'}" style="text-align:left;padding:6px 8px;display:flex;gap:6px;align-items:center" ${tip ? `title="${tip}"` : ''}>
             <input type="checkbox" data-x="${x.id}" ${on ? 'checked' : ''} ${ok ? '' : 'disabled'} style="width:auto" />
-            <span>${x.name}${x.year && x.year > availYear ? `（${x.year}）` : ''}</span>
+            <span>${x.name}${x.year && x.year > availYear ? `（${x.year}）` : ''}${!tplOk ? '（形态不支持）' : ''}</span>
           </label>`;
         }).join('')}
       </div>`);
@@ -692,15 +739,20 @@ export function renderDesigner(container, state, model, hooks = {}) {
     const ownOpt = ownLv >= 1 || l.sensor === 'sn_own'
       ? `<option value="sn_own" ${l.sensor === 'sn_own' ? 'selected' : ''}>自研传感器${l.sensor === 'sn_own' ? ' · 已采用' : ''}</option>`
       : `<option value="sn_own" disabled>自研传感器（需光学影像部）</option>`;
+    const folded = lensFolded.has(i);
     return `
       <div style="border:1px solid var(--line-2);border-radius:8px;padding:8px;margin-bottom:6px">
-        <div class="between" style="margin-bottom:5px">
-          <b>镜头 ${i + 1}</b>
+        <div class="between" style="margin-bottom:${folded ? 0 : 5}px">
+          <b style="cursor:pointer" data-lens-fold="${i}">镜头 ${i + 1} <span class="tiny dim">${(LENS_TYPES.find((t) => t.id === l.type) || {}).name || ''}</span> ${folded ? '▸' : '▾'}</b>
           ${d.camera.lenses.length > 1 ? `<button type="button" class="btn small ghost danger" data-lens-del="${i}">移除</button>` : ''}
         </div>
+        ${folded ? '' : '<div>'}
         <label class="field"><span>类型</span>
           <select data-k="camera.lenses.${i}.type">
-            ${LENS_TYPES.map((t) => `<option value="${t.id}" ${l.type === t.id ? 'selected' : ''}>${t.name} · ${t.defFocal}mm 典型</option>`).join('')}
+            ${LENS_TYPES.map((t) => {
+              const okT = t.year <= availYear;
+              return `<option value="${t.id}" ${l.type === t.id ? 'selected' : ''} ${okT ? '' : 'disabled'}>${t.name} · ${t.defFocal}mm 典型${okT ? '' : `（${t.year} 年）`}</option>`;
+            }).join('')}
           </select>
         </label>
         <label class="field"><span>传感器</span>
@@ -717,7 +769,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
         ${sliderRow('镜头位置 · 横', `camera.lenses.${i}.x`, l.x, -(d.camera.deco.w / 2), d.camera.deco.w / 2, 0.5, 'mm')}
         ${sliderRow('镜头位置 · 纵', `camera.lenses.${i}.y`, l.y, -(d.camera.deco.h / 2), d.camera.deco.h / 2, 0.5, 'mm')}
         ${sliderRow('镜头大小', `camera.lenses.${i}.size`, l.size ?? 1, 0.75, 1.5, 0.05, '×')}
-      </div>`;
+        </div>${folded ? '' : '</div>'}`;
   }
 
   const fmtGb = (gb) => gb >= 1 ? `${Math.round(gb * 10) / 10}GB` : gb >= 0.001 ? `${Math.round(gb * 1024)}MB` : `${Math.round(gb * 1024 * 1024)}KB`;
@@ -1174,7 +1226,11 @@ export function renderDesigner(container, state, model, hooks = {}) {
       const maxSw = (openFold && b.fold === 'fold' ? b.width * 2 : b.width) - d.screen.bezel * 2 - 0.6;
       const maxSh = (openFold && b.fold === 'flip' ? b.length * 2 : b.length) - d.screen.bezel * 2 - 0.6;
       const sw = Math.min(scr.w, maxSw) * scale, sh = Math.min(scr.h, maxSh) * scale;
-      const sx = x + (W - sw) / 2, sy = y + (H - sh) / 2;
+      const tpl2 = PHONE_TPL_MAP[d.template] || PHONE_TPL_MAP.full_screen;
+      const isKp = tpl2.keypad[0] !== 'none' && (d.keypad?.kind || 't9') !== 'none';
+      const hasHome = !!tpl2.home && !!d.homeStyle;
+      const sx = x + (W - sw) / 2;
+      const sy = isKp ? y + H * 0.085 : hasHome ? y + H * 0.075 : y + (H - sh) / 2;
       const sr = Math.max(2, screenCornerMm(d) * scale);
       if (openFold) {
         // 折叠机展开态：专用宽幅内屏壁纸（铺满整个展开面），后续再叠加折痕
@@ -1225,10 +1281,18 @@ export function renderDesigner(container, state, model, hooks = {}) {
       // 开孔（屏下摄像头时隐藏单孔）；挖孔横向位置可调（%屏宽，折叠机默认右半屏中心）
       ctx.fillStyle = '#05080c';
       if (d.screen.notch === 'punch' && !d.parts.extras.includes('x_udc')) {
-        const holeFrac = (d.screen.holeX ?? (d.body.fold !== 'none' ? 25 : 0)) / 100;
-        ctx.beginPath();
-        ctx.arc(x + W / 2 + sw * holeFrac, sy + Math.max(3, 4 * scale), 2.2 * Math.max(1, scale * 0.7), 0, Math.PI * 2);
-        ctx.fill();
+        if (isKp || hasHome) {
+          // 按键机/Home键机：前摄在听筒旁（屏外额区）
+          const earW2 = (d.earpiece?.w ?? 8) * scale;
+          ctx.beginPath();
+          ctx.arc(x + W / 2 + earW2 / 2 + 3.2 * scale, sy - ((d.earpiece?.y ?? 0) + 3.2) * scale, Math.max(1.4, 1.3 * scale), 0, Math.PI * 2);
+          ctx.fill();
+        } else {
+          const holeFrac = (d.screen.holeX ?? (d.body.fold !== 'none' ? 25 : 0)) / 100;
+          ctx.beginPath();
+          ctx.arc(x + W / 2 + sw * holeFrac, sy + Math.max(3, 4 * scale), 2.2 * Math.max(1, scale * 0.7), 0, Math.PI * 2);
+          ctx.fill();
+        }
       } else if (d.screen.notch === 'notch') {
         const nw = Math.min(sw * 0.34, 26 * scale), nh = 5 * scale;
         roundRect(ctx, x + (W - nw) / 2, sy - 0.5, nw, nh, nh * 0.45);
@@ -1237,6 +1301,118 @@ export function renderDesigner(container, state, model, hooks = {}) {
         ctx.beginPath();
         ctx.arc(x + W / 2, sy + 2, 3.4 * scale * 0.7, 0, Math.PI);
         ctx.fill();
+      }
+      // 按键机键盘 / 功能键 Home 区（正视图）
+      if (isKp && !openFold) {
+        const kind = d.keypad?.kind || 't9';
+        const style = d.keypad?.style || 'grid';
+        const kwK = clamp(d.keypad?.keyW ?? 1, 0.7, 1.4), khK = clamp(d.keypad?.keyH ?? 1, 0.7, 1.4);
+        const navS = clamp(d.keypad?.navScale ?? 1, 0.7, 1.4), softS = clamp(d.keypad?.softScale ?? 1, 0.7, 1.4);
+        const zoneT = sy + sh + H * 0.018, zoneB = y + H - H * 0.035;
+        const zoneH = Math.max(10, zoneB - zoneT);
+        const keyFill = shade(partColor('frame'), -10);
+        const keyLine = 'rgba(255,255,255,.16)';
+        if (kind === 'qwerty') {
+          const rows = 4, cols = 5, gap = Math.max(1, W * 0.01);
+          const kw = Math.min((W * 0.9 - gap * (cols - 1)) / cols, W * 0.2 * kwK), kh = Math.max(3, Math.min(zoneH / rows - gap, kw * 0.78 * khK));
+          const kx0 = x + (W - (kw * cols + gap * (cols - 1))) / 2, ky0 = zoneT + (zoneH - (kh * rows + gap * (rows - 1))) / 2;
+          for (let r2 = 0; r2 < rows; r2++) for (let c2 = 0; c2 < cols; c2++) {
+            ctx.fillStyle = keyFill;
+            roundRect(ctx, kx0 + c2 * (kw + gap), ky0 + r2 * (kh + gap), kw, kh, Math.min(kw, kh) * 0.3);
+            ctx.fill();
+          }
+        } else {
+          // T9 两风格：导航行（接听 / 导航 / 挂断）+ 4×3 键盘
+          const navH = Math.min(zoneH * 0.3, W * 0.36 * navS);
+          const nvD = Math.min(W * 0.3 * navS, navH * 1.15);
+          const skW = Math.min(W * 0.26 * softS, (W - nvD) / 2 - W * 0.04), skH = Math.min(navH * 0.52, W * 0.12);
+          const navYOff = (d.keypad?.navY ?? 0) * scale, spread = clamp(d.keypad?.navSpread ?? 1, 0.7, 1.5);
+          const skCx = (nvD / 2 + W * 0.02 + skW / 2) * spread;
+          const nvx = x + W / 2 - nvD / 2, nvy = zoneT + (navH - nvD) / 2 + navYOff;
+          const ky = zoneT + (navH - skH) / 2 + navYOff;
+          ctx.fillStyle = keyFill;
+          roundRect(ctx, x + W / 2 - skCx - skW / 2, ky, skW, skH, skH * 0.35); ctx.fill();
+          roundRect(ctx, x + W / 2 + skCx - skW / 2, ky, skW, skH, skH * 0.35); ctx.fill();
+          // 接听 / 挂断 手柄符号（弧线）
+          ctx.strokeStyle = 'rgba(235,240,246,.75)';
+          ctx.lineWidth = Math.max(1.2, skH * 0.14);
+          ctx.lineCap = 'round';
+          ctx.beginPath();
+          ctx.arc(x + W / 2 - skCx, ky + skH * 0.58, skW * 0.22, Math.PI * 0.8, Math.PI * 2.2);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.arc(x + W / 2 + skCx, ky + skH * 0.58, skW * 0.22, Math.PI * 1.3, Math.PI * 2.7);
+          ctx.stroke();
+          // 导航键：圆形 + 中心确认点
+          ctx.fillStyle = keyFill;
+          roundRect(ctx, nvx, nvy, nvD, nvD, nvD * 0.32); ctx.fill();
+          ctx.fillStyle = shade(keyFill, 20);
+          ctx.beginPath(); ctx.arc(nvx + nvD / 2, nvy + nvD / 2, nvD * 0.2, 0, Math.PI * 2); ctx.fill();
+          // 键盘区
+          const kpT = zoneT + navH + zoneH * 0.035, kpH = Math.max(8, zoneB - kpT);
+          const rows = 4, cols = 3;
+          const digits = [['1', ''], ['2', 'ABC'], ['3', 'DEF'], ['4', 'GHI'], ['5', 'JKL'], ['6', 'MNO'], ['7', 'PQRS'], ['8', 'TUV'], ['9', 'WXYZ'], ['*', ''], ['0', '+'], ['#', '中']];
+          if (style === 'full') {
+            // 全宽贴片：键面无缝细分隔线，大数字
+            const slabW = W * 0.88 * kwK, slabH = Math.min(kpH, W * 1.02 * khK);
+            const sx0 = x + (W - slabW) / 2, sy0 = kpT + Math.max(0, (kpH - slabH) / 2);
+            const cw = slabW / cols, chh = slabH / rows;
+            ctx.fillStyle = keyFill;
+            roundRect(ctx, sx0, sy0, slabW, slabH, cw * 0.16); ctx.fill();
+            ctx.strokeStyle = keyLine;
+            ctx.lineWidth = 1;
+            for (let c2 = 1; c2 < cols; c2++) { ctx.beginPath(); ctx.moveTo(sx0 + c2 * cw, sy0 + 2); ctx.lineTo(sx0 + c2 * cw, sy0 + slabH - 2); ctx.stroke(); }
+            for (let r2 = 1; r2 < rows; r2++) { ctx.beginPath(); ctx.moveTo(sx0 + 2, sy0 + r2 * chh); ctx.lineTo(sx0 + slabW - 2, sy0 + r2 * chh); ctx.stroke(); }
+            for (let r2 = 0; r2 < rows; r2++) for (let c2 = 0; c2 < cols; c2++) {
+              const cx2 = sx0 + c2 * cw + cw / 2, cy2 = sy0 + r2 * chh + chh / 2;
+              ctx.fillStyle = 'rgba(235,240,246,.9)';
+              ctx.font = `600 ${Math.max(8, chh * 0.4)}px sans-serif`;
+              ctx.textAlign = 'center';
+              ctx.fillText(digits[r2 * cols + c2][0], cx2 - (digits[r2 * cols + c2][1] ? cw * 0.08 : 0), cy2 + chh * 0.1);
+              if (digits[r2 * cols + c2][1]) {
+                ctx.fillStyle = 'rgba(235,240,246,.45)';
+                ctx.font = `${Math.max(5, chh * 0.16)}px sans-serif`;
+                ctx.fillText(digits[r2 * cols + c2][1], cx2 + cw * 0.16, cy2 + chh * 0.12);
+              }
+            }
+          } else {
+            // 网格键：独立圆角键，数字 + 字母
+            const gap = Math.max(1.2, W * 0.022);
+            const kw = Math.min((W * 0.82 * kwK - gap * (cols - 1)) / cols, W * 0.32);
+            const kh = Math.min((kpH - gap * (rows - 1)) / rows, kw * 1.3 * khK);
+            const kx0 = x + (W - (kw * cols + gap * (cols - 1))) / 2;
+            const ky0 = kpT + Math.max(0, (kpH - (kh * rows + gap * (rows - 1))) / 2);
+            for (let r2 = 0; r2 < rows; r2++) for (let c2 = 0; c2 < cols; c2++) {
+              const kx = kx0 + c2 * (kw + gap), kyy = ky0 + r2 * (kh + gap);
+              ctx.fillStyle = keyFill;
+              roundRect(ctx, kx, kyy, kw, kh, Math.min(kw, kh) * 0.26); ctx.fill();
+              ctx.strokeStyle = keyLine;
+              ctx.lineWidth = 1;
+              roundRect(ctx, kx + 0.5, kyy + 0.5, kw - 1, kh - 1, Math.min(kw, kh) * 0.26); ctx.stroke();
+              ctx.fillStyle = 'rgba(235,240,246,.9)';
+              ctx.font = `600 ${Math.max(7, kh * 0.36)}px sans-serif`;
+              ctx.textAlign = 'center';
+              ctx.fillText(digits[r2 * cols + c2][0], kx + kw / 2, kyy + kh * 0.56);
+              if (digits[r2 * cols + c2][1] && kh > 13) {
+                ctx.fillStyle = 'rgba(235,240,246,.42)';
+                ctx.font = `${Math.max(4.5, kh * 0.19)}px sans-serif`;
+                ctx.fillText(digits[r2 * cols + c2][1], kx + kw / 2, kyy + kh * 0.85);
+              }
+            }
+          }
+        }
+      } else if (hasHome && !openFold) {      } else if (hasHome && !openFold) {      } else if (hasHome && !openFold) {
+        const hy2 = y + H - H * 0.05;
+        ctx.fillStyle = shade(partColor('cover'), 16);
+        if (d.homeStyle === 'pill') {
+          const pw = W * 0.3, ph = Math.max(3, H * 0.016);
+          roundRect(ctx, x + W / 2 - pw / 2, hy2 - ph / 2, pw, ph, ph / 2); ctx.fill();
+        } else {
+          const hr = Math.min(W * 0.085, H * 0.028);
+          ctx.beginPath(); ctx.arc(x + W / 2, hy2, hr, 0, Math.PI * 2); ctx.fill();
+          ctx.strokeStyle = 'rgba(255,255,255,.2)';
+          ctx.stroke();
+        }
       }
       // 升降式前摄：顶缘升起的模块
       if (d.screen.notch === 'popup') {
@@ -1250,10 +1426,13 @@ export function renderDesigner(container, state, model, hooks = {}) {
         ctx.fillStyle = 'rgba(120,160,220,.5)';
         ctx.beginPath(); ctx.arc(mx + mw / 2, my + mh * 0.55, 0.5 * scale, 0, Math.PI * 2); ctx.fill();
       }
-      // 听筒
-      if (d.screen.notch === 'none') {
-        ctx.fillStyle = 'rgba(255,255,255,.22)';
-        ctx.fillRect(x + W / 2 - 10 * scale * 0.5, sy - 5 * Math.max(0.6, scale * 0.35), 10 * Math.max(0.6, scale * 0.5), 1.2);
+      // 听筒（宽度/位置可调，w=0 隐藏）
+      if (d.screen.notch === 'none' || d.screen.notch === 'punch') {
+        const earW = (d.earpiece?.w ?? 8) * scale, earY = sy - ((d.earpiece?.y ?? 0) + 3.2) * scale;
+        if (earW > 0) {
+          ctx.fillStyle = 'rgba(255,255,255,.3)';
+          ctx.fillRect(x + W / 2 - earW / 2, earY, earW, Math.max(1.2, 1.6 * scale * 0.3));
+        }
       }
     }
 
@@ -1478,9 +1657,9 @@ export function renderDesigner(container, state, model, hooks = {}) {
     }
 
     if (isSide) {
-      // 侧键（按 body.buttons 样式绘制；左视图=音量键侧，右视图=电源/SIM 侧；
+      // 侧键（按 body.buttons 样式绘制；1998 前无侧键；左视图=音量键侧，右视图=电源/SIM 侧；
       // 普通样式为圆角矩形键身，strip 细长条为内凹槽型）
-      const btnStyle = b.buttons || 'classic';
+      const btnStyle = (year < 1998 && (b.buttons || 'classic') !== 'none') ? 'none' : (b.buttons || 'classic');
       const bw = Math.max(1.5, W * 0.18); // 键宽（凸出量）：略窄更接近真机比例
       const side = view.id === 'right' ? x + W - bw * 1.6 : x + bw * 0.6;
       const offPx = (view.id === 'left' ? (b.btnVolY || 0) : (b.btnPowY || 0)) * scale;
@@ -2008,6 +2187,8 @@ export function renderDesigner(container, state, model, hooks = {}) {
     });
     geo.translate(0, 0, -T / 2);
     const FACE = T / 2 + 0.58; // 挤出倒角后的真实前后面
+    const tplKp = (PHONE_TPL_MAP[d.template] || PHONE_TPL_MAP.full_screen).keypad[0] !== 'none'
+      && (d.keypad?.kind || 't9') !== 'none';
     const frameMat = new THREE.MeshStandardMaterial({
       color, metalness: matFrame.id === 'plastic' ? 0.05 : 0.92,
       roughness: matFrame.id === 'ceramic' ? 0.28 : rough,
@@ -2031,14 +2212,20 @@ export function renderDesigner(container, state, model, hooks = {}) {
     });
     const screen = new THREE.Mesh(screenGeo, screenMat);
     screen.userData.part = 'screen';
+    const tpl3 = PHONE_TPL_MAP[d.template] || PHONE_TPL_MAP.full_screen;
+    const isKp3 = tpl3.keypad[0] !== 'none' && (d.keypad?.kind || 't9') !== 'none';
+    const hasHome3 = !!tpl3.home && !!d.homeStyle;
+    screen.position.y = isKp3 ? L / 2 - sh / 2 - L * 0.085 : hasHome3 ? L / 2 - sh / 2 - L * 0.075 : 0;
     screen.position.z = FACE + 0.08;
     g.add(screen);
 
     // 正面盖板（屏幕四周的边框区域，颜色 = 盖板配色，默认黑）
     const plateW = Math.min(sw + 2 * d.screen.bezel + 0.6, W - 0.8);
     const plateH = Math.min(sh + 2 * d.screen.bezel + 0.6, L - 0.8);
+    // 按键机（直板/触摸+按键）：正面为机身色（真机 Nokia 风格），触屏世代才用近黑玻璃盖板
+    const plateColor = tplKp ? backColor : coverColor;
     const plate = new THREE.Mesh(new THREE.ShapeGeometry(roundedShape(plateW, plateH, Math.max(0.8, b.corner * 0.75)), 12),
-      new THREE.MeshStandardMaterial({ color: coverColor, metalness: 0.25, roughness: 0.18 }));
+      new THREE.MeshStandardMaterial({ color: plateColor, metalness: 0.25, roughness: 0.18 }));
     plate.userData.part = 'cover';
     plate.position.z = FACE + 0.03;
     g.add(plate);
@@ -2048,20 +2235,141 @@ export function renderDesigner(container, state, model, hooks = {}) {
       color: 0xffffff, metalness: 0.1, roughness: 0.02, transparent: true, opacity: 0.14,
     }));
     glass.userData.part = 'glass';
+    glass.position.y = screen.position.y;
     glass.position.z = FACE + 0.16;
     g.add(glass);
 
-    // 开孔（屏下摄像头时单孔隐藏于屏幕下）
+    // 按键机键盘 / Home 键（正面实体按键）
+    if (isKp3 || hasHome3) {
+      const keyMat = new THREE.MeshStandardMaterial({
+        color: new THREE.Color(partColor('frame')).offsetHSL(0, 0, 0.055), metalness: 0.15, roughness: 0.5,
+      });
+      if (isKp3) {
+        const kind = d.keypad?.kind || 't9';
+        const style = d.keypad?.style || 'grid';
+        const kwK = clamp(d.keypad?.keyW ?? 1, 0.7, 1.4), khK = clamp(d.keypad?.keyH ?? 1, 0.7, 1.4);
+        const navS = clamp(d.keypad?.navScale ?? 1, 0.7, 1.4), softS = clamp(d.keypad?.softScale ?? 1, 0.7, 1.4);
+        const zT = screen.position.y - sh / 2 - L * 0.02, zB = -L / 2 + L * 0.05;
+        const zoneH = Math.max(3, zT - zB);
+        if (kind === 'qwerty') {
+          const rows = 4, cols = 5, gap = W * 0.012;
+          const kw = Math.min((W * 0.9 - gap * (cols - 1)) / cols, W * 0.2 * kwK), kh = Math.min(zoneH / rows - gap, kw * 0.78 * khK);
+          const kx0 = -(kw * cols + gap * (cols - 1)) / 2, ky0 = zT - (zoneH - (kh * rows + gap * (rows - 1))) / 2;
+          for (let r2 = 0; r2 < rows; r2++) for (let c2 = 0; c2 < cols; c2++) {
+            const key = new THREE.Mesh(new THREE.BoxGeometry(kw, kh, 0.5), keyMat);
+            key.userData.part = 'keys';
+            key.position.set(kx0 + c2 * (kw + gap) + kw / 2, ky0 - r2 * (kh + gap) - kh / 2, FACE + 0.14);
+            g.add(key);
+          }
+        } else {
+          // 导航行：接听 / 导航 / 挂断
+          const navH = Math.min(zoneH * 0.3, W * 0.36 * navS);
+          const nvD = Math.min(W * 0.3 * navS, navH * 1.15);
+          const skW = Math.min(W * 0.26 * softS, (W - nvD) / 2 - W * 0.04), skH = Math.min(navH * 0.52, W * 0.12);
+          const navYOff = (d.keypad?.navY ?? 0), spread = clamp(d.keypad?.navSpread ?? 1, 0.7, 1.5);
+          const skCx = (nvD / 2 + W * 0.02 + skW / 2) * spread;
+          const sk1 = new THREE.Mesh(new THREE.BoxGeometry(skW, skH, 0.5), keyMat);
+          sk1.userData.part = 'keys';
+          sk1.position.set(-skCx, zT - navH / 2 + navYOff, FACE + 0.14);
+          const sk2 = sk1.clone();
+          sk2.position.x = skCx;
+          g.add(sk1, sk2);
+          const navi = new THREE.Mesh(new THREE.CylinderGeometry(nvD / 2, nvD / 2, 0.55, 24), keyMat);
+          navi.userData.part = 'keys';
+          navi.rotation.x = Math.PI / 2;
+          navi.position.set(0, zT - navH / 2 + navYOff, FACE + 0.16);
+          g.add(navi);
+          // 键盘区
+          const kpT = zT - navH - zoneH * 0.035, kpH = Math.max(3, kpT - zB);
+          const rows = 4, cols = 3;
+          if (style === 'full') {
+            const slabW = W * 0.88 * kwK, slabH = Math.min(kpH, W * 1.02 * khK);
+            const slab = new THREE.Mesh(new THREE.BoxGeometry(slabW, slabH, 0.45), keyMat);
+            slab.userData.part = 'keys';
+            slab.position.set(0, kpT - slabH / 2, FACE + 0.12);
+            g.add(slab);
+            const cw = slabW / cols, chh = slabH / rows;
+            // 分隔线：丝印感——细、低对比、浅凹
+            const lineMat = new THREE.MeshStandardMaterial({ color: keyMat.color.clone().multiplyScalar(0.72), metalness: 0.12, roughness: 0.55 });
+            for (let c2 = 1; c2 < cols; c2++) {
+              const ln = new THREE.Mesh(new THREE.BoxGeometry(0.3, slabH - 2.4, 0.06), lineMat);
+              ln.userData.part = 'keys';
+              ln.position.set(-slabW / 2 + c2 * cw, kpT - slabH / 2, FACE + 0.36);
+              g.add(ln);
+            }
+            for (let r2 = 1; r2 < rows; r2++) {
+              const ln = new THREE.Mesh(new THREE.BoxGeometry(slabW - 2.4, 0.3, 0.06), lineMat);
+              ln.userData.part = 'keys';
+              ln.position.set(0, kpT - r2 * chh, FACE + 0.36);
+              g.add(ln);
+            }
+          } else {
+            const gap = W * 0.024;
+            const kw = Math.min((W * 0.82 * kwK - gap * (cols - 1)) / cols, W * 0.32);
+            const kh = Math.min((kpH - gap * (rows - 1)) / rows, kw * 1.3 * khK);
+            const kx0 = -(kw * cols + gap * (cols - 1)) / 2;
+            const ky0 = kpT - Math.max(0, (kpH - (kh * rows + gap * (rows - 1))) / 2);
+            for (let r2 = 0; r2 < rows; r2++) for (let c2 = 0; c2 < cols; c2++) {
+              const key = new THREE.Mesh(new THREE.BoxGeometry(kw, kh, 0.55), keyMat);
+              key.userData.part = 'keys';
+              key.position.set(kx0 + c2 * (kw + gap) + kw / 2, ky0 - r2 * (kh + gap) - kh / 2, FACE + 0.14);
+              g.add(key);
+            }
+          }
+        }
+      }
+      if (hasHome3) {
+        const hy3 = -L / 2 + L * 0.05;
+        if (d.homeStyle === 'pill') {
+          const pw = W * 0.3, ph = Math.max(1.2, L * 0.016);
+          const pill = new THREE.Mesh(new THREE.BoxGeometry(pw, ph, 0.5), keyMat);
+          pill.userData.part = 'keys';
+          pill.position.set(0, hy3, FACE + 0.14);
+          g.add(pill);
+        } else {
+          const hr = Math.min(W * 0.085, L * 0.028);
+          const home = new THREE.Mesh(new THREE.CylinderGeometry(hr, hr, 0.5, 24), keyMat);
+          home.userData.part = 'keys';
+          home.rotation.x = Math.PI / 2;
+          home.position.set(0, hy3, FACE + 0.14);
+          g.add(home);
+        }
+      }
+    }
+
+    // 听筒：宽度/位置可调（w=0 隐藏；y 为屏幕上方偏移 mm）
+    const earBaseY = screen.position.y + sh / 2 + (isKp3 || hasHome3 ? L * 0.024 : Math.max(2.2, L * 0.018));
+    if (d.screen.notch === 'none' || d.screen.notch === 'punch') {
+      const earW = d.earpiece?.w ?? 8;
+      if (earW > 0) {
+        const earY = earBaseY + (d.earpiece?.y ?? 0);
+        const ear = new THREE.Mesh(new THREE.BoxGeometry(earW, 1.1, 0.12),
+          new THREE.MeshStandardMaterial({ color: 0x0a0f14, metalness: 0.3, roughness: 0.5 }));
+        ear.userData.part = 'earpiece';
+        ear.position.set(0, earY, FACE + 0.2);
+        g.add(ear);
+      }
+    }
+
+    // 开孔：全面屏=屏内挖孔；按键机/Home键机=听筒旁额区圆点（前置摄像头在屏外）
     if (d.screen.notch === 'punch' && !d.parts.extras.includes('x_udc')) {
-      const holeFrac = (d.screen.holeX ?? (b.fold !== 'none' ? 25 : 0)) / 100;
-      const hole = new THREE.Mesh(new THREE.CircleGeometry(1.6, 20), new THREE.MeshBasicMaterial({ color: 0x000000 }));
-      hole.userData.part = 'screen';
-      hole.position.set(sw * holeFrac, sh / 2 - 4, FACE + 0.19);
-      g.add(hole);
+      if (tplKp || hasHome3) {
+        const earW2 = d.earpiece?.w ?? 8;
+        const camDot = new THREE.Mesh(new THREE.CircleGeometry(1.3, 18), new THREE.MeshBasicMaterial({ color: 0x0a0f14 }));
+        camDot.userData.part = 'frontcam';
+        camDot.position.set(earW2 / 2 + 3.2, earBaseY + (d.earpiece?.y ?? 0), FACE + 0.2);
+        g.add(camDot);
+      } else {
+        const holeFrac = (d.screen.holeX ?? (b.fold !== 'none' ? 25 : 0)) / 100;
+        const hole = new THREE.Mesh(new THREE.CircleGeometry(1.6, 20), new THREE.MeshBasicMaterial({ color: 0x000000 }));
+        hole.userData.part = 'screen';
+        hole.position.set(sw * holeFrac, screen.position.y + sh / 2 - 4, FACE + 0.19);
+        g.add(hole);
+      }
     } else if (d.screen.notch === 'notch') {
       const notch = new THREE.Mesh(new THREE.PlaneGeometry(Math.min(sw * 0.34, 18), 4.4), new THREE.MeshBasicMaterial({ color: 0x000000 }));
       notch.userData.part = 'screen';
-      notch.position.set(0, sh / 2 - 2.2, FACE + 0.19);
+      notch.position.set(0, screen.position.y + sh / 2 - 2.2, FACE + 0.19);
       g.add(notch);
     }
 
@@ -2098,7 +2406,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
         modGeo.translate(0, 0, -bump); // 挤出向 -z（背面方向）
         const mod = new THREE.Mesh(modGeo, modMat);
         mod.userData.part = 'camera';
-        mod.position.set(rect.cx, rect.cy, -FACE);
+        mod.position.set(-rect.cx, rect.cy, -FACE); // 2D 后视图为镜像参照：3D 背面件 x 取反
         mod.castShadow = true;
         g.add(mod);
         modTopZ = -FACE - bump - 0.3;
@@ -2114,7 +2422,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
         if (l.sensor === 'sn_own') sn = d.parts.ownCmr;
         const look = LENS_LOOK[l.type] || LENS_LOOK.main;
         const lensR = lensRadiusMm(sn ? sn.format : '1/2.4″') * (l.size || 1);
-        const lx = rect.cx + l.x, ly = rect.cy + l.y;
+        const lx = -(rect.cx + l.x), ly = rect.cy + l.y;
         const zBase = modTopZ; // 模组表面（无凸台时=后壳表面）
         // 潜望长焦：浅凸台 + 镜组贴装在凸台面上——外部凸出量与普通镜头接近（真实潜望
         // 结构在机身内部折转光路）；凸台厚度 camera.periT 与方向 periDir 用户可调
@@ -2130,7 +2438,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
           boxGeo.translate(0, 0, -pd);
           const box = new THREE.Mesh(boxGeo, new THREE.MeshStandardMaterial({ color: 0x10151c, metalness: 0.5, roughness: 0.42 }));
           box.userData.part = 'camera';
-          box.position.set(horiz ? lx + lensR * 0.35 : lx, horiz ? ly : ly - lensR * 0.35, zBase + 0.02);
+          box.position.set(horiz ? lx - lensR * 0.35 : lx, horiz ? ly : ly - lensR * 0.35, zBase + 0.02);
           box.castShadow = true;
           g.add(box);
           periShift = pd + 0.08; // 镜组贴装在凸台外表面，金属圈半嵌进台面
@@ -2175,27 +2483,29 @@ export function renderDesigner(container, state, model, hooks = {}) {
       const flHalfW = (flStyle === 'rounded' || flStyle === 'slot') ? Math.max(2, fl.w || 4) / 2 : fr;
       let flashPos;
       if (fl.offDeco) {
-        const fx = rect.cx + mw / 2 + 2.6;
-        flashPos = fx + flHalfW < b.width / 2 - 1 ? [fx, rect.cy - mh * 0.18] : [rect.cx - flHalfW - 0.5, rect.cy - mh / 2 - 2.4];
+        const fx = -(rect.cx + mw / 2 + 2.6);
+        flashPos = -(fx) + flHalfW < b.width / 2 - 1 ? [fx, rect.cy - mh * 0.18] : [-(rect.cx - flHalfW - 0.5), rect.cy - mh / 2 - 2.4];
       } else {
-        flashPos = [rect.cx + clamp(fl.x, -mw / 2, mw / 2), rect.cy + clamp(fl.y, -mh / 2, mh / 2)];
+        // 与 2D 后视图同公式（不钳进装饰板，滑杆 ±20 可到板外机身），只钳进机身防悬空
+        flashPos = [clamp(-(rect.cx + fl.x), -(b.width / 2 - 1.5), b.width / 2 - 1.5),
+                    clamp(rect.cy + fl.y, -(b.length / 2 - 1.5), b.length / 2 - 1.5)];
       }
       const flash = makeFlashMesh(fl);
-      // deco 内的闪光灯必须贴在凸台表面（deco 板凸出至 modTopZ，贴 -FACE 会被板埋住）
-      flash.position.set(flashPos[0], flashPos[1], stepOn ? modTopZ - 0.02 : -FACE);
+      // deco 内的闪光灯贴凸台表面；offDeco（板外机身上）必须落回后壳，否则悬空 bump 高度
+      flash.position.set(flashPos[0], flashPos[1], stepOn && !fl.offDeco ? modTopZ - 0.02 : -FACE);
       g.add(flash);
       if (flStyle === 'round') { // 圆形保留装饰圈；矩形/槽形/环形自身即造型
         const flashRing = new THREE.Mesh(new THREE.TorusGeometry(fr + 0.1, 0.22, 6, 18), new THREE.MeshStandardMaterial({ color: 0xaebccd, metalness: 1, roughness: 0.22 }));
         flashRing.userData.part = 'camera';
-        flashRing.position.set(flashPos[0], flashPos[1], stepOn ? modTopZ - 0.07 : -FACE - 0.05);
+        flashRing.position.set(flashPos[0], flashPos[1], stepOn && !fl.offDeco ? modTopZ - 0.07 : -FACE - 0.05);
         g.add(flashRing);
       }
     }
 
-    // 侧键（按 body.buttons 样式；圆角矩形键身，纵向位置可调；
+    // 侧键（按 body.buttons 样式；1998 前无侧键；圆角矩形键身，纵向位置可调；
     // strip 槽型 / hidden 压感不渲染凸起）
     const btnMat = new THREE.MeshStandardMaterial({ color: color.clone().multiplyScalar(0.7), metalness: 0.85, roughness: 0.35 });
-    const btnStyle = b.buttons || 'classic';
+    const btnStyle = (year < 1998 && (b.buttons || 'classic') !== 'none') ? 'none' : (b.buttons || 'classic');
     if (d.screen.notch === 'popup') {
       const module = new THREE.Mesh(new THREE.BoxGeometry(9, 3.2, 3.4),
         new THREE.MeshStandardMaterial({ color: color.clone().multiplyScalar(0.9), metalness: 0.6, roughness: 0.35 }));
@@ -2393,7 +2703,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
           }));
       logoMesh.userData.part = 'logo';
       logoMesh.rotation.y = Math.PI;
-      logoMesh.position.set(br.logoX, br.logoY, BACKZ);
+      logoMesh.position.set(-br.logoX, br.logoY, BACKZ);
       g.add(logoMesh);
     }
     if (d.brandText) {
@@ -2415,7 +2725,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
         const txtMesh = new THREE.Mesh(new THREE.PlaneGeometry(tw2, th), new THREE.MeshBasicMaterial({ map: ttex, transparent: true, opacity: 0.9 }));
         txtMesh.userData.part = 'logo';
         txtMesh.rotation.y = Math.PI;
-        txtMesh.position.set(br.textX, br.textY, BACKZ);
+        txtMesh.position.set(-br.textX, br.textY, BACKZ);
         g.add(txtMesh);
       }
     }
@@ -2770,6 +3080,29 @@ export function renderDesigner(container, state, model, hooks = {}) {
     rg.addColorStop(1, 'rgba(0,0,0,0)');
     ctx.fillStyle = rg; ctx.fillRect(0, 0, Wc, Hc);
 
+    // 按键机：功能机样式屏幕（信号 + 运营商 + 时间 + 菜单/名字）
+    const tplW = PHONE_TPL_MAP[model.design.template] || PHONE_TPL_MAP.full_screen;
+    if (tplW.keypad[0] !== 'none' && (model.design.keypad?.kind || 't9') !== 'none') {
+      ctx.fillStyle = '#0d1520'; ctx.fillRect(0, 0, Wc, Hc);
+      // 顶部信号 + 电量
+      ctx.fillStyle = 'rgba(235,240,246,.9)';
+      for (let i = 0; i < 4; i++) ctx.fillRect(18 + i * 9, 16 - i * 3, 5, 8 + i * 3);
+      ctx.fillRect(Wc - 40, 14, 22, 11);
+      ctx.fillStyle = '#0d1520'; ctx.fillRect(Wc - 38, 16, 14, 7);
+      ctx.fillStyle = 'rgba(235,240,246,.9)';
+      ctx.font = '600 20px sans-serif'; ctx.textAlign = 'center';
+      const brand = state.company.name || 'Mobile';
+      ctx.fillText(brand, Wc / 2, 74);
+      ctx.font = '500 30px sans-serif';
+      ctx.fillText('12:38', Wc / 2, 128);
+      ctx.font = '400 15px sans-serif';
+      ctx.fillStyle = 'rgba(235,240,246,.55)';
+      ctx.fillText('菜单', Wc / 2 - 70, Hc - 40);
+      ctx.fillText('名字', Wc / 2 + 70, Hc - 40);
+      const tex2 = new THREE.CanvasTexture(c);
+      tex2.colorSpace = THREE.SRGBColorSpace;
+      return tex2;
+    }
     // 状态栏
     ctx.fillStyle = 'rgba(255,255,255,.86)';
     ctx.font = '600 15px -apple-system, "Segoe UI", sans-serif';
@@ -2895,10 +3228,68 @@ export function renderDesigner(container, state, model, hooks = {}) {
   function applyValue(key, v, { fromInput } = {}) {
     const d = model.design;
     const prevFold = d.body.fold;
+    const prevTpl = d.template;
     if (key.startsWith('body.ports') && !d.body.ports) d.body.ports = { dualSpeaker: false, topMic: false, charge: 'typec' };
     if (key.startsWith('body.colors') && !d.body.colors) d.body.colors = { frame: d.body.color, back: d.body.color, cover: '#05070a' };
     if (key.startsWith('branding')) ensureBranding(d);
+    if (key.startsWith('keypad.') && !d.keypad) d.keypad = { kind: 't9' };
+    // 模板切换：机身/屏幕/圆角/开孔/键盘/Home/折叠 全套自动适配到该世代预设
+    if (key === 'template' && v !== prevTpl) {
+      d.template = v; // 先落模板，maxScreenInch 的年代上限才能用新模板
+      const T = tplCaps(PHONE_TPL_MAP[v] || PHONE_TPL_MAP.full_screen, availYear);
+      // 机身：该世代典型尺寸
+      if (T.body) {
+        d.body.length = T.body.length; d.body.width = T.body.width;
+        d.body.thickness = T.body.thickness; d.body.corner = T.body.corner;
+        for (const k of ['body.length', 'body.width', 'body.thickness', 'body.corner']) syncSliderUI(k, d.body[k.split('.')[1]]);
+      }
+      // 屏幕：比例取世代默认 → 尺寸取预设（受年代上限约束，折叠机内屏再受机身足迹约束）
+      d.screen.aspect = T.screen.aspects[0];
+      if (d.screen.aspect === '自由') d.screen.aspectV = clamp(d.screen.aspectV || 2, 0.5, 2.6);
+      if (T.screen.presetBezel) { d.screen.bezel = T.screen.presetBezel; syncSliderUI('screen.bezel', d.screen.bezel); }
+      const fitInch = maxScreenInch(d);
+      d.screen.inch = Math.min(T.screen.presetInch ?? T.screen.maxInch, T.screen.maxInch, fitInch);
+      syncSliderUI('screen.inch', d.screen.inch);
+      d.screen.corner = Math.min(d.screen.corner || 0, T.screen.cornerMax);
+      syncSliderUI('screen.corner', d.screen.corner);
+      if (!T.notch.includes(d.screen.notch)) d.screen.notch = T.notch[0] || 'none';
+      d.keypad = d.keypad || { kind: 't9', style: 'grid', scale: 1 };
+      d.keypad.kind = T.keypad.includes(d.keypad.kind) ? d.keypad.kind : (T.keypad.includes('none') ? 'none' : T.keypad[0]);
+      d.keypad.style = ['grid', 'full'].includes(d.keypad.style) ? d.keypad.style : 'grid';
+      d.homeStyle = T.home ? (T.home.includes(d.homeStyle) ? d.homeStyle : T.home[0]) : '';
+      if (!T.fold && d.body.fold !== 'none') d.body.fold = 'none';
+      // 镜头按世代收敛：类型年份锁 + 数量上限 + deco 重排
+      const lensCap = { bar_keypad: 1, touch_keypad: 1, touch_full: 2, full_screen: 5 }[v] ?? 5;
+
+      d.camera.lenses = (d.camera.lenses || []).filter((l) => (LENS_TYPES.find((t) => t.id === l.type)?.year ?? 1980) <= year);
+      if (d.camera.lenses.length > lensCap) d.camera.lenses = d.camera.lenses.slice(0, lensCap);
+      if (!d.camera.lenses.length) d.camera.lenses = [makeLens('main', year, unlocked)];
+      arrangeLenses(d.camera);
+      const dn = d.camera.lenses.length;
+      d.camera.deco.w = dn >= 3 ? 20 : 16;
+      d.camera.deco.h = Math.max(16, dn * 14 + 4);
+      syncSliderUI('camera.deco.w', d.camera.deco.w);
+      syncSliderUI('camera.deco.h', d.camera.deco.h);
+      // Logo/文字坐标收回新机身范围
+      ensureBranding(d);
+      const bd = d.branding;
+      const bx = Math.max(2, d.body.width / 2 - 3), by = Math.max(2, d.body.length / 2 - 3);
+      for (const k of ['logoX', 'textX']) bd[k] = clamp(bd[k] || 0, -bx, bx);
+      for (const k of ['logoY', 'textY']) bd[k] = clamp(bd[k] || 0, -by, by);
+      syncSliderUI('branding.textX', bd.textX);
+    }
+    // 折叠形态仅全面屏世代可用
+    if (key === 'body.fold' && v !== 'none' && !(PHONE_TPL_MAP[d.template] || PHONE_TPL_MAP.full_screen).fold) {
+      setPath(d, 'body.fold', prevFold);
+      hooks.onToast?.('该形态世代不支持折叠结构', 'warn');
+      return;
+    }
     if (key.startsWith('variants') && !Array.isArray(d.variants)) d.variants = [];
+    if (key.startsWith('earpiece.')) d.earpiece = d.earpiece || { w: 8, y: 0 };
+    if (key === 'body.buttons' && v !== 'none' && !(PHONE_TPL_MAP[d.template] || PHONE_TPL_MAP.full_screen).fold) {
+      const yr = { classic: 1998, strip: 2002, split: 2008, opposite: 2006, hidden: 2018 }[v] ?? 1980;
+      if (year < yr) { setPath(d, 'body.buttons', 'none'); hooks.onToast?.(`侧键 ${yr} 年后才出现`, 'warn'); return; }
+    }
     setPath(d, key, v);
     // 换面板供应商时校验发光材料世代归属，失效则回退标准材料
     if (key === 'screen.panelVendor') {
@@ -2974,12 +3365,20 @@ export function renderDesigner(container, state, model, hooks = {}) {
       }
     }
     if (!fromInput) syncSliderUI(key, v);
+    if (key.startsWith('keypad.') && d.keypad) {
+      const kk = key.split('.')[1];
+      if (['keyW', 'keyH', 'navScale', 'softScale', 'scale'].includes(kk)) d.keypad[kk] = clamp(Number(v) || 1, 0.7, 1.4);
+      if (kk === 'navSpread') d.keypad.navSpread = clamp(Number(v) || 1, 0.7, 1.5);
+      if (kk === 'navY') d.keypad.navY = clamp(Number(v) || 0, -6, 10);
+    }
+    if (key === 'earpiece.w') { d.earpiece = d.earpiece || {}; d.earpiece.w = clamp(Number(v) || 8, 0, 16); }
+    if (key === 'earpiece.y') { d.earpiece = d.earpiece || {}; d.earpiece.y = clamp(Number(v) || 0, -8, 24); }
     else if (key !== 'screen.inch') { /* 输入源控件保持用户输入 */ }
     // 比例预设切到「自由」时需重建控件，出现长宽比滑杆；充电口切自定义时出现形状编辑；
     // 折叠结构/外屏开关切换时出现外屏编辑组；闪光灯样式切换时出现宽/长或大小滑杆；
     // 勾选背面 Logo/文字时出现位置、颜色与材质编辑；开孔样式切单孔时出现挖孔位置滑杆
     if (key === 'camera.layout') arrangeLenses(d.camera); // 切换镜头布局模式时半径感知重排
-    if (key === 'screen.aspect' || key === 'screen.panelVendor' || key === 'body.ports.charge' || key === 'body.ports.micStyle' || key === 'body.fold' || key === 'camera.flash.style' || key === 'logoOnBack' || key === 'brandText' || key === 'body.coverOn' || key === 'screen.notch' || key === 'body.coverScreen.notch'
+    if (key === 'template' || key === 'screen.aspect' || key === 'screen.panelVendor' || key === 'body.ports.charge' || key === 'body.ports.micStyle' || key === 'body.fold' || key === 'camera.flash.style' || key === 'logoOnBack' || key === 'brandText' || key === 'body.coverOn' || key === 'screen.notch' || key === 'body.coverScreen.notch'
       || (key.startsWith('camera.lenses.') && key.endsWith('.type'))) { // 镜头类型切换时出现潜望凸台厚度/方向控件
       renderControls();
       syncFoldToggle();
@@ -3161,6 +3560,13 @@ export function renderDesigner(container, state, model, hooks = {}) {
       if (viewMode === '2d') draw2D(); else buildPhone();
       return;
     }
+    const lensFoldBtn = e.target.closest('[data-lens-fold]');
+    if (lensFoldBtn) {
+      const fi = Number(lensFoldBtn.dataset.lensFold);
+      if (lensFolded.has(fi)) lensFolded.delete(fi); else lensFolded.add(fi);
+      renderControls();
+      return;
+    }
     const lensDel = e.target.closest('[data-lens-del]');
     if (lensDel) {
       e.preventDefault();
@@ -3253,7 +3659,19 @@ export function renderDesigner(container, state, model, hooks = {}) {
       return;
     }
     if (e.target.closest('#dz-reset')) {
+      const btn = e.target.closest('#dz-reset');
+      if (btn.dataset.arm !== '1') {
+        btn.dataset.arm = '1';
+        btn.textContent = '确认重置？';
+        btn.classList.add('danger');
+        setTimeout(() => { btn.dataset.arm = ''; btn.textContent = '重置'; btn.classList.remove('danger'); }, 3000);
+        return;
+      }
+      btn.dataset.arm = '';
+      btn.textContent = '重置';
+      btn.classList.remove('danger');
       model.design = defaultDesign(year, unlocked);
+      lensFolded.clear();
       refresh(true);
       return;
     }

@@ -45,7 +45,7 @@ async function main() {
   await send('Page.reload'); await sleep(1400);
   errors.length = 0; logs.length = 0;
 
-  await ev("document.querySelector('[data-mode=career]').click()"); await sleep(200);
+  await ev("[...document.querySelectorAll('.menu-item')].find(x=>x.textContent.includes('经营模式')).click()"); await sleep(200);
   await ev("(()=>{const y=document.querySelector('#f-year');y.value='2010';y.dispatchEvent(new Event('change'));document.querySelector('#f-name').value='启明科技';return y.value})()");
   await shot('00-config');
   await ev("document.querySelector('#start').click()"); await sleep(800);
@@ -148,8 +148,9 @@ async function main() {
   await shot('13-tech');
 
   // 设置页
-  await ev("document.querySelector('[data-tab=settings]').click()"); await sleep(300);
-  await shot('14-settings');
+  await ev("document.querySelector('[data-act=open-gamemenu]').click()"); await sleep(300);
+  await shot('14-gamemenu');
+  await ev("document.querySelector('.modal-mask [data-close]').click()"); await sleep(200);
 
   const state = await ev("(()=>{const s=JSON.parse(localStorage.getItem('mm_autosave')||'null'); if(!s)return null; return {cash:Math.round(s.company.cash), brand:+s.company.brand.toFixed(1), models:s.models.map(m=>({name:m.name,status:m.status,sold:m.sold,rev:Math.round(m.revenue)})), hist:s.history.slice(-3)}})()");
   console.log('state:', JSON.stringify(state));

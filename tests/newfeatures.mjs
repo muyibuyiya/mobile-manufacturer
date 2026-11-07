@@ -44,7 +44,7 @@ async function main() {
   errors.length = 0;
 
   // 沙盒开局 2020
-  await ev("document.querySelector('[data-mode=sandbox]').click()"); await sleep(300);
+  await ev("[...document.querySelectorAll('.menu-item')].find(x=>x.textContent.includes('沙盒模式')).click()"); await sleep(300);
   await ev("(()=>{const y=document.querySelector('#f-year');y.value='2020';y.dispatchEvent(new Event('change'));document.querySelector('#f-name').value='启明科技';return true})()");
   await ev("document.querySelector('#start').click()"); await sleep(900);
   console.log('mounted:', await ev("!!document.querySelector('.game')"));

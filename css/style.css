@@ -181,13 +181,28 @@ div.field > span:first-child { display: block; font-size: 11.5px; color: var(--m
 }
 .menu-inner { position: relative; z-index: 1; margin: auto; width: min(1040px, 92vw); padding: 40px 0; }
 .logo-mark {
-  width: 54px; height: 54px; border-radius: 14px; display: grid; place-items: center;
-  background: linear-gradient(145deg, #4aa3ff, #2b6fd0); color: #04121f; font-weight: 800; font-size: 26px;
+  width: 54px; height: 54px; border-radius: 14px; overflow: hidden;
   box-shadow: 0 8px 24px rgba(74,163,255,.35);
 }
-.game-title { font-size: 44px; font-weight: 750; letter-spacing: -1.5px; margin: 18px 0 6px; }
+.logo-mark svg { display: block; width: 100%; height: 100%; }
+.game-title { font-size: clamp(40px, 2.6vw, 62px); font-weight: 750; letter-spacing: -1.5px; margin: 18px 0 6px; }
 .game-sub { color: var(--muted); font-size: 14px; letter-spacing: 2px; }
 .menu-cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; margin-top: 32px; }
+
+/* 主菜单垂直导航（v1.4 改版） */
+.menu-list { display: flex; flex-direction: column; gap: clamp(10px, 0.5vw + 4px, 16px); margin-top: clamp(30px, 2.2vw, 52px); width: min(clamp(420px, 23vw, 560px), 100%); }
+.menu-item {
+  display: flex; align-items: center; gap: 12px;
+  padding: clamp(13px, 0.55vw + 6px, 19px) clamp(16px, 0.9vw + 6px, 24px);
+  border: 1px solid var(--border); border-radius: 10px; background: rgba(255,255,255,.02);
+  cursor: pointer; font-size: clamp(15.5px, 0.5vw + 8px, 19px); font-weight: 650; letter-spacing: 1px;
+  transition: border-color .15s, background .15s, transform .15s;
+}
+.menu-foot { margin-top: clamp(16px, 1.2vw, 30px); color: var(--dim); font-size: 12px; letter-spacing: .4px; }
+.menu-item:hover { border-color: var(--accent); background: rgba(74,163,255,.08); transform: translateX(5px); }
+.menu-item:hover .mi-arrow { color: var(--accent); }
+.menu-item .mi-ico { font-size: 17px; }
+.menu-item .mi-arrow { margin-left: auto; color: var(--dim); font-size: 13px; }
 .mode-card {
   background: linear-gradient(160deg, #171e29, #12171f); border: 1px solid var(--line);
   border-radius: 14px; padding: 20px; cursor: pointer; transition: all .18s;
@@ -227,6 +242,13 @@ div.field > span:first-child { display: block; font-size: 11.5px; color: var(--m
   color: var(--muted); cursor: pointer; font-size: 13px; transition: all .12s; user-select: none;
 }
 .nav-item:hover { background: #1a2029; color: var(--text); }
+/* 侧边栏折叠（v1.4）：窄图标栏，偏好存 localStorage */
+.layout.sb-collapsed { grid-template-columns: 54px 1fr; }
+.sidebar.collapsed { padding: 10px 5px; }
+.sidebar.collapsed .nav-item { justify-content: center; padding: 9px 0; gap: 0; }
+.sidebar.collapsed .nav-item .txt, .sidebar.collapsed .nav-item .badge-dot { display: none; }
+.sidebar.collapsed .nav-sep { margin: 8px 2px; }
+.sb-toggle .ico { font-size: 15px; font-weight: 700; }
 .nav-item.on { background: rgba(74,163,255,.12); color: var(--accent); font-weight: 600; }
 .nav-item .ico { width: 16px; text-align: center; opacity: .9; }
 .nav-item .badge-dot { margin-left: auto; width: 6px; height: 6px; border-radius: 50%; background: var(--warn); }

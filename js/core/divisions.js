@@ -141,25 +141,36 @@ export function osTechBonuses(state) {
     if (!t || !t.effect) continue;
     for (const [k, v] of Object.entries(t.effect)) out[k] = (out[k] || 0) + v;
   }
-  const route = OS_ROUTE_MAP[state.osTech && state.osTech.route];
-  if (route) for (const [k, v] of Object.entries(route.effect || {})) out[k] = (out[k] || 0) + v;
+  for (const rid of osRoutesOf(state)) {
+    const route = OS_ROUTE_MAP[rid];
+    if (route) for (const [k, v] of Object.entries(route.effect || {})) out[k] = (out[k] || 0) + v;
+  }
   return out;
 }
 
-// 选定系统路线：三选一，一经选定不可更换
+// 系统路线：按世代迭代解锁（链式前置），已迭代世代加成永久叠加
+export function osRoutesOf(state) {
+  const ot = state.osTech;
+  if (!ot) return [];
+  if (Array.isArray(ot.routes)) return ot.routes;
+  return ot.route ? [ot.route] : []; // 老档迁移：单选 route → 数组
+}
+
 export function chooseOsRoute(state, id) {
   const r = OS_ROUTE_MAP[id];
   if (!r) return { ok: false, msg: '未知路线' };
   const ot = state.osTech;
-  if (ot.route === id) return { ok: false, msg: '已是当前路线' };
-  if (ot.route) return { ok: false, msg: `已选定「${OS_ROUTE_MAP[ot.route].name}」路线，互斥不可更换` };
+  const routes = osRoutesOf(state);
+  if (routes.includes(id)) return { ok: false, msg: '该世代已迭代' };
+  if (r.prev && !routes.includes(r.prev)) return { ok: false, msg: `需先迭代「${OS_ROUTE_MAP[r.prev].name}」` };
   if (r.year > state.date.year) return { ok: false, msg: `${r.name} 需要 ${r.year} 年及以后` };
   if ((state.divisions?.osd?.level || 0) < r.osdLv) return { ok: false, msg: `需要系统开发部 Lv.${r.osdLv}` };
   if (state.company.cash < r.cost) return { ok: false, msg: '资金不足' };
   state.company.cash -= r.cost;
-  ot.route = id;
-  addLog(state, 'tech', `自研系统选定「${r.name}」技术路线（${r.year} 年可用性）。`);
-  return { ok: true, msg: `技术路线已定为「${r.name}」` };
+  ot.routes = routes.concat(id);
+  delete ot.route;
+  addLog(state, 'tech', `自研系统迭代至「${r.name}」世代。`);
+  return { ok: true, msg: `系统已迭代至「${r.name}」` };
 }
 
 export function toggleOsLicense(state) {
@@ -425,6 +436,14 @@ export function ownPanelSpec(state) {
 // 月度推进：升级研发进度 + 维护费 + 对外供货收入 + OS 流行度演化
 export function stepDivisions(state, report) {
   const divs = ensureDivisions(state);
+  if (state.sandboxInstant?.research) {
+    for (const id of DIVISION_IDS) {
+      const dv = divs[id];
+      if (dv?.proj) dv.proj.progress = dv.proj.work;
+      for (const pr of dv?.products || []) if (pr.status === 'designing') pr.monthsLeft = 0.01;
+    }
+    if (state.osTech?.proj) state.osTech.proj.monthsLeft = 0.01;
+  }
   let upkeep = 0, supply = 0;
   const era = eraFactor(state.date.year);
   // 研发速度： rnd 部门人力 × 品牌系数，跨部门共享
@@ -477,7 +496,7 @@ export function stepDivisions(state, report) {
   const ot = state.osTech;
   if (ot && ot.proj) {
     const swPower = Math.max(0.3, staffPowerRef(state, 'sw'));
-    const rate = clamp(swPower * 8, 3, 25) * (state.osTech && state.osTech.route === 'light' ? 1.15 : 1);
+    const rate = clamp(swPower * 8, 3, 25) * (osRoutesOf(state).includes('light') ? 1.15 : 1);
     ot.proj.monthsLeft -= Math.max(0.3, rate / 12);
     if (ot.proj.monthsLeft <= 0) {
       const t = OS_TECH_MAP[ot.proj.id];

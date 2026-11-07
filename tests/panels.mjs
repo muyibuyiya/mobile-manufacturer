@@ -35,10 +35,10 @@ async function main() {
   };
 
   await ev("localStorage.clear()");
-  await ev("document.querySelector('[data-mode=sandbox]').click()"); await sleep(250);
+  await ev("[...document.querySelectorAll('.menu-item')].find(x=>x.textContent.includes('沙盒模式')).click()"); await sleep(250);
   await ev("document.querySelector('#start').click()"); await sleep(900);
 
-  const pages = ['company', 'settings', 'overview', 'market', 'supply', 'finance'];
+  const pages = ['company', 'overview', 'market', 'supply', 'finance'];
   for (const p of pages) {
     await ev(`document.querySelector('[data-tab=${p}]').click()`); await sleep(650);
     await shot(p);

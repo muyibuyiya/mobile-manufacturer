@@ -62,7 +62,7 @@ async function main() {
   await shot('01-menu');
 
   // 进入经营模式
-  await ev("document.querySelector('[data-mode=career]').click()");
+  await ev("[...document.querySelectorAll('.menu-item')].find(x=>x.textContent.includes('经营模式')).click()");
   await sleep(300);
   console.log('config form:', await ev("!!document.querySelector('#f-name')"));
   await shot('02-config');
