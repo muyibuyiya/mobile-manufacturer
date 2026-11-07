@@ -34,7 +34,8 @@ async function main() {
   await ev("document.querySelector('#start').click()"); await sleep(700);
   for (let i = 0; i < 6; i++) { await ev("document.querySelector('[data-act=advance]').click()"); await sleep(60); }
   await sleep(300);
-  const before = await ev("(()=>{const s=JSON.parse(localStorage.getItem('mm_autosave'));return {cash:Math.round(s.company.cash),date:s.date,emp:s.employees.length}})()");
+  await sleep(2300);
+  const before = await ev("(()=>{const s=JSON.parse(localStorage.getItem('mobile_manufacturer_save_v5_auto')||localStorage.getItem('mm_autosave'));return {cash:Math.round(s.company.cash),date:s.date,emp:s.employees.length}})()");
 
   // 保存到槽位 1
   await ev("document.querySelector('[data-act=open-gamemenu]').click()"); await sleep(300);
@@ -48,7 +49,7 @@ async function main() {
   await ev("[...document.querySelectorAll('.menu-item')].find(x=>x.textContent.includes('存档')).click()"); await sleep(400);
   const loaded = await ev("(()=>{const b=document.querySelector('[data-slot=\"1\"]');if(!b)return 'no-slot';if(b.disabled)return 'disabled';b.click();return 'clicked'})()");
   await sleep(700);
-  const after = await ev("(()=>{const s=JSON.parse(localStorage.getItem('mm_autosave'));return {cash:Math.round(s.company.cash),date:s.date,emp:s.employees.length,tab:!!document.querySelector('.game')}})()");
+  const after = await ev("(()=>{const s=JSON.parse(localStorage.getItem('mobile_manufacturer_save_v5_auto')||localStorage.getItem('mm_autosave'));return {cash:Math.round(s.company.cash),date:s.date,emp:s.employees.length,tab:!!document.querySelector('.game')}})()");
 
   console.log('before :', JSON.stringify(before));
   console.log('savebtn:', saved, '| keys:', hasSave);
@@ -77,8 +78,8 @@ async function main() {
   // 顶栏直接反映内存中的当前状态，比 mm_autosave（按月结算才写）更可靠
   const legacyTop = await ev("document.querySelector('#topbar').textContent.replace(/\\s+/g,' ').trim()");
   // 推进一个月触发自动存档，再校验迁移后的结构是否补齐
-  await ev("document.querySelector('[data-act=advance]').click()"); await sleep(600);
-  const legacyAfter = await ev("(()=>{const s=JSON.parse(localStorage.getItem('mm_autosave'));return {cash:Math.round(s.company.cash),ver:s.version,plots:(s.campus?.plots||[]).length,comps:Object.keys(s.supply?.stock||{}).length,train:'training' in (s.employees[0]||{}),org:!!s.org&&!!s.capital,lineup:s.models.map(m=>m.lineup).join(','),feedback:typeof s.feedback!=='undefined'}})()");
+  await ev("document.querySelector('[data-act=advance]').click()"); await sleep(2400);
+  const legacyAfter = await ev("(()=>{const s=JSON.parse(localStorage.getItem('mobile_manufacturer_save_v5_auto')||localStorage.getItem('mm_autosave'));return {cash:Math.round(s.company.cash),ver:s.version,plots:(s.campus?.plots||[]).length,comps:Object.keys(s.supply?.stock||{}).length,train:'training' in (s.employees[0]||{}),org:!!s.org&&!!s.capital,lineup:s.models.map(m=>m.lineup).join(','),feedback:typeof s.feedback!=='undefined'}})()");
 
   console.log('legacy :', legacy, '| pick:', legacyPick, '| top:', legacyTop);
   console.log('after  :', JSON.stringify(legacyAfter));

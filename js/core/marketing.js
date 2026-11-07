@@ -31,7 +31,7 @@ export function setChannel(state, id, amount) {
 
 // 某渠道对本公司在售机型的匹配度 0.6~1.35：受众画像 vs 在售产品线
 export function channelFit(state, ch) {
-  const lineups = new Set(state.models.filter((p) => p.status === 'production').map((p) => p.lineup || 'main'));
+  const lineups = new Set(state.models.filter((p) => p.status === 'production' && p.released !== false).map((p) => p.lineup || 'main'));
   const demo = DEMO_LINEUP[ch.demo] || [];
   const hit = demo.filter((l) => lineups.has(l)).length;
   if (hit === 0) return 0.72;              // 完全错位

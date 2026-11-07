@@ -10,6 +10,7 @@ import {
   IMAGE_SENSORS, LENS_TYPES, CPU_CORES, GPU_ARCHS, OS_BASES, PANEL_VENDORS, RES_TIERS,
 } from '../js/data/hardware.js';
 import { CPU_DB } from '../js/data/cpu-db.js';
+import { COMPETITORS, RIVAL_SIGNATURES, RIVAL_SIGNATURE_MAP } from '../js/data/world.js';
 import { defaultDesign, eraAvailability, validate } from '../js/core/design.js';
 
 let bad = 0;
@@ -67,6 +68,14 @@ for (const lt of LENS_TYPES) {
   const role = lt.id === 'periscope' ? '潜望' : lt.name;
   const n = IMAGE_SENSORS.filter((s) => (s.roles || []).includes(role)).length;
   check(`镜头「${lt.name}」有可用传感器`, n > 0, `${n} 款`);
+}
+
+// 竞品招牌能力覆盖
+{
+  const missing = COMPETITORS.filter((c) => !RIVAL_SIGNATURE_MAP[c.id]);
+  check('16 家竞品均有招牌能力', missing.length === 0, missing.map((c) => c.id).join(','));
+  const badSig = COMPETITORS.filter((c) => !RIVAL_SIGNATURES[RIVAL_SIGNATURE_MAP[c.id]]);
+  check('招牌能力定义存在', badSig.length === 0, badSig.map((c) => c.id).join(','));
 }
 
 // ---------- 年代硬锁 ----------

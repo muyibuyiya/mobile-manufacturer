@@ -121,12 +121,50 @@ async function main() {
   check('定价猜谜出现 3 个候选', (await ev("document.querySelectorAll('[data-guess]').length")) === 3);
   await shot('05-stage-guess');
   await ev("document.querySelector('[data-guess]').click()");
+  await sleep(300);
+  check('卖点选择出现 4 项', (await ev("document.querySelectorAll('[data-pitch]').length")) === 4);
+  await ev("document.querySelector('[data-pitch]').click()");
   await sleep(400);
   check('现场评分结果出现', (await ev("document.querySelector('.stage-result')?.textContent.includes('需求系数')")) === true);
   await shot('06-stage-result');
   await ev("document.querySelector('#stage-done').click()");
   await sleep(400);
   check('发布会结束弹窗关闭', (await ev("document.querySelectorAll('.modal-mask').length")) === 0);
+  check('发布后无待发布机型', (await ev("document.querySelector('[data-act=open-stage]')?.disabled === true")) === true);
+
+  // 6. 多机同场发布会：克隆两台新机 → 量产 → 一场发布会同时发布
+  for (let i = 0; i < 2; i++) {
+    await ev("document.querySelector('[data-tab=product]').click()");
+    await sleep(250);
+    await ev("document.querySelector('[data-act=clone-model]').click()");
+    await sleep(400);
+    const launched = await ev("(()=>{const b=[...document.querySelectorAll('[data-act=launch]')].pop(); if(!b)return 'none'; const d=b.disabled; b.click(); return d?'disabled':'ok'})()");
+    if (launched !== 'ok') console.log('clone launch:', launched);
+    await sleep(500);
+  }
+  await ev("document.querySelector('[data-tab=market]').click()");
+  await sleep(350);
+  const pendingText = await ev("document.querySelector('[data-act=open-stage]')?.textContent || ''");
+  check('两台新机进入待发布', pendingText.includes('2 款'), pendingText);
+  await ev("document.querySelector('[data-act=open-stage]').click()");
+  await sleep(1400);
+  check('发布会列表可选 2 款', (await ev("document.querySelectorAll('[data-release]').length")) === 2);
+  const cost0 = await ev("document.querySelector('#stage-cost').textContent");
+  await ev("document.querySelectorAll('[data-release]')[1].click()");
+  await sleep(300);
+  const cost1 = await ev("document.querySelector('#stage-cost').textContent");
+  check('多机同场费用上调', cost0 !== cost1, `${cost0} -> ${cost1}`);
+  await ev("document.querySelector('#stage-start').click()");
+  await sleep(250);
+  await ev("document.querySelector('[data-guess]').click()");
+  await sleep(250);
+  await ev("document.querySelector('[data-pitch]').click()");
+  await sleep(400);
+  check('多机发布会结果含发布 2 款', (await ev("document.querySelector('.stage-result')?.textContent.includes('本次发布') && document.querySelector('.stage-result')?.textContent.includes('2')")) === true);
+  await shot('07-stage-multi');
+  await ev("document.querySelector('#stage-done').click()");
+  await sleep(400);
+  check('多机发布后全部清空待发布', (await ev("document.querySelector('[data-act=open-stage]')?.disabled === true")) === true);
 
   console.log(`\nUI: ${pass} 通过 / ${fail} 失败`);
   console.log('errors:', errors.length ? errors.join(' | ') : 'none');

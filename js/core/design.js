@@ -937,6 +937,7 @@ export function newModel(year, unlocked, name = '新机型') {
     design: defaultDesign(year, unlocked),
     status: 'draft',
     launched: null,
+    released: false,
     lineup: 'main',
     price: {},
     inventory: 0,

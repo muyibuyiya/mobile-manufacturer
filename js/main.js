@@ -1,5 +1,5 @@
 // 启动器：主菜单、开局配置、读档、进入游戏
-import { createGame, saveSlots, loadGame, GENES, autoSave, peekAutoSave, GAME_VERSION, exportSave, importSave } from './core/state.js';
+import { createGame, saveSlots, loadGame, GENES, autoSave, flushAutoSave, peekAutoSave, GAME_VERSION, exportSave, importSave } from './core/state.js';
 import { ERAS, COUNTRIES } from './data/world.js';
 import { renderGame } from './ui/app.js';
 import { sfx, unlockAudio, startAmbient, audioEnabled, setAudioEnabled, audioVolume, setAudioVolume } from './core/audio.js';
@@ -658,8 +658,12 @@ function about() {
 }
 
 function enter(state) {
-  // 刷新/关闭前兜底自动存档
-  window.addEventListener('beforeunload', () => autoSave(state), { once: true });
+  // 开局/读档立即镜像到自动槽，避免 debounce 期间刷新丢档
+  autoSave(state);
+  // 刷新/关闭前兜底自动存档：先冲刷 debounce 队列，再写一次最新状态
+  const flush = () => { flushAutoSave(); autoSave(state); };
+  window.addEventListener('beforeunload', flush, { once: true });
+  window.addEventListener('pagehide', flush, { once: true });
   current = renderGame(root, state, {
     onExit: menu,
     onToast: toast,

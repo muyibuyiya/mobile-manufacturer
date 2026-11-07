@@ -22,6 +22,7 @@ import { stepCapital } from './capital.js';
 import {
   processCapMul, processCostMul, processQualityBonus, automationUpkeep, automationLaborCut, ensureProduction,
 } from './production.js';
+import { compactAll } from './history.js';
 
 export function activeMul(state, key) {
   let mul = 1;
@@ -288,15 +289,15 @@ export function tick(state) {
     })),
   });
   if (state.compHistory.length > 480) state.compHistory.shift();
+  // 近 12 月明细 + 更早季度归档（v1.6.0）
+  compactAll(state);
 
   // 11. 时间推进
   const m = state.date.month + 1;
   state.date = { year: state.date.year + Math.floor(m / 12), month: m % 12 };
   state.lastReport = report;
 
-  if (state.settings.autoSave) {
-    try { localStorage.setItem('mm_autosave', JSON.stringify(state)); } catch (e) { /* ignore quota */ }
-  }
+  // 自动存档由 UI 层 queueAutoSave 按 2 秒合并写入，模拟核心不再每回合同步序列化
   return report;
 }
 
@@ -373,7 +374,7 @@ function stepSales(state, report) {
   // ---- 产品生命周期：热度（上市 100 → 逐月衰减；营销与系列粉丝减缓；竞品发布会重击）----
   const mktSpend = channelTotal(state);
   for (const p of state.models) {
-    if (p.status !== 'production') continue;
+    if (p.status !== 'production' || p.released === false) continue;
     if (p.heat === undefined) p.heat = 100;
     let decay = 3;
     if (mktSpend > 500000) decay -= 1;
@@ -481,7 +482,7 @@ function stepSales(state, report) {
 }
 
 function stepBrand(state, report, extraBrand = 0) {
-  const launched = state.models.filter((p) => p.status === 'production');
+  const launched = state.models.filter((p) => p.status === 'production' && p.released !== false);
   let avgReview = 50;
   if (launched.length) {
     let tot = 0, w = 0;
@@ -653,7 +654,7 @@ function stepCompetitors(state, report) {
     ? state._shareTrail[state._shareTrail.length - 1] - state._shareTrail[0]
     : 0;
   // 玩家在售机型的中位价：AI 发布定价对标用
-  const myPrices = state.models.filter((p) => p.status === 'production')
+  const myPrices = state.models.filter((p) => p.status === 'production' && p.released !== false)
     .map((p) => p.price?.cn || 0).filter((v) => v > 0).sort((a, b) => a - b);
   const playerMedian = myPrices.length ? myPrices[Math.floor(myPrices.length / 2)] : 0;
 
@@ -665,7 +666,11 @@ function stepCompetitors(state, report) {
     c.brand += rand(-0.15, 0.18) * demandMul;
     c.brand = clamp(c.brand, 10, 99);
     c.lastRelease = (c.lastRelease || 0) + 1;
-    const cycle = c.style === 'ecosystem' ? 12 : randInt(6, 14);
+    const cycle = c.signature === 'ecosystem' ? 12
+      : c.signature === 'value' ? 9
+        : c.signature === 'perf' ? 8
+          : c.signature === 'camera' ? 10
+            : randInt(6, 14);
     if (c.lastRelease >= cycle || c.lineup.length === 0) {
       c.lastRelease = 0;
       const phone = makeCompetitorPhone(c, year);

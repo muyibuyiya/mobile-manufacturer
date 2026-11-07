@@ -179,6 +179,29 @@ export const COMPETITORS = [
   { id: 'zte', nameZh: '中兴', nameEn: 'ZTE', country: '中国', style: 'supply', brand: 44, tech: 0.92, priceTier: 0.7, color: '#7a52c7', desc: '运营商渠道深耕，性价比机型走量。', foundedYear: 1998, declineYear: null, exitYear: null, cashMul: 1.0, series: [{ name: 'Axon', tier: 'flagship', versions: ['', 'Pro'] }, { name: 'Blade', tier: 'entry' }] },
 ];
 
+// 竞品招牌能力（v1.6.0）：每家一个差异化标签，在份额模型里生效
+export const RIVAL_SIGNATURES = {
+  durable: { id: 'durable', name: '耐用续航', icon: '🔋', desc: '电池与结构可靠性著称：续航 +12，曝光 +2%', bonus: { battery: 12 }, priceCut: 0, reach: 1.02 },
+  display: { id: 'display', name: '面板自产', icon: '▭', desc: '自有面板厂：设计 +8、影像 +4，曝光 +4%', bonus: { design: 8, camera: 4 }, priceCut: 0, reach: 1.04 },
+  ecosystem: { id: 'ecosystem', name: '生态闭环', icon: '⌘', desc: '软硬一体：性能 +6、设计 +8，曝光 +8%', bonus: { perf: 6, design: 8 }, priceCut: 0, reach: 1.08 },
+  business: { id: 'business', name: '商务安全', icon: '🔐', desc: '安全与全键盘：设计 +6、续航 +6，曝光 +2%', bonus: { design: 6, battery: 6 }, priceCut: 0, reach: 1.02 },
+  camera: { id: 'camera', name: '影像旗舰', icon: '📷', desc: '影像调校领先：影像 +12，曝光 +5%', bonus: { camera: 12 }, priceCut: 0, reach: 1.05 },
+  value: { id: 'value', name: '极致性价比', icon: '¥', desc: '渠道与定价凶狠：等效降价 12%，曝光 -4%', bonus: {}, priceCut: 0.12, reach: 0.96 },
+  design: { id: 'design', name: '轻薄设计', icon: '✦', desc: '工业设计见长：设计 +12，曝光 +3%', bonus: { design: 12 }, priceCut: 0, reach: 1.03 },
+  perf: { id: 'perf', name: '性能极客', icon: '⚡', desc: '旗舰配置拉满：性能 +12，曝光 +4%', bonus: { perf: 12 }, priceCut: 0, reach: 1.04 },
+};
+
+export const RIVAL_SIGNATURE_MAP = {
+  nokia: 'durable', samsung: 'display', apple: 'ecosystem', blackberry: 'business',
+  huawei: 'camera', xiaomi: 'value', oppo: 'camera', vivo: 'design',
+  sony: 'camera', motorola: 'durable', htc: 'design', lg: 'display',
+  oneplus: 'perf', transsion: 'value', meizu: 'design', zte: 'value',
+};
+
+export function signatureOf(comp) {
+  return RIVAL_SIGNATURES[RIVAL_SIGNATURE_MAP[comp?.id]] || null;
+}
+
 const TIER_PRICE = { flagship: 1.18, mid: 0.85, entry: 0.55 };
 const TIER_SCORE = { flagship: 6, mid: -2, entry: -10 };
 

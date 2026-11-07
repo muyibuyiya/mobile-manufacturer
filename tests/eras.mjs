@@ -14,6 +14,7 @@ for (const year of ERAS) {
   const v = validate(m.design, year);
   if (!v.ok) { bad.push(`${year} 默认设计不合法：${v.issues.map((i) => i.text).join('/')}`); continue; }
   m.status = 'production';
+  m.released = true;
   m.markets = ['cn', 'sea'];
   m.price = { cn: suggestedPrice(s, m, 'cn'), sea: Math.round(suggestedPrice(s, m, 'sea') * 0.92) };
   m.productionTarget = Math.min(20000, Math.max(500, capacityOf(s)));

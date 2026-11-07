@@ -1,6 +1,6 @@
 // 市场分层：把每个市场拆成 7 类消费者人群，各自用混合偏好决定选择
 import { clamp } from './util.js';
-import { MARKET_MAP, SEGMENT_MAP, SEGMENTS, LINEUP_MAP, marketMix, eraFactor, expectedPrice } from '../data/world.js';
+import { MARKET_MAP, SEGMENT_MAP, SEGMENTS, LINEUP_MAP, marketMix, eraFactor, expectedPrice, signatureOf } from '../data/world.js';
 import { derive } from './design.js';
 import { staffPower } from './state.js';
 import { fReach, fDesign } from './org.js';
@@ -86,7 +86,7 @@ export function marketShare(state, marketId, opts = {}) {
   const year = state.date.year;
   const suggest = opts.suggestedPrice;
   const softBias = opts.softBias || 0; // 该机型的口碑/退货带来的额外系数
-  const own = state.models.filter((p) => p.status === 'production' && p.markets.includes(marketId));
+  const own = state.models.filter((p) => p.status === 'production' && p.released !== false && p.markets.includes(marketId));
   const rivals = [];
   for (const c of state.competitors) {
     for (const phone of c.lineup) {
@@ -99,7 +99,20 @@ export function marketShare(state, marketId, opts = {}) {
   for (const p of own) {
     ownAgg.set(p.id, { model: p, val: 0, ratio: 0, u: 0, price: 0, scores: salesScores(p, year, state) });
   }
-  const rivalAgg = rivals.map((r) => ({ ...r, val: 0, ratio: 0 }));
+  const rivalAgg = rivals.map((r) => {
+    // 招牌能力：评分维度加成 + 等效价格折扣 + 曝光系数（v1.6.0）
+    const sig = signatureOf(r.competitor);
+    let scores = r.phone.scores;
+    if (sig && sig.bonus) {
+      scores = { ...scores };
+      for (const k of Object.keys(sig.bonus)) scores[k] = (scores[k] || 0) + sig.bonus[k];
+    }
+    return {
+      ...r, sig, scores,
+      effPrice: (r.phone.price || 0) * (1 - (sig?.priceCut || 0)),
+      val: 0, ratio: 0,
+    };
+  });
   const segmentRows = [];
   let weightedOwn = 0;
   let sumCompShare = 0;
@@ -120,9 +133,9 @@ export function marketShare(state, marketId, opts = {}) {
       sumOwn += val;
     }
     for (const r of rivalAgg) {
-      const u = utilityFor(r.phone.scores, r.phone.price, r.competitor.brand, prefs, year, m.wealth, seg);
+      const u = utilityFor(r.scores, r.effPrice, r.competitor.brand, prefs, year, m.wealth, seg);
       // 竞品也按自己的定位吃本命人群，但只给一点偏好，避免它们完全统治某个细分
-      const val = Math.exp(u) * rivalReach(r.competitor.brand) * rivalAllianceBonus(state, r.competitor.id);
+      const val = Math.exp(u) * rivalReach(r.competitor.brand) * (r.sig?.reach || 1) * rivalAllianceBonus(state, r.competitor.id);
       r.val += val * item.share;
       r.u = (r.u || 0) + u * item.share;
       sumComp += val;

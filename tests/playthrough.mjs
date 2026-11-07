@@ -88,7 +88,11 @@ async function main() {
   await shot('06-stage');
   const stageOk = await ev("!!document.querySelector('#stage-scene canvas')");
   console.log('stage canvas:', stageOk);
-  await ev("document.querySelector('.modal-mask [data-close]').click()"); await sleep(300);
+  // 完成发布会（量产机型必须发布后才能销售）
+  await ev("document.querySelector('#stage-start').click()"); await sleep(300);
+  await ev("document.querySelector('[data-guess]').click()"); await sleep(250);
+  await ev("document.querySelector('[data-pitch]').click()"); await sleep(400);
+  await ev("document.querySelector('#stage-done').click()"); await sleep(400);
   await shot('06-market');
 
   // 推进 24 个月
@@ -152,7 +156,8 @@ async function main() {
   await shot('14-gamemenu');
   await ev("document.querySelector('.modal-mask [data-close]').click()"); await sleep(200);
 
-  const state = await ev("(()=>{const s=JSON.parse(localStorage.getItem('mm_autosave')||'null'); if(!s)return null; return {cash:Math.round(s.company.cash), brand:+s.company.brand.toFixed(1), models:s.models.map(m=>({name:m.name,status:m.status,sold:m.sold,rev:Math.round(m.revenue)})), hist:s.history.slice(-3)}})()");
+  await sleep(2300); // 等 queueAutoSave 的 2 秒 debounce 落盘
+  const state = await ev("(()=>{const s=JSON.parse(localStorage.getItem('mobile_manufacturer_save_v5_auto')||localStorage.getItem('mm_autosave')||'null'); if(!s)return null; return {cash:Math.round(s.company.cash), brand:+s.company.brand.toFixed(1), models:s.models.map(m=>({name:m.name,status:m.status,released:!!m.released,sold:m.sold,rev:Math.round(m.revenue)})), hist:s.history.slice(-3), histLen:s.history.length, q:s.historyArchive?.length||0}})()");
   console.log('state:', JSON.stringify(state));
 
   console.log('\n--- logs ---');

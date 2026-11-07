@@ -517,6 +517,13 @@ div.field > span:first-child { display: block; font-size: 11.5px; color: var(--m
 .stage-result.warn { background: rgba(245, 165, 66, .08); border-color: rgba(245, 165, 66, .32); }
 .stage-result > b:first-child { color: #8fd0ff; }
 .stage-result.warn > b:first-child { color: #f5a542; }
+.stage-release-list { display: grid; gap: 6px; max-height: 210px; overflow: auto; }
+.stage-release-item {
+  display: flex; gap: 9px; align-items: center; padding: 8px 10px;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); cursor: pointer;
+}
+.stage-release-item.on { border-color: rgba(74, 163, 255, .5); background: rgba(74, 163, 255, .06); }
+.stage-release-item input { width: 16px; height: 16px; accent-color: #4aa3ff; flex-shrink: 0; }
 @media (max-width: 620px) { .stage-choices { grid-template-columns: 1fr; } }
 
 /* 拆解图例 */

@@ -1,6 +1,6 @@
 // 游戏状态：初始化、员工生成、部门结构、竞争对手、存读档
 import { clamp, rand, randInt, pick, uid, gauss, chance } from './util.js';
-import { MARKETS, COMPETITORS, COUNTRIES, ERAS, SURNAMES, GIVEN, FOREIGN, FIELDS, EDUS, makeCompetitorPhone } from '../data/world.js';
+import { MARKETS, COMPETITORS, COUNTRIES, ERAS, SURNAMES, GIVEN, FOREIGN, FIELDS, EDUS, makeCompetitorPhone, RIVAL_SIGNATURE_MAP } from '../data/world.js';
 import { TECHS } from '../data/tech.js';
 import { newModel, ensureBranding, ensureTemplate } from './design.js';
 import { RAMS, STORAGES } from '../data/parts.js';
@@ -19,10 +19,11 @@ import { ensureWarranty } from './aftermarket.js';
 import { ensureGuide } from './guide.js';
 import { ensureSubsidiaries } from './capital.js';
 import { migrateV1, normalizeLayout } from './floorplan.js';
+import { compactAll } from './history.js';
 
 export { DEPT_DEFS, ROLE_BY_DEPT };
 
-export const GAME_VERSION = '1.5.0'; // 全局唯一版本号（启动页/关于/存档兼容判断）
+export const GAME_VERSION = '1.6.0'; // 全局唯一版本号（启动页/关于/存档兼容判断）
 
 // 室内布局（v2）：房间可拖放/调尺寸 + 家具/隔墙单数据源。
 // 旧档（v1：仅 items/edges，房间位置硬编码）经 migrateV1 迁移：rooms 取默认双排布局，items/edges 原样保留
@@ -268,6 +269,7 @@ export function makeCompetitors(year) {
       isDeclining: !!isDeclining,
       declineYear: c.declineYear || null,
       exitYear: c.exitYear || null,
+      signature: RIVAL_SIGNATURE_MAP[c.id] || null,
     };
     // 开局即有两款在售机型，市场不是真空
     for (let i = 0; i < 2; i++) {
@@ -313,6 +315,29 @@ export function saveGame(state, slot = 1) {
 export function autoSave(state) {
   try { localStorage.setItem(SAVE_KEY + '_auto', JSON.stringify(state)); } catch (e) { /* 存满则静默跳过 */ }
 }
+
+// 月度推进高频调用：2 秒合并一次写盘，避免 8× 速度下每回合全量序列化
+let _autoTimer = null;
+let _autoPending = null;
+export function queueAutoSave(state) {
+  _autoPending = state;
+  if (_autoTimer) return;
+  _autoTimer = setTimeout(() => {
+    _autoTimer = null;
+    const s = _autoPending;
+    _autoPending = null;
+    if (s) autoSave(s);
+  }, 2000);
+  // Node 测试环境下不要让定时器拖住进程退出
+  if (_autoTimer && typeof _autoTimer.unref === 'function') _autoTimer.unref();
+}
+export function flushAutoSave() {
+  if (_autoTimer) { clearTimeout(_autoTimer); _autoTimer = null; }
+  const s = _autoPending;
+  _autoPending = null;
+  if (s) { autoSave(s); return true; }
+  return false;
+}
 export function peekAutoSave() {
   const raw = readRaw('auto');
   if (!raw) return null;
@@ -345,6 +370,8 @@ export function sanitizeState(s) {
     if (!m.lineup) m.lineup = 'main';
     ensureTemplate(m.design, s.date.year);
     if (m.heat === undefined) m.heat = m.status === 'production' ? 100 : 0;
+    // 发布状态迁移：新版只有"发布会发布过"的机型才算已发布；老档以 launched 日期判断
+    if (typeof m.released !== 'boolean') m.released = !!m.launched;
     if (!m.series) m.series = String(m.name || '').trim().split(/\s+/)[0] || null;
     if (!Array.isArray(m.awards)) m.awards = [];
     if (!m.review) m.review = null;
@@ -431,6 +458,7 @@ export function sanitizeState(s) {
   // 竞品产能/库存与联盟（v1.5.0）
   for (const c of s.competitors || []) {
     if (!Array.isArray(c.lineup)) c.lineup = [];
+    if (!c.signature) c.signature = RIVAL_SIGNATURE_MAP[c.id] || null;
     if (!Number.isFinite(Number(c.capacity))) {
       c.capacity = Math.round(180000 * (0.7 + (Number(c.brand) || 30) / 80) * (0.6 + (Number(c.techLevel) || 1)));
     }
@@ -447,6 +475,8 @@ export function sanitizeState(s) {
       s.negotiation.defense = Number.isFinite(Number(s.negotiation.defense)) ? Number(s.negotiation.defense) : 0.3;
     }
   }
+  // 历史降采样：近 12 月明细 + 更早季度归档（旧档 480 行在这里一次性压缩）
+  compactAll(s);
   s.version = 5;
   return s;
 }

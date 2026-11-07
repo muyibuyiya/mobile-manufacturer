@@ -6,16 +6,17 @@ import {
 } from '../core/sim.js';
 import {
   saveGame, loadGame, saveSlots, deleteSave, staffPower, deptCost, generateEmployee,
-  ensureLayout, autoSave,
+  ensureLayout, autoSave, queueAutoSave, flushAutoSave,
   DEPT_DEFS, ROLE_BY_DEPT, traitNames, addLog, officeCapacity,
 } from '../core/state.js';
+import { historyRows, historyTotals, historyMaxUnits, compHistoryRows } from '../core/history.js';
 import { newModel, derive, validate, bomCost } from '../core/design.js';
 import { phoneBackDataUrl, phoneFrontDataUrl } from './designer.js';
 import { openFloorplanPlanner } from './floorplan2d.js';
 import { openScreenDesign } from './screendesign.js';
 import { openPosterStudio } from './poster.js';
 import { TECHS, TECH_MAP, TECH_CATS, techState } from '../data/tech.js';
-import { MARKETS, MARKET_MAP, COUNTRIES, eraFactor, expectedPrice, SEGMENTS, SEGMENT_MAP, LINEUPS, LINEUP_MAP, marketMix, suggestModelName } from '../data/world.js';
+import { MARKETS, MARKET_MAP, COUNTRIES, eraFactor, expectedPrice, SEGMENTS, SEGMENT_MAP, LINEUPS, LINEUP_MAP, marketMix, suggestModelName, signatureOf } from '../data/world.js';
 import { DIVISION_DEFS, DIVISION_IDS, buildDivision, startUpgrade, upgradeCost, computeCustomSpec, ownCpuSpec, ownCmrSpec, ownOsSpec, ownPanelSpec, releaseOsVersion, toggleOsLicense, osReleaseCost, startOsTech, osTechBonuses, chooseOsRoute } from '../core/divisions.js';
 import { OS_TECHS, OS_TECH_BRANCHES, osTechState, OS_ROUTES } from '../data/os-tech.js';
 import { CPU_CORES, GPU_ARCHS, OS_BASES, RES_TIERS, LENS_TYPES } from '../data/hardware.js';
@@ -153,7 +154,7 @@ export function renderGame(root, state, opts = {}) {
       setTimeout(() => gameOver(r), 300);
       return;
     }
-    autoSave(state); // 每月回合结束自动存档，刷新/意外关闭不丢进度
+    queueAutoSave(state); // 月度推进合并写盘（2 秒防抖），避免 8× 速度下反复全量序列化
     // 月度推进的底鼓：静默推进（自动连播）时不响，避免刷屏
     if (!silent) sfx('month');
     // 重要事件提示
@@ -187,8 +188,8 @@ export function renderGame(root, state, opts = {}) {
         <div class="modal-sub">${fmtDate(state.date)}，${esc(state.company.name)} 因现金流断裂停止运营。</div>
         <div class="report-grid">
           <div class="line"><span>存活时间</span><b>${state.date.year - state.company.founded} 年</b></div>
-          <div class="line"><span>最高月销量</span><b>${fmtUnit(Math.max(0, ...state.history.map((h) => h.units)))}</b></div>
-          <div class="line"><span>累计营收</span><b>${fmtMoney(sum(state.history, (h) => h.revenue))}</b></div>
+          <div class="line"><span>最高月销量</span><b>${fmtUnit(Math.round(historyMaxUnits(state)))}</b></div>
+          <div class="line"><span>累计营收</span><b>${fmtMoney(historyTotals(state).revenue)}</b></div>
           <div class="line"><span>最终品牌</span><b>${state.company.brand.toFixed(0)}</b></div>
         </div>
         <div class="row" style="margin-top:18px;justify-content:flex-end;gap:8px">
@@ -446,6 +447,7 @@ export function renderGame(root, state, opts = {}) {
         state.company.cash -= launchCost;
         m.status = 'production';
         m.launched = { ...state.date };
+        m.released = false; // 量产≠发布：需要单独举办新品发布会（一机仅一次）
         m.price.cn = m.price.cn || suggestedPrice(state, m, 'cn');
         if (!m.markets.length) m.markets = ['cn'];
         m.productionTarget = m.productionTarget || 20000;
@@ -529,7 +531,7 @@ export function renderGame(root, state, opts = {}) {
         o.capacity += 40;
         render(); break;
       }
-      case 'open-stage': openStage(ds.model); break;
+      case 'open-stage': openStage(ds.model || ds.id); break;
       case 'order-comp': {
         const el = content.querySelector(`[data-order="${ds.cat}"]`);
         const qty = Number(el ? el.value : 0);
@@ -600,6 +602,8 @@ export function renderGame(root, state, opts = {}) {
           series,
           status: 'draft',
           launched: null,
+          released: false,
+          stageAt: null,
           price: {},
           inventory: 0,
           sold: 0,
@@ -1255,7 +1259,7 @@ export function renderGame(root, state, opts = {}) {
     cv.width = w * dpr; cv.height = h * dpr;
     const ctx = cv.getContext('2d');
     ctx.scale(dpr, dpr);
-    const hist = state.history.slice(-48);
+    const hist = historyRows(state, 48);
     if (hist.length < 2) {
       ctx.fillStyle = '#66707f'; ctx.font = '12px sans-serif'; ctx.textAlign = 'center';
       ctx.fillText('推进时间后显示趋势', w / 2, h / 2);
@@ -1315,7 +1319,7 @@ export function renderGame(root, state, opts = {}) {
     const models = state.models;
     // 产品线总览：按定位分组对比 + 经营建议
     const lineOverview = (() => {
-      const prod = models.filter((m) => m.status === 'production');
+      const prod = models.filter((m) => m.status === 'production' && m.released !== false);
       if (prod.length < 1) return '';
       const rows = LINEUPS.map((lu) => {
         const ms = prod.filter((m) => (m.lineup || 'main') === lu.id);
@@ -1360,7 +1364,7 @@ export function renderGame(root, state, opts = {}) {
           const sandboxAll = state.mode === 'sandbox' && state.tech.all;
           const v = validate(m.design, state.date.year,
             sandboxAll ? { ignoreEra: true, unlocked: state.tech.unlocked } : { unlocked: state.tech.unlocked });
-          const statusMap = { draft: ['设计中', 'warn'], production: ['在售', 'good'], discontinued: ['已下市', ''] };
+          const statusMap = { draft: ['设计中', 'warn'], production: m.released ? ['在售', 'good'] : ['待发布', 'warn'], discontinued: ['已下市', ''] };
           const st = statusMap[m.status] || ['未知', ''];
           const bw = 58, bh = Math.round(clamp(58 * (m.design.body.length / m.design.body.width), 96, 150));
           const camOn = (CAMERAS.find((c) => c.id === m.design.camera.part) || {}).mp > 0;
@@ -1418,7 +1422,7 @@ export function renderGame(root, state, opts = {}) {
               <button class="btn small" data-act="open-poster" data-id="${m.id}">🖼 宣传图</button>
               <button class="btn small" data-act="clone-model" data-id="${m.id}" title="复制此设计为同系列新机型（Pro / Pro Max / Ultra 等）">⧉ 复制为新机型</button>
               ${m.status === 'draft' ? `<button class="btn small primary" data-act="launch" data-id="${m.id}" ${!v.ok ? 'disabled' : ''}>量产上市</button>` : ''}
-              ${m.status === 'production' ? `<button class="btn small" data-act="goto" data-tab="market">定价</button><button class="btn small danger" data-act="discontinue" data-id="${m.id}">下市</button>` : ''}
+              ${m.status === 'production' ? `<button class="btn small" data-act="goto" data-tab="market">定价</button>${!m.released ? `<button class="btn small primary" data-act="open-stage" data-id="${m.id}">发布产品</button>` : ''}<button class="btn small danger" data-act="discontinue" data-id="${m.id}">下市</button>` : ''}
               ${m.status === 'draft' ? `<button class="btn small ghost danger" data-act="delete-model" data-id="${m.id}">删除</button>` : ''}
             </div>
           </div>`;
@@ -1653,6 +1657,8 @@ export function renderGame(root, state, opts = {}) {
 
   function pageMarket() {
     const models = state.models.filter((m) => m.status === 'production');
+    const pending = models.filter((m) => !m.released);
+    const onSale = models.filter((m) => m.released !== false);
     const totalShare = avgShare(state);
     // 各人群按"市场基础规模 × 该人群占比"加权，得到全球视角的人群份额
     const segRows = SEGMENTS.map((s) => {
@@ -1669,9 +1675,9 @@ export function renderGame(root, state, opts = {}) {
     });
     const wSum = segRows.reduce((a, b) => a + b.w, 0) || 1;
     return `
-      ${head('市场与销售', `全球份额 ${(totalShare * 100).toFixed(2)}% · ${models.length} 款在售`,
+      ${head('市场与销售', `全球份额 ${(totalShare * 100).toFixed(2)}% · ${onSale.length} 款在售${pending.length ? ` · ${pending.length} 款待发布` : ''}`,
         `<button class="btn small" data-act="goto" data-tab="rivals">竞争格局</button>
-         <button class="btn small primary" data-act="open-stage" data-model="${models[0] ? models[0].id : ''}" ${models.length ? '' : 'disabled'}>举办发布会（¥500万）</button>`)}
+         <button class="btn small primary" data-act="open-stage" data-model="${pending[0] ? pending[0].id : ''}" ${pending.length ? '' : 'disabled'}>新品发布会（${pending.length} 款待发布）</button>`)}
       ${(() => {
         // 销量/销售额多维统计：上月 / 本季 / 本年 / 累计（用 model.history 月度记录）
         const ym = state.date.year, mm = state.date.month;
@@ -1705,7 +1711,7 @@ export function renderGame(root, state, opts = {}) {
             </tr></thead>
             <tbody>
               ${rows.map((r) => `<tr>
-                <td>${esc(r.m.name)} <span class="tiny dim">${r.m.lineup && LINEUP_MAP[r.m.lineup] ? LINEUP_MAP[r.m.lineup].name : ''}</span></td>
+                <td>${esc(r.m.name)} ${!r.m.released ? '<span class="chip warn">待发布</span>' : ''} <span class="tiny dim">${r.m.lineup && LINEUP_MAP[r.m.lineup] ? LINEUP_MAP[r.m.lineup].name : ''}</span></td>
                 <td class="num">${cell(r.lastU)}</td><td class="num">¥${fmtNum(Math.round(r.lastR))}</td>
                 <td class="num">${cell(r.qU)}</td><td class="num">¥${fmtNum(Math.round(r.qR))}</td>
                 <td class="num">${cell(r.yU)}</td><td class="num">¥${fmtNum(Math.round(r.yR))}</td>
@@ -2145,7 +2151,7 @@ export function renderGame(root, state, opts = {}) {
 
   function pageFinance() {
     const r = lastReport;
-    const hist = state.history.slice(-24);
+    const hist = historyRows(state, 24);
     const debt = state.company.debt;
     const activePol = activePolicies(state);
     return `
@@ -2232,7 +2238,7 @@ export function renderGame(root, state, opts = {}) {
   function drawFinChartSVG() {
     const el2 = document.getElementById('fin-svg');
     if (!el2) return;
-    const hist = (state.history || []).slice(-24);
+    const hist = historyRows(state, 24);
     if (!hist.length) { el2.innerHTML = '<div class="tiny dim" style="padding:20px">推进时间后显示图表</div>'; return; }
     const w = el2.clientWidth || 600, h = 220;
     const padL = 50, padR = 16, padT = 16, padB = 36;
@@ -2348,6 +2354,7 @@ export function renderGame(root, state, opts = {}) {
                 <span class="chip">${sub.source === 'acquired' ? '收购' : '自创'}</span></div>
               <div class="tiny dim" style="margin:4px 0">${sub.nameEn || ''} · 品牌力 ${sub.brand.toFixed(0)} · 在售 ${(sub.lineup || []).length} 款</div>
               <div class="between tiny"><span class="dim">上月利润上缴</span><b class="mono good">+${fmtMoney(sub.lastProfit || 0)}</b></div>
+              ${sub.integration ? `<div class="tiny" style="margin-top:4px"><span class="chip warn">整合期 剩 ${sub.integration.months}/${sub.integration.total} 月 · 利润最高 -${Math.round((sub.integration.penalty || 0) * 100)}%</span></div>` : ''}
               ${sub.payment ? `<div class="between tiny"><span class="dim">分期收购款（剩 ${sub.payment.monthsLeft} 期）</span><b class="mono warn">-${fmtMoney(sub.payment.perMonth)}/月</b></div>` : ''}
               <div class="tiny dim" style="margin-top:2px">支付方式：${sub.payMode === 'installment' ? '分期' : sub.payMode === 'equity' ? '换股' : '现金'}${sub.techShare > 0 ? ` · 技术共享 +${Math.round(sub.techShare * 100)}%` : ''}</div>
               ${(sub.lineup || []).length ? `<div class="section-label">产品线</div>${sub.lineup.map((p) => `<div class="between tiny"><span>${esc(p.name)}</span><b class="mono">¥${fmtNum(p.price)}</b></div>`).join('')}` : ''}
@@ -2371,7 +2378,7 @@ export function renderGame(root, state, opts = {}) {
 
   // 竞品销量序列：compHistory 快照 + 我方 history 拼接
   function compSeries(months = 12) {
-    const hist = (state.compHistory || []).slice(-months);
+    const hist = compHistoryRows(state, months);
     const me = { id: 'me', name: state.company.name, color: state.company.logoColor };
     const names = [me, ...state.competitors.map((c) => ({ id: c.id, name: c.name, color: c.color }))];
     const series = names.map((n) => ({
@@ -2390,12 +2397,13 @@ export function renderGame(root, state, opts = {}) {
 
   function rankTable(dim) {
     const n = dim === 'month' ? 1 : dim === 'quarter' ? 3 : 12;
-    const hist = (state.compHistory || []).slice(-n);
+    const hist = compHistoryRows(state, n);
+    const myRows = historyRows(state, Math.max(12, n));
     const me = { id: 'me', name: state.company.name, color: state.company.logoColor };
     const rows = [me, ...state.competitors.map((c) => ({ id: c.id, name: c.name, color: c.color }))].map((r) => {
       let units = 0, cash = 0, brand = 0;
       if (r.id === 'me') {
-        units = hist.reduce((s, h) => s + (state.history.find((x) => x.y === h.y && x.m === h.m)?.units || 0), 0);
+        units = myRows.slice(-n).reduce((s, h) => s + (h.units || 0), 0);
         cash = state.company.cash - state.company.debt;
         brand = state.company.brand;
       } else {
@@ -2503,6 +2511,7 @@ export function renderGame(root, state, opts = {}) {
         ${[...state.competitors].sort((a, b) => (b.lastSold || 0) - (a.lastSold || 0)).map((c) => {
           const line = c.lineup.slice(-2);
           const ally = (state.rivalAlliances || []).find((a) => a.a === c.id || a.b === c.id);
+          const sig = signatureOf(c);
           return `<div class="card">
             <div class="between" style="margin-bottom:8px">
               <div class="row" style="gap:8px">
@@ -2513,6 +2522,7 @@ export function renderGame(root, state, opts = {}) {
                 <div style="margin-top:4px"><button class="btn tiny ghost" data-act="comp-detail" data-id="${c.id}">财报</button></div></div>
             </div>
             ${ally ? `<div class="tiny" style="margin-bottom:6px"><span class="chip good">联盟 ${esc(ally.name)}</span></div>` : ''}
+            ${sig ? `<div class="tiny" style="margin-bottom:6px"><span class="chip" title="${esc(sig.desc)}">${sig.icon} ${esc(sig.name)}</span></div>` : ''}
             <div class="tiny dim" style="margin-bottom:8px">${c.desc}</div>
             <div class="tiny dim" style="margin-bottom:6px">产能 ${fmtUnit(c.capacity || 0)}/月 · 库存 ${fmtUnit(Math.round(c.inventory || 0))}${(c.inventory || 0) < (c.capacity || 0) * 0.15 ? ' <span class="warn">· 缺货</span>' : ''}</div>
             ${line.map((p) => `<div class="list-item" style="padding:7px 9px;margin-bottom:5px">
@@ -2531,7 +2541,8 @@ export function renderGame(root, state, opts = {}) {
   function openCompDetail(compId) {
     const c = state.competitors.find((x) => x.id === compId);
     if (!c) { opts.onToast?.('该公司已不在市场中', 'warn'); return; }
-    const rows = (state.compHistory || []).slice(-12).map((h) => {
+    const sig = signatureOf(c);
+    const rows = compHistoryRows(state, 12).map((h) => {
       const r = (h.rows || []).find((x) => x.id === c.id) || {};
       return { y: h.y, m: h.m, units: r.units || 0, rev: r.rev || 0 };
     });
@@ -2564,6 +2575,8 @@ export function renderGame(root, state, opts = {}) {
             </div>
             <b class="mono tiny">¥${fmtNum(p.price)}</b>
           </div>`).join('') || '<div class="empty">无在售机型</div>'}
+          <div class="section-label">招牌能力</div>
+          <div class="tiny" style="line-height:1.8">${sig ? `<b>${sig.icon} ${esc(sig.name)}</b><div class="dim">${esc(sig.desc)}</div>` : '<span class="dim">无</span>'}</div>
           <div class="section-label">战略联盟</div>
           <div class="tiny">${allies.length ? allies.map((n) => `<span class="chip good" style="margin:2px">${esc(n)}</span>`).join('') : '<span class="dim">暂无盟友</span>'}</div>
           <div class="tiny dim" style="margin-top:8px">联盟成员在份额计算中获得 6% 曝光加成，联盟到期后自动解除。</div>
@@ -2890,13 +2903,24 @@ export function renderGame(root, state, opts = {}) {
   }
 
   function openStage(modelId) {
-    const m = state.models.find((x) => x.id === modelId)
-      || [...state.models].reverse().find((x) => x.status === 'production');
-    if (!m) { opts.onToast?.('先量产一款机型，才能在发布会上展示', 'warn'); return; }
-    const cost = 5000000;
-    const hasProducts = state.models.some((x) => x.status === 'production');
-    const suggested = Math.max(1, Math.round(suggestedPrice(state, m, 'cn')));
-    const d = derive(m.design, state.date.year);
+    const pending = state.models.filter((m) => m.status === 'production' && !m.released);
+    if (!pending.length) {
+      opts.onToast?.('没有待发布机型：先在产品页把新机型量产上市', 'warn');
+      return;
+    }
+    const lead = pending.find((m) => m.id === modelId) || pending[0];
+    const selected = new Set([lead.id]);
+    const costOf = () => 5000000 + Math.max(0, selected.size - 1) * 1500000;
+    const suggested = Math.max(1, Math.round(suggestedPrice(state, lead, 'cn')));
+    const d = derive(lead.design, state.date.year);
+    // 卖点选择：主推机型最强的一项就是媒体答案
+    const dims = [
+      { id: 'camera', name: '影像', icon: '📷', v: d.camera },
+      { id: 'perf', name: '性能', icon: '⚡', v: d.perf },
+      { id: 'battery', name: '续航', icon: '🔋', v: d.battery },
+      { id: 'design', name: '设计', icon: '✦', v: d.designScore },
+    ];
+    const bestDim = [...dims].sort((a, b) => b.v - a.v)[0];
     // 定价猜谜：三个候选价位中恰好一个是市场心理价位（随机打乱顺序）
     const candidates = (() => {
       const list = [
@@ -2910,20 +2934,18 @@ export function renderGame(root, state, opts = {}) {
       }
       return list;
     })();
+
+    let phase = 'select';
+    let pricePick = null;
+    let pitchPick = null;
     const body = `<div class="stage-3d" id="stage-scene"></div>
-      <div id="stage-panel" class="stage-panel">
-        <div class="stage-copy">
-          发布会将带来 3 个月的全市场需求提升与品牌加成。<br/>
-          先猜中市场心理价位，再根据现场口碑结算最终加成。<br/>
-          展示机型：<b>${esc(m.name)}</b> · 现金 ${fmtMoney(state.company.cash)}
-        </div>
-        <button class="btn primary" id="stage-start" ${state.company.cash < cost ? 'disabled' : ''}>开始发布会（${fmtMoney(cost)}）</button>
-      </div>`;
-    const { mask, close } = modalShell('全球新品发布会', `${esc(m.name)} · 舞台演示`, body, 'modal-wide');
+      <div id="stage-panel" class="stage-panel"></div>`;
+    const { mask, close } = modalShell('全球新品发布会',
+      `主推 ${esc(lead.name)}${pending.length > 1 ? ` · ${pending.length} 款待发布` : ''}`, body, 'modal-wide');
 
     let stage = null;
     try {
-      stage = createStageScene(mask.querySelector('#stage-scene'), state, m);
+      stage = createStageScene(mask.querySelector('#stage-scene'), state, lead);
     } catch (e) {
       const el = mask.querySelector('#stage-scene');
       if (el) el.innerHTML = `<div class="empty">3D 舞台初始化失败：${esc(e.message)}</div>`;
@@ -2931,56 +2953,111 @@ export function renderGame(root, state, opts = {}) {
     const done = () => { stage?.destroy(); close(); };
     const panel = mask.querySelector('#stage-panel');
 
+    const renderSelect = () => {
+      phase = 'select';
+      const cost = costOf();
+      panel.innerHTML = `<div class="stage-question">选择本次发布的机型（每款机型只能发布一次，可多机同场）</div>
+        <div class="stage-release-list">
+          ${pending.map((m) => `<label class="stage-release-item ${selected.has(m.id) ? 'on' : ''}">
+            <input type="checkbox" data-release="${m.id}" ${selected.has(m.id) ? 'checked' : ''} ${m.id === lead.id ? 'disabled' : ''} />
+            <span style="flex:1;min-width:0"><b>${esc(m.name)}</b><div class="tiny dim">${m.id === lead.id ? '主推机型 · ' : ''}建议价 ¥${fmtNum(suggestedPrice(state, m, 'cn'))} · 热度 ${Math.round(m.heat === undefined ? 100 : m.heat)}</div></span>
+            <span class="chip">¥${fmtNum(suggestedPrice(state, m, 'cn'))} 起</span>
+          </label>`).join('')}
+        </div>
+        <div class="between" style="margin:10px 0 8px"><span class="tiny dim">费用：基础 ¥500万，每增加 1 款 +¥150万</span><b class="mono" id="stage-cost">${fmtMoney(cost)}</b></div>
+        <button class="btn primary" id="stage-start" ${state.company.cash < cost ? 'disabled' : ''}>开始发布会（${fmtMoney(cost)}）</button>`;
+    };
+
     const renderGuess = () => {
-      panel.innerHTML = `<div class="stage-question">市场心理价位是多少？选一个最接近消费者预期的定价</div>
+      phase = 'guess';
+      panel.innerHTML = `<div class="stage-question">市场心理价位是多少？以主推机型 <b>${esc(lead.name)}</b> 为准，选一个最接近消费者预期的定价</div>
         <div class="stage-choices">${candidates.map((c, i) => `<button class="btn stage-choice" data-guess="${i}">¥${fmtNum(c.v)}</button>`).join('')}</div>
         <div class="tiny dim">猜中可得额外热度与品牌加成；猜错会让现场反响打折。</div>`;
     };
 
-    const finish = (idx) => {
-      const pick = candidates[idx] || candidates[0];
-      const hit = !!pick.correct;
+    const renderPitch = () => {
+      phase = 'pitch';
+      panel.innerHTML = `<div class="stage-question">媒体最关心这款产品的什么？选择本次主打的卖点</div>
+        <div class="stage-choices">${dims.map((dim) => `<button class="btn stage-choice" data-pitch="${dim.id}">${dim.icon}<div>${dim.name}</div><div class="tiny dim">${Math.round(dim.v)} 分</div></button>`).join('')}</div>
+        <div class="tiny dim">与主推机型最强项一致可获得额外现场加成；错位会被媒体追问。</div>`;
+    };
+
+    const finish = () => {
+      const pick = pricePick || candidates[0];
+      const priceHit = !!pick.correct;
+      const pitchHit = pitchPick === bestDim.id;
+      const cost = costOf();
+      if (state.company.cash < cost) { opts.onToast?.('现金不足，无法完成发布会结算', 'bad'); return; }
+      phase = 'result';
       const avg = (d.designScore + d.perf + d.camera + d.battery) / 4;
-      const base = hasProducts ? 1.16 : 1.08;
-      const priceBonus = hit ? 0.09 : -0.02;
+      const priceBonus = priceHit ? 0.09 : -0.02;
       const scoreBonus = clamp((avg - 55) / 100 * 0.12, -0.04, 0.08);
-      const mul = +(base + priceBonus + scoreBonus).toFixed(2);
+      const pitchBonus = pitchHit ? 0.03 : -0.01;
+      const mul = +(1.16 + priceBonus + scoreBonus + pitchBonus).toFixed(2);
+      state.company.cash -= cost;
       state.hype = { months: 3, mul };
-      const brandGain = (hasProducts ? 3.2 : 1.5) + (hit ? 1.2 : 0) + clamp((avg - 60) / 20, 0, 1.2);
+      const released = pending.filter((m) => selected.has(m.id));
+      const perHeat = (priceHit ? 12 : 6) + (pitchHit ? 4 : 0);
+      for (const m of released) {
+        m.released = true;
+        m.stageAt = { ...state.date };
+        m.heat = clamp((m.heat === undefined ? 100 : m.heat) + perHeat, 0, 100);
+      }
+      const brandGain = 3.2 + (priceHit ? 1.2 : 0) + (pitchHit ? 0.8 : 0)
+        + clamp((avg - 60) / 20, 0, 1.2) + Math.max(0, released.length - 1) * 0.4;
       state.company.brand = clamp(state.company.brand + brandGain, 0, 100);
-      m.heat = clamp((m.heat === undefined ? 100 : m.heat) + (hit ? 12 : 4), 0, 100);
-      addLog(state, 'mkt', `举办全球新品发布会，主推 ${m.name}，定价 ${fmtMoney(pick.v)}（${hit ? '精准命中' : '偏离预期'}），需求系数 ×${mul}，品牌 +${brandGain.toFixed(1)}。`);
+      const names = released.map((m) => m.name).join('、');
+      addLog(state, 'mkt', `举办全球新品发布会，发布 ${names}；主推 ${lead.name}，定价 ${fmtMoney(pick.v)}（${priceHit ? '精准命中' : '偏离预期'}），需求系数 ×${mul}，品牌 +${brandGain.toFixed(1)}。`);
       state.news = state.news || [];
       state.news.unshift({
         time: `${state.date.year}/${state.date.month + 1}`, type: 'group',
-        title: `${m.name} 发布会${hit ? '定价精准' : '反响平淡'}`,
-        text: `现场评分 ${Math.round(avg)} · 3 个月需求系数 ×${mul} · 品牌 +${brandGain.toFixed(1)}。`, read: false,
+        title: `${names} 发布会${priceHit ? '定价精准' : '反响平淡'}`,
+        text: `发布 ${released.length} 款 · 现场评分 ${Math.round(avg)} · 3 个月需求系数 ×${mul} · 品牌 +${brandGain.toFixed(1)}。`, read: false,
       });
       if (state.news.length > 100) state.news.length = 100;
       const reaction = avg >= 78 ? '全场沸腾，媒体给出极高评价'
         : avg >= 66 ? '现场反响热烈'
           : avg >= 55 ? '反响平稳，亮点有限' : '现场略显冷淡';
-      panel.innerHTML = `<div class="stage-result ${hit ? '' : 'warn'}">
-          <b>${hit ? '精准命中！' : '定价偏离市场预期'}</b>
-          <div>你的选择 <b>¥${fmtNum(pick.v)}</b> · 市场心理价位 <b>¥${fmtNum(suggested)}</b></div>
+      panel.innerHTML = `<div class="stage-result ${priceHit && pitchHit ? '' : 'warn'}">
+          <b>${priceHit ? '定价精准！' : '定价偏离市场预期'}${pitchHit ? ' · 卖点命中' : ' · 卖点错位'}</b>
+          <div>主推 <b>${esc(lead.name)}</b> · 选择 ¥${fmtNum(pick.v)} · 市场心理价 ¥${fmtNum(suggested)}</div>
+          <div>媒体关注点：<b>${bestDim.icon} ${bestDim.name}</b>（${Math.round(bestDim.v)} 分）· 你的选择：${dims.find((x) => x.id === pitchPick)?.name || '—'}</div>
           <div>现场评分 <b>${Math.round(avg)}</b> 分 — ${reaction}</div>
-          <div>需求系数 <b>×${mul}</b>（3 个月） · 品牌 <b>+${brandGain.toFixed(1)}</b> · 热度 <b>+${hit ? 12 : 4}</b></div>
+          <div>本次发布 <b>${released.length}</b> 款：${esc(names)}</div>
+          <div>费用 ${fmtMoney(cost)} · 需求系数 <b>×${mul}</b>（3 个月） · 品牌 <b>+${brandGain.toFixed(1)}</b> · 每款热度 <b>+${perHeat}</b></div>
         </div>
         <div class="row" style="justify-content:flex-end;margin-top:12px"><button class="btn primary" id="stage-done">结束发布会</button></div>`;
       sfx('launch');
     };
 
+    panel.addEventListener('change', (e) => {
+      const cb = e.target.closest('[data-release]');
+      if (!cb || phase !== 'select') return;
+      if (cb.checked) selected.add(cb.dataset.release);
+      else selected.delete(cb.dataset.release);
+      if (!selected.size) selected.add(lead.id); // 主推机型必须保留
+      renderSelect();
+    });
+
     panel.addEventListener('click', (e) => {
-      if (e.target.closest('#stage-start')) {
-        if (state.company.cash < cost) { opts.onToast?.('资金不足，无法举办发布会', 'bad'); return; }
-        state.company.cash -= cost;
+      if (e.target.closest('#stage-done')) { done(); render(); return; }
+      if (phase === 'select' && e.target.closest('#stage-start')) {
+        if (state.company.cash < costOf()) { opts.onToast?.('资金不足，无法举办发布会', 'bad'); return; }
         renderGuess();
         return;
       }
-      const g = e.target.closest('[data-guess]');
-      if (g) { finish(Number(g.dataset.guess)); return; }
-      if (e.target.closest('#stage-done')) { done(); render(); }
+      if (phase === 'guess') {
+        const g = e.target.closest('[data-guess]');
+        if (g) { pricePick = candidates[Number(g.dataset.guess)]; renderPitch(); }
+        return;
+      }
+      if (phase === 'pitch') {
+        const p = e.target.closest('[data-pitch]');
+        if (p) { pitchPick = p.dataset.pitch; finish(); }
+        return;
+      }
     });
+    renderSelect();
     // 舞台场景随弹窗关闭一并释放
     const observer = new MutationObserver(() => {
       if (!document.body.contains(mask)) { stage?.destroy(); observer.disconnect(); }
@@ -3599,7 +3676,7 @@ export function renderGame(root, state, opts = {}) {
   function drawFinChart() {
     const cv = content.querySelector('#fin-chart');
     if (!cv) return;
-    const hist = state.history.slice(-24);
+    const hist = historyRows(state, 24);
     const dpr = window.devicePixelRatio || 1;
     const w = cv.clientWidth, h = cv.clientHeight;
     cv.width = w * dpr; cv.height = h * dpr;

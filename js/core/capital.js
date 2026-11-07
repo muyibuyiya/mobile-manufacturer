@@ -306,6 +306,9 @@ export function ensureSubsidiaries(state) {
     if (!Number.isFinite(Number(sub.lastProfit))) sub.lastProfit = 0;
     if (typeof sub.payMode !== 'string') sub.payMode = 'cash';
     if (!Number.isFinite(Number(sub.techShare))) sub.techShare = 0;
+    if (sub.integration && (!Number.isFinite(Number(sub.integration.months)) || Number(sub.integration.months) <= 0)) {
+      sub.integration = null;
+    }
     if (sub.payment && (!Number.isFinite(Number(sub.payment.monthsLeft)) || Number(sub.payment.monthsLeft) <= 0)) sub.payment = null;
   }
   return state.subsidiaries;
@@ -342,6 +345,7 @@ function finalizeSubsidiary(state, comp, cost, note, terms = {}) {
     brand: comp.brand, source: 'acquired', cost, acquiredAt: { ...state.date },
     lineup: comp.lineup || [], techLevel: comp.techLevel || 0.8, style: comp.style || 'hardware',
     lastProfit: 0, payMode: mode, techShare: 0,
+    integration: { months: hostile ? 9 : 6, total: hostile ? 9 : 6, penalty: hostile ? 0.5 : 0.4 },
     payment: mode === 'installment'
       ? { total: cost, paid: firstPaid, monthsLeft: 12, perMonth: Math.round(cost * 0.65 * 1.06 / 12) }
       : null,
@@ -458,6 +462,28 @@ export function stepSubsidiaries(state, report) {
     sub.brand = clamp(sub.brand + (Math.random() - 0.42) * 0.5, 5, 92);
     // 集团技术共享（四部门等级总和）→ 直接提升上缴利润
     sub.techShare = subsidiaryTechShare(state, sub);
+    // ---- 并购整合期（v1.6.0）：利润打折、品牌摩擦，期满后释放协同 ----
+    let integMul = 1;
+    if (sub.integration && sub.integration.months > 0) {
+      const it = sub.integration;
+      it.months -= 1;
+      const remain = it.months / Math.max(1, it.total || 6);
+      integMul = clamp(1 - (it.penalty || 0.4) * remain, 0.5, 1);
+      state.company.brand = clamp(state.company.brand - 0.12, 0, 100);
+      if (it.months <= 0) {
+        sub.integration = null;
+        state.company.brand = clamp(state.company.brand + 0.3, 0, 100);
+        report.notes.push(`${sub.name} 整合完成，协同效应开始释放（品牌 +0.3）。`);
+        addLog(state, 'finance', `${sub.name} 整合期结束，母子品牌协同生效。`);
+        state.news = state.news || [];
+        state.news.unshift({
+          time: `${state.date.year}/${state.date.month + 1}`, type: 'group',
+          title: `${sub.name} 整合完成`,
+          text: '渠道与研发协同开始释放，子公司上缴利润恢复全额。', read: false,
+        });
+        if (state.news.length > 100) state.news.length = 100;
+      }
+    }
     // 分期收购：每月向原股东付款；现金见底会伤品牌与信用
     if (sub.payment && sub.payment.monthsLeft > 0) {
       const due = Math.min(sub.payment.perMonth, Math.max(0, sub.payment.total - sub.payment.paid));
@@ -478,7 +504,7 @@ export function stepSubsidiaries(state, report) {
       * (0.7 + eraFactorSafe(state))
       * (1 + (sub.techShare || 0));
     const share = sub.source === 'acquired' ? 0.6 : 0.3;
-    const profit = Math.round(base * share);
+    const profit = Math.round(base * share * integMul);
     sub.lastProfit = profit;
     income += profit;
     // ---- 集团矩阵：自主发品（集团声量）----

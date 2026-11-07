@@ -8,6 +8,7 @@ import { fmtMoney } from '../js/core/util.js';
 const s = createGame({ mode: 'career', year: 2010, companyName: '长跑科技', countryId: 'cn' });
 const m = newModel(2010, s.tech.unlocked, 'M1');
 m.status = 'production';
+m.released = true;
 m.markets = ['cn', 'in', 'sea'];
 m.price = { cn: 1999, in: 1599, sea: 1699 };
 m.productionTarget = 20000;

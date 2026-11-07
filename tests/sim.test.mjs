@@ -12,6 +12,7 @@ const m = newModel(2010, s.tech.unlocked, 'T1');
 const v = validate(m.design, 2010);
 console.log('设计校验', v.ok, v.issues.map(i => i.text));
 m.status = 'production';
+m.released = true;
 m.markets = ['cn', 'in', 'sea'];
 m.price = { cn: 1999, in: 1599, sea: 1699 };
 m.productionTarget = 20000;
