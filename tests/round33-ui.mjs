@@ -64,17 +64,32 @@ async function main() {
   await ev("document.querySelector('#start').click()");
   await sleep(1200);
 
-  // 1. 员工档案
+  // 1. 员工档案 + 弹窗暂停时间
+  await ev("document.querySelector('[data-tab=product]').click()");
+  await sleep(300);
+  check('产品页有 5 个状态筛选', (await ev("document.querySelectorAll('[data-act=prod-filter]').length")) === 5);
+  check('产品页显示待发布引导', (await ev("document.body.textContent.includes('款机型已量产，等待发布')")) === true);
+  check('待发布计数为 1', (await ev("(()=>{const b=[...document.querySelectorAll('[data-act=prod-filter]')].find(x=>x.dataset.v==='pending');return !!b&&b.textContent.includes('1')})()")) === true);
   await ev("document.querySelector('[data-tab=company]').click()");
   await sleep(300);
   const empBtns = await ev("document.querySelectorAll('[data-act=open-emp]').length");
   check('名册有「详情」入口', empBtns > 0, `按钮 ${empBtns} 个`);
-  await ev("document.querySelector('[data-act=open-emp]').click()");
+  await ev("[...document.querySelectorAll('[data-act=speed]')].find(b=>b.dataset.v==='8').click()");
   await sleep(300);
+  const date0 = await ev("document.querySelector('.stat-inline .v').textContent");
+  await ev("document.querySelector('[data-act=open-emp]').click()");
+  await sleep(1300);
+  const date1 = await ev("document.querySelector('.stat-inline .v').textContent");
+  check('弹窗期间时间暂停', date0 === date1, `${date0} -> ${date1}`);
+  check('弹窗时速度自动归零', (await ev("(()=>{const b=[...document.querySelectorAll('[data-act=speed]')].find(x=>x.dataset.v==='8');return !!b&&b.classList.contains('on')})()")) === false);
   check('员工档案弹窗打开', !!(await ev("document.querySelector('#emp-raise')")));
   check('档案显示流失风险', (await ev("document.body.textContent.includes('月流失风险')")) === true);
   await shot('01-employee');
   await closeModal();
+  await sleep(250);
+  check('关闭弹窗恢复速度', (await ev("(()=>{const b=[...document.querySelectorAll('[data-act=speed]')].find(x=>x.dataset.v==='8');return !!b&&b.classList.contains('on')})()")) === true);
+  await ev("[...document.querySelectorAll('[data-act=speed]')].find(b=>b.dataset.v==='0').click()");
+  await sleep(150);
 
   // 2. 竞品财报
   await ev("document.querySelector('[data-tab=rivals]').click()");
@@ -131,6 +146,10 @@ async function main() {
   await sleep(400);
   check('发布会结束弹窗关闭', (await ev("document.querySelectorAll('.modal-mask').length")) === 0);
   check('发布后无待发布机型', (await ev("document.querySelector('[data-act=open-stage]')?.disabled === true")) === true);
+  await ev("document.querySelector('[data-tab=product]').click()");
+  await sleep(250);
+  check('发布后待发布计数归零', (await ev("(()=>{const b=[...document.querySelectorAll('[data-act=prod-filter]')].find(x=>x.dataset.v==='pending');return !!b&&b.textContent.includes('0')})()")) === true);
+  check('在售计数为 1', (await ev("(()=>{const b=[...document.querySelectorAll('[data-act=prod-filter]')].find(x=>x.dataset.v==='sale');return !!b&&b.textContent.includes('1')})()")) === true);
 
   // 6. 多机同场发布会：克隆两台新机 → 量产 → 一场发布会同时发布
   for (let i = 0; i < 2; i++) {
@@ -146,6 +165,7 @@ async function main() {
   await sleep(350);
   const pendingText = await ev("document.querySelector('[data-act=open-stage]')?.textContent || ''");
   check('两台新机进入待发布', pendingText.includes('2 款'), pendingText);
+  check('市场页有待发布专区', (await ev("document.body.textContent.includes('发布后才计入在售')")) === true);
   await ev("document.querySelector('[data-act=open-stage]').click()");
   await sleep(1400);
   check('发布会列表可选 2 款', (await ev("document.querySelectorAll('[data-release]').length")) === 2);
@@ -160,7 +180,7 @@ async function main() {
   await sleep(250);
   await ev("document.querySelector('[data-pitch]').click()");
   await sleep(400);
-  check('多机发布会结果含发布 2 款', (await ev("document.querySelector('.stage-result')?.textContent.includes('本次发布') && document.querySelector('.stage-result')?.textContent.includes('2')")) === true);
+  check('多机发布会结果含发布 2 款', (await ev("document.querySelector('.stage-result')?.textContent.includes('发布机型') && document.querySelector('.stage-result')?.textContent.includes('2 款同发')")) === true);
   await shot('07-stage-multi');
   await ev("document.querySelector('#stage-done').click()");
   await sleep(400);

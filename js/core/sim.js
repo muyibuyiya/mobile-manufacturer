@@ -383,7 +383,7 @@ function stepSales(state, report) {
     const seriesSales = state.models.reduce((s2, m2) => s2 + (((m2.series || String(m2.name || '').trim().split(/\s+/)[0]) === series && m2.status === 'production') ? (m2.sold || 0) : 0), 0);
     if (seriesSales > 100000) decay -= 0.5;
     if (seriesSales > 500000) decay -= 0.5;
-    p.heat = clamp(p.heat - decay, 0, 100);
+    p.heat = clamp(p.heat - decay, 0, 120);
     if (p.heat < 20 && !p._staleWarned) {
       p._staleWarned = true;
       report.notes.push(`${p.name} 产品热度已低于 20，建议降价清仓或推出新版本。`);

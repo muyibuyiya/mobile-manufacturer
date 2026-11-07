@@ -384,14 +384,14 @@ function makeBackdrop(name, state, model) {
     ctx.beginPath(); ctx.moveTo(0, i * 16); ctx.lineTo(1024, i * 16); ctx.stroke();
   }
 
-  ctx.textAlign = 'center';
+  ctx.textAlign = 'left';
   ctx.fillStyle = 'rgba(255,255,255,.72)';
-  ctx.font = '600 30px -apple-system, "Segoe UI", sans-serif';
-  ctx.fillText(state.company.name.toUpperCase(), 512, 112);
+  ctx.font = '600 28px -apple-system, "Segoe UI", sans-serif';
+  ctx.fillText(state.company.name.toUpperCase(), 64, 96);
 
   ctx.fillStyle = '#f2f7ff';
-  ctx.font = '700 92px -apple-system, "Segoe UI", sans-serif';
-  ctx.fillText((name || '新品发布').slice(0, 14), 512, 196);
+  ctx.font = '700 70px -apple-system, "Segoe UI", sans-serif';
+  ctx.fillText((name || '新品发布').slice(0, 14), 60, 184);
 
   let spec = '全新一代设计';
   if (model) {
@@ -399,12 +399,12 @@ function makeBackdrop(name, state, model) {
     spec = `性能 ${Math.round(d.perf)}　影像 ${Math.round(d.camera)}　续航 ${Math.round(d.battery)}　设计 ${Math.round(d.designScore)}`;
   }
   ctx.fillStyle = hexA(brand, 0.95);
-  ctx.font = '500 34px -apple-system, "Segoe UI", sans-serif';
-  ctx.fillText(spec, 512, 452);
+  ctx.font = '500 28px -apple-system, "Segoe UI", sans-serif';
+  ctx.fillText(spec, 64, 436);
 
   ctx.fillStyle = 'rgba(255,255,255,.32)';
-  ctx.font = '400 24px -apple-system, "Segoe UI", sans-serif';
-  ctx.fillText(`${state.date.year} · GLOBAL LAUNCH EVENT`, 512, 492);
+  ctx.font = '400 20px -apple-system, "Segoe UI", sans-serif';
+  ctx.fillText(`${state.date.year} · GLOBAL LAUNCH EVENT`, 64, 484);
 
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;

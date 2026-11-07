@@ -23,7 +23,7 @@ import { compactAll } from './history.js';
 
 export { DEPT_DEFS, ROLE_BY_DEPT };
 
-export const GAME_VERSION = '1.6.0'; // 全局唯一版本号（启动页/关于/存档兼容判断）
+export const GAME_VERSION = '1.7.0'; // 全局唯一版本号（启动页/关于/存档兼容判断）
 
 // 室内布局（v2）：房间可拖放/调尺寸 + 家具/隔墙单数据源。
 // 旧档（v1：仅 items/edges，房间位置硬编码）经 migrateV1 迁移：rooms 取默认双排布局，items/edges 原样保留
@@ -241,6 +241,7 @@ export function createGame(opts) {
   if (mode === 'sandbox') {
     const m = newModel(year, state.tech.unlocked, 'Sandbox One');
     m.status = 'production';
+    m.heat = 55; // 未发布的基础热度，发布会后才有爆发
     m.quality = 80;
     m.markets = ['cn', 'na', 'eu'];
     state.models.push(m);
@@ -369,7 +370,7 @@ export function sanitizeState(s) {
     m.history = m.history || [];
     if (!m.lineup) m.lineup = 'main';
     ensureTemplate(m.design, s.date.year);
-    if (m.heat === undefined) m.heat = m.status === 'production' ? 100 : 0;
+    if (m.heat === undefined) m.heat = m.status === 'production' ? (m.released === false ? 55 : 100) : 0;
     // 发布状态迁移：新版只有"发布会发布过"的机型才算已发布；老档以 launched 日期判断
     if (typeof m.released !== 'boolean') m.released = !!m.launched;
     if (!m.series) m.series = String(m.name || '').trim().split(/\s+/)[0] || null;

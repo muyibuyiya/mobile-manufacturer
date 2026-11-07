@@ -524,6 +524,56 @@ div.field > span:first-child { display: block; font-size: 11.5px; color: var(--m
 }
 .stage-release-item.on { border-color: rgba(74, 163, 255, .5); background: rgba(74, 163, 255, .06); }
 .stage-release-item input { width: 16px; height: 16px; accent-color: #4aa3ff; flex-shrink: 0; }
+
+/* 页面筛选与下一步引导 */
+.filter-row { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+.next-step {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 10px 14px; margin-bottom: 12px; border-radius: 10px;
+  border: 1px solid rgba(74, 163, 255, .32); background: rgba(74, 163, 255, .07);
+}
+.next-step b { font-size: 13px; }
+.next-step button { margin-left: auto; }
+
+/* 发布会结果：关键指标卡 + 结论 */
+.stage-result-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.stage-metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 8px 0 10px; }
+.stage-metric {
+  display: flex; flex-direction: column; gap: 2px; padding: 8px 10px;
+  border: 1px solid var(--line); border-radius: 8px; background: rgba(255, 255, 255, .03);
+}
+.stage-metric span { font-size: 11px; color: var(--muted); }
+.stage-metric b { font-size: 17px; }
+.stage-metric i { font-size: 10.5px; font-style: normal; color: var(--muted); }
+.stage-result-lines { font-size: 12px; line-height: 1.95; }
+.stage-result-lines .dim { display: inline-block; min-width: 62px; }
+
+/* 收购谈判：双栏信息面板 */
+.neg-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.neg-panel { padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-2); }
+.neg-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-weight: 650; }
+.neg-ask-row { display: flex; align-items: baseline; justify-content: space-between; margin: 8px 0 4px; }
+.neg-ask-row b { font-size: 18px; }
+.neg-bar { display: flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 11px; }
+.neg-bar .bar { flex: 1; height: 6px; }
+.neg-total {
+  display: flex; align-items: baseline; justify-content: space-between;
+  margin: 10px 0 6px; padding: 8px 10px; border-radius: 8px; background: rgba(74, 163, 255, .06);
+}
+.neg-total b { font-size: 17px; }
+.neg-bid-row { margin: 8px 0; }
+.neg-rules { margin-top: 10px; font-size: 11.5px; color: var(--muted); }
+.neg-rules summary { cursor: pointer; color: var(--text); }
+.neg-log {
+  margin: 8px 0; padding: 8px; border-radius: 8px; font-size: 11.5px; line-height: 1.75;
+  max-height: 84px; overflow: auto; background: rgba(255, 255, 255, .03); color: var(--muted);
+}
+.neg-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+@media (max-width: 760px) {
+  .stage-3d { height: min(300px, 44vh); }
+  .stage-metrics { grid-template-columns: repeat(2, 1fr); }
+  .neg-grid { grid-template-columns: 1fr; }
+}
 @media (max-width: 620px) { .stage-choices { grid-template-columns: 1fr; } }
 
 /* 拆解图例 */

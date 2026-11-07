@@ -116,13 +116,14 @@ export function renderGame(root, state, opts = {}) {
   let activeModal = null;
   let rivalChart = 'bar';
   let empFilter = 'all';
+  let prodFilter = 'all';
   let sbCollapsed = localStorage.getItem('mm_sb_collapsed') === '1';
   const foldedSeries = new Set();
   let rivalRank = 'month';
   let renameTargetId = null;
 
   const app = {
-    destroy() { stop(); if (designer) designer.destroy(); if (scene) scene.destroy(); },
+    destroy() { stop(); modalObserver.disconnect(); if (designer) designer.destroy(); if (scene) scene.destroy(); },
     handleKey(e) {
       if (e.code === 'Space') { e.preventDefault(); setSpeed(speed === 0 ? 1 : 0); }
       if (['1', '2', '3', '4'].includes(e.key)) setSpeed([1, 2, 4, 8][Number(e.key) - 1]);
@@ -143,6 +144,24 @@ export function renderGame(root, state, opts = {}) {
   }
 
   function stop() { if (timer) clearInterval(timer); timer = null; }
+
+  // 任意 .modal-mask 弹窗打开时暂停时间，关闭后恢复原速度（避免 8× 速度下谈判/发布会期间继续结算）
+  let modalPausedSpeed = 0;
+  let modalPaused = false;
+  const modalObserver = new MutationObserver(() => {
+    const open = !!document.querySelector('.modal-mask');
+    if (open && !modalPaused) {
+      modalPaused = true;
+      modalPausedSpeed = speed;
+      if (speed) setSpeed(0);
+    } else if (!open && modalPaused) {
+      modalPaused = false;
+      const resume = modalPausedSpeed;
+      modalPausedSpeed = 0;
+      if (resume) setSpeed(resume);
+    }
+  });
+  modalObserver.observe(document.body, { childList: true, subtree: true });
 
   function tickOnce(silent) {
     if (designer) return;
@@ -448,6 +467,7 @@ export function renderGame(root, state, opts = {}) {
         m.status = 'production';
         m.launched = { ...state.date };
         m.released = false; // 量产≠发布：需要单独举办新品发布会（一机仅一次）
+        m.heat = 55; // 量产基础热度；发布会命中可冲到 80~100+
         m.price.cn = m.price.cn || suggestedPrice(state, m, 'cn');
         if (!m.markets.length) m.markets = ['cn'];
         m.productionTarget = m.productionTarget || 20000;
@@ -679,6 +699,7 @@ export function renderGame(root, state, opts = {}) {
         break;
       }
       case 'emp-filter': empFilter = ds.v; render(); break;
+      case 'prod-filter': prodFilter = ds.v; render(); break;
       case 'news-read-all': {
         (state.news || []).forEach((n) => { n.read = true; });
         paintTopbar();
@@ -1316,7 +1337,21 @@ export function renderGame(root, state, opts = {}) {
   }
 
   function pageProducts() {
-    const models = state.models;
+    const allModels = state.models;
+    const prodCounts = {
+      all: allModels.length,
+      pending: allModels.filter((m) => m.status === 'production' && !m.released).length,
+      sale: allModels.filter((m) => m.status === 'production' && m.released !== false).length,
+      out: allModels.filter((m) => m.status === 'discontinued').length,
+      draft: allModels.filter((m) => m.status === 'draft').length,
+    };
+    const models = prodFilter === 'all' ? allModels : allModels.filter((m) => {
+      if (prodFilter === 'pending') return m.status === 'production' && !m.released;
+      if (prodFilter === 'sale') return m.status === 'production' && m.released !== false;
+      if (prodFilter === 'out') return m.status === 'discontinued';
+      if (prodFilter === 'draft') return m.status === 'draft';
+      return true;
+    });
     // 产品线总览：按定位分组对比 + 经营建议
     const lineOverview = (() => {
       const prod = models.filter((m) => m.status === 'production' && m.released !== false);
@@ -1351,6 +1386,14 @@ export function renderGame(root, state, opts = {}) {
       ${head('设计与产品', '从零设计一款手机，2D 六视图与 3D 模型实时同步',
         `<button class="btn primary small" data-act="open-lineup">+ 新建机型</button>
          <button class="btn small" data-act="open-screendesign">屏幕设计</button>`)}
+      <div class="filter-row">
+        ${[['all', '全部'], ['pending', '待发布'], ['sale', '在售'], ['out', '已退市'], ['draft', '设计中']].map(([id, name]) => `<button class="btn small ${prodFilter === id ? 'primary' : 'ghost'}" data-act="prod-filter" data-v="${id}">${name} <span class="tiny dim">${prodCounts[id]}</span></button>`).join('')}
+      </div>
+      ${prodCounts.pending ? `<div class="next-step">
+        <b>${prodCounts.pending} 款机型已量产，等待发布</b>
+        <span class="tiny dim">发布后才开始销售。一场发布会可同时发布多款。</span>
+        <button class="btn small primary" data-act="open-stage" data-id="${allModels.find((m) => m.status === 'production' && !m.released)?.id || ''}">去发布</button>
+      </div>` : ''}
       ${lineOverview}
       ${models.length ? `<div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(320px,1fr))">
         ${(() => {
@@ -1398,9 +1441,9 @@ export function renderGame(root, state, opts = {}) {
               <div class="between"><span class="dim">建议零售</span><b>¥${fmtNum(m.price.cn || suggestedPrice(state, m, 'cn'))}</b></div>
               ${m.status === 'production' ? `<div class="between"><span class="dim">上月销量 / 库存</span><b>${fmtNum(m.lastSold || 0)} / ${fmtNum(m.inventory)}</b></div>` : ''}
               ${m.status === 'production' ? `<div class="between"><span class="dim">产品热度</span>
-                <div class="bar" style="width:42%;height:8px"><div style="width:${m.heat === undefined ? 100 : Math.round(m.heat)}%;height:100%;background:${(m.heat === undefined ? 100 : m.heat) > 60 ? '#37c9a5' : (m.heat === undefined ? 100 : m.heat) > 30 ? '#f5a542' : '#f56b6b'}"></div></div>
-                ${(() => { const h = m.heat === undefined ? 100 : m.heat; const st = h >= 78 ? '上市爆发' : h >= 55 ? '高峰期' : h >= 35 ? '稳定期' : h >= 20 ? '衰退期' : '过时清仓'; const col = h > 55 ? '#37c9a5' : h > 30 ? '#f5a542' : '#f56b6b'; return `<span class="chip" style="border-color:${col}55;color:${col}">${st}</span>`; })()}
-                <b class="mono tiny">${Math.round(m.heat === undefined ? 100 : m.heat)}</b></div>` : ''}
+                <div class="bar" style="width:42%;height:8px"><div style="width:${Math.min(100, m.heat === undefined ? (m.released ? 100 : 55) : Math.round(m.heat))}%;height:100%;background:${(m.heat === undefined ? 100 : m.heat) > 60 ? '#37c9a5' : (m.heat === undefined ? 100 : m.heat) > 30 ? '#f5a542' : '#f56b6b'}"></div></div>
+                ${(() => { const h = m.heat === undefined ? (m.released ? 100 : 55) : m.heat; const st = h >= 100 ? '爆款' : h >= 78 ? '上市爆发' : h >= 55 ? '高峰期' : h >= 35 ? '稳定期' : h >= 20 ? '衰退期' : '过时清仓'; const col = h > 55 ? '#37c9a5' : h > 30 ? '#f5a542' : '#f56b6b'; return `<span class="chip" style="border-color:${col}55;color:${col}">${st}</span>`; })()}
+                <b class="mono tiny">${Math.round(m.heat === undefined ? (m.released ? 100 : 55) : m.heat)}</b></div>` : ''}
               ${(m.design?.variants || []).length ? `<div class="between" style="align-items:flex-start"><span class="dim">配置版本</span><span class="tiny" style="text-align:right;line-height:1.7">${m.design.variants.map((v) => {
                 const r = RAMS.find((x) => x.id === v.ram), st = STORAGES.find((x) => x.id === v.stg);
                 const gb = (g) => g >= 1 ? `${Math.round(g * 10) / 10}G` : `${Math.round(g * 1024)}M`;
@@ -1429,9 +1472,9 @@ export function renderGame(root, state, opts = {}) {
         }).join('');
         })()}
       </div>` : `<div class="card"><div class="empty">
-        还没有任何机型。<br/>
+        ${allModels.length ? '该分类下暂无机型。<br/>切换到「全部」查看其他机型。' : `还没有任何机型。<br/>
         设计系统支持：机身尺寸 / 屏幕 / 摄像头 / 材质 / 部件配置 / 内部空间校验。<br/><br/>
-        <button class="btn primary" data-act="create-model">开始设计</button>
+        <button class="btn primary" data-act="create-model">开始设计</button>`}
       </div></div>`}`;
   }
 
@@ -1678,6 +1721,18 @@ export function renderGame(root, state, opts = {}) {
       ${head('市场与销售', `全球份额 ${(totalShare * 100).toFixed(2)}% · ${onSale.length} 款在售${pending.length ? ` · ${pending.length} 款待发布` : ''}`,
         `<button class="btn small" data-act="goto" data-tab="rivals">竞争格局</button>
          <button class="btn small primary" data-act="open-stage" data-model="${pending[0] ? pending[0].id : ''}" ${pending.length ? '' : 'disabled'}>新品发布会（${pending.length} 款待发布）</button>`)}
+      ${pending.length ? `<div class="card" style="margin-bottom:12px">
+        <div class="card-title">待发布机型 <span class="right">${pending.length} 款 · 发布后才计入在售</span></div>
+        <div class="list">
+          ${pending.map((m) => `<div class="list-item">
+            <div style="flex:1;min-width:0">
+              <div class="between"><b class="tiny">${esc(m.name)}</b><span class="chip warn">待发布</span></div>
+              <div class="tiny dim">建议价 ¥${fmtNum(suggestedPrice(state, m, 'cn'))} · 基础热度 ${Math.round(m.heat === undefined ? 55 : m.heat)} · 库存 ${fmtNum(m.inventory || 0)}</div>
+            </div>
+            <button class="btn tiny primary" data-act="open-stage" data-model="${m.id}">去发布</button>
+          </div>`).join('')}
+        </div>
+      </div>` : ''}
       ${(() => {
         // 销量/销售额多维统计：上月 / 本季 / 本年 / 累计（用 model.history 月度记录）
         const ym = state.date.year, mm = state.date.month;
@@ -1686,7 +1741,7 @@ export function renderGame(root, state, opts = {}) {
         const qStart = ly * 12 + Math.floor(lm / 3) * 3; // 本季首月（以最近结算月所在季度计）
         const yStart = ly * 12;                  // 本年 1 月
         const keyOf = (h) => h.y * 12 + h.m;
-        const rows = models.map((m) => {
+        const rows = onSale.map((m) => {
           const hist = (m.history || []);
           let lastU = 0, lastR = 0, qU = 0, qR = 0, yU = 0, yR = 0;
           for (const h of hist) {
@@ -1700,7 +1755,7 @@ export function renderGame(root, state, opts = {}) {
         const tot = rows.reduce((a, r) => ({ lastU: a.lastU + r.lastU, lastR: a.lastR + r.lastR, qU: a.qU + r.qU, qR: a.qR + r.qR, yU: a.yU + r.yU, yR: a.yR + r.yR, totalU: a.totalU + r.totalU, totalR: a.totalR + r.totalR }), { lastU: 0, lastR: 0, qU: 0, qR: 0, yU: 0, yR: 0, totalU: 0, totalR: 0 });
         const cell = (v) => fmtNum(Math.round(v || 0));
         return `<div class="card" style="margin-bottom:12px">
-          <div class="card-title">机型销量与销售额 <span class="right">以 ${ly}年${lm + 1}月 为最近结算月 · 季度按自然季度</span></div>
+          <div class="card-title">机型销量与销售额 <span class="right">在售 ${onSale.length} 款 · 以 ${ly}年${lm + 1}月 为最近结算月 · 季度按自然季度</span></div>
           <div style="overflow:auto"><table class="tbl" style="width:100%;min-width:820px">
             <thead><tr>
               <th>机型</th>
@@ -2952,6 +3007,7 @@ export function renderGame(root, state, opts = {}) {
     }
     const done = () => { stage?.destroy(); close(); };
     const panel = mask.querySelector('#stage-panel');
+    const stageBox = mask.querySelector('#stage-scene');
 
     const renderSelect = () => {
       phase = 'select';
@@ -2989,6 +3045,7 @@ export function renderGame(root, state, opts = {}) {
       const cost = costOf();
       if (state.company.cash < cost) { opts.onToast?.('现金不足，无法完成发布会结算', 'bad'); return; }
       phase = 'result';
+      if (stageBox) stageBox.style.height = '240px';
       const avg = (d.designScore + d.perf + d.camera + d.battery) / 4;
       const priceBonus = priceHit ? 0.09 : -0.02;
       const scoreBonus = clamp((avg - 55) / 100 * 0.12, -0.04, 0.08);
@@ -2997,11 +3054,11 @@ export function renderGame(root, state, opts = {}) {
       state.company.cash -= cost;
       state.hype = { months: 3, mul };
       const released = pending.filter((m) => selected.has(m.id));
-      const perHeat = (priceHit ? 12 : 6) + (pitchHit ? 4 : 0);
+      const perHeat = (priceHit ? 18 : 8) + (pitchHit ? 6 : 0);
       for (const m of released) {
         m.released = true;
         m.stageAt = { ...state.date };
-        m.heat = clamp((m.heat === undefined ? 100 : m.heat) + perHeat, 0, 100);
+        m.heat = clamp((m.heat === undefined ? 55 : m.heat) + perHeat, 0, 120);
       }
       const brandGain = 3.2 + (priceHit ? 1.2 : 0) + (pitchHit ? 0.8 : 0)
         + clamp((avg - 60) / 20, 0, 1.2) + Math.max(0, released.length - 1) * 0.4;
@@ -3019,14 +3076,28 @@ export function renderGame(root, state, opts = {}) {
         : avg >= 66 ? '现场反响热烈'
           : avg >= 55 ? '反响平稳，亮点有限' : '现场略显冷淡';
       panel.innerHTML = `<div class="stage-result ${priceHit && pitchHit ? '' : 'warn'}">
-          <b>${priceHit ? '定价精准！' : '定价偏离市场预期'}${pitchHit ? ' · 卖点命中' : ' · 卖点错位'}</b>
-          <div>主推 <b>${esc(lead.name)}</b> · 选择 ¥${fmtNum(pick.v)} · 市场心理价 ¥${fmtNum(suggested)}</div>
-          <div>媒体关注点：<b>${bestDim.icon} ${bestDim.name}</b>（${Math.round(bestDim.v)} 分）· 你的选择：${dims.find((x) => x.id === pitchPick)?.name || '—'}</div>
-          <div>现场评分 <b>${Math.round(avg)}</b> 分 — ${reaction}</div>
-          <div>本次发布 <b>${released.length}</b> 款：${esc(names)}</div>
-          <div>费用 ${fmtMoney(cost)} · 需求系数 <b>×${mul}</b>（3 个月） · 品牌 <b>+${brandGain.toFixed(1)}</b> · 每款热度 <b>+${perHeat}</b></div>
+          <div class="stage-result-head">
+            <b>${priceHit && pitchHit ? '发布会大获成功' : priceHit || pitchHit ? '发布会中规中矩' : '发布会反响偏冷'}</b>
+            <span class="chip ${priceHit ? 'good' : 'bad'}">${priceHit ? '定价精准' : '定价偏离'}</span>
+            <span class="chip ${pitchHit ? 'good' : 'bad'}">${pitchHit ? '卖点命中' : '卖点错位'}</span>
+          </div>
+          <div class="stage-metrics">
+            <div class="stage-metric"><span>现场评分</span><b>${Math.round(avg)}</b><i>${reaction}</i></div>
+            <div class="stage-metric"><span>需求系数</span><b>×${mul}</b><i>3 个月</i></div>
+            <div class="stage-metric"><span>品牌加成</span><b>+${brandGain.toFixed(1)}</b><i>${priceHit ? '定价加分' : '定价扣分'}</i></div>
+            <div class="stage-metric"><span>发布会费用</span><b>${fmtMoney(cost)}</b><i>${released.length} 款同发</i></div>
+          </div>
+          <div class="stage-result-lines">
+            <div><span class="dim">主推</span><b>${esc(lead.name)}</b> · 选择 ¥${fmtNum(pick.v)} · 市场心理价 ¥${fmtNum(suggested)}</div>
+            <div><span class="dim">媒体关注</span>${bestDim.icon} ${bestDim.name}（${Math.round(bestDim.v)} 分）· 你的选择：${dims.find((x) => x.id === pitchPick)?.name || '—'}</div>
+            <div><span class="dim">发布机型</span>${esc(names)}</div>
+            <div><span class="dim">每款热度</span>+${perHeat}（上限 120）· 发布前基础热度约 55</div>
+          </div>
         </div>
-        <div class="row" style="justify-content:flex-end;margin-top:12px"><button class="btn primary" id="stage-done">结束发布会</button></div>`;
+        <div class="row" style="justify-content:flex-end;gap:8px;margin-top:12px">
+          <button class="btn" id="stage-goto">查看产品</button>
+          <button class="btn primary" id="stage-done">结束发布会</button>
+        </div>`;
       sfx('launch');
     };
 
@@ -3041,6 +3112,7 @@ export function renderGame(root, state, opts = {}) {
 
     panel.addEventListener('click', (e) => {
       if (e.target.closest('#stage-done')) { done(); render(); return; }
+      if (e.target.closest('#stage-goto')) { done(); tab = 'product'; render(); return; }
       if (phase === 'select' && e.target.closest('#stage-start')) {
         if (state.company.cash < costOf()) { opts.onToast?.('资金不足，无法举办发布会', 'bad'); return; }
         renderGuess();
@@ -3575,38 +3647,58 @@ export function renderGame(root, state, opts = {}) {
       const mode = n.payMode || 'cash';
       const total = totalOf(n);
       const first = firstOf(n);
-      return `<div class="tiny" style="line-height:2.1">
-          <div class="between"><span class="dim">谈判对象</span><b>${esc(comp.name)}（品牌 ${comp.brand.toFixed(0)} · 防御 ${Math.round((n.defense || 0) * 100)}%）</b></div>
-          <div class="between"><span class="dim">当前要价</span><b class="mono" id="neg-ask">${n.ask ? fmtMoney(n.ask) : '—'}</b></div>
-          <div class="between"><span class="dim">谈判回合</span><b>${n.rounds || 0}</b></div>
-          <div class="between"><span class="dim">对方情绪</span><b id="neg-mood">${'●'.repeat(Math.max(1, Math.round((n.mood || 50) / 20)))} ${(n.mood || 50).toFixed(0)}</b></div>
-          <div class="between"><span class="dim">我方现金</span><b class="mono">${fmtMoney(state.company.cash)}</b></div>
-          <div class="between"><span class="dim">${mode === 'installment' ? '首付 / 总对价' : mode === 'equity' ? '换股对价' : '应付对价'}</span><b class="mono" id="neg-total">${fmtMoney(first)}${mode === 'installment' ? ` <span class="dim">/ ${fmtMoney(total)}</span>` : ''}</b></div>
+      const modeDef = PAY_MODES.find((p) => p.id === mode) || PAY_MODES[0];
+      const mood = Math.round(n.mood || 50);
+      const defense = Math.round((n.defense || 0) * 100);
+      return `<div class="neg-grid">
+          <div class="neg-panel">
+            <div class="neg-title"><span>${esc(comp.name)}</span><span class="chip">品牌 ${comp.brand.toFixed(0)}</span></div>
+            <div class="neg-ask-row"><span class="dim tiny">当前要价</span><b class="mono" id="neg-ask">${n.ask ? fmtMoney(n.ask) : '—'}</b></div>
+            <div class="neg-bar"><span style="width:34px">防御</span><div class="bar"><i id="neg-defense-bar" style="width:${defense}%;background:#f5a542"></i></div><b id="neg-defense">${defense}%</b></div>
+            <div class="neg-bar"><span style="width:34px">情绪</span><div class="bar"><i id="neg-mood-bar" style="width:${mood}%;background:#37c9a5"></i></div><b id="neg-mood">${mood}/100</b></div>
+            <div class="tiny dim" style="margin-top:9px">第 ${n.rounds || 0} 轮 · ${n.hostile ? '敌意收购（不还价）' : '友好谈判'}</div>
+          </div>
+          <div class="neg-panel">
+            <div class="neg-title"><span>我方方案</span><span class="chip">现金 ${fmtMoney(state.company.cash)}</span></div>
+            <div class="row" style="gap:5px;flex-wrap:wrap;margin-top:8px" id="neg-pay">${payButtons()}</div>
+            <div class="neg-total"><span>${mode === 'installment' ? '首付 / 总对价' : mode === 'equity' ? '换股对价' : '应付对价'}</span><b class="mono" id="neg-total">${fmtMoney(first)}${mode === 'installment' ? ` <span class="dim">/ ${fmtMoney(total)}</span>` : ''}</b></div>
+            <div class="row neg-bid-row" style="gap:6px">
+              <input id="neg-offer" type="number" min="0" step="1000000" placeholder="我方出价（总价，未含支付溢价）" style="flex:1;min-width:120px" />
+              <button class="btn primary" id="neg-bid">出价</button>
+            </div>
+            <button class="btn" id="neg-accept" style="width:100%">接受当前要价</button>
+            <div class="tiny dim" style="margin-top:6px">${esc(modeDef.desc)}</div>
+          </div>
         </div>
-        <div class="row" style="gap:5px;flex-wrap:wrap;margin-top:8px" id="neg-pay">${payButtons()}</div>
-        <div class="tiny dim" style="margin:4px 0 8px">${esc((PAY_MODES.find((p) => p.id === mode) || PAY_MODES[0]).desc)}</div>
-        <div class="tiny dim" style="margin:8px 0;line-height:1.8;max-height:110px;overflow:auto;background:rgba(255,255,255,.03);padding:8px;border-radius:8px">
-          ${log.map((l) => `· ${esc(l)}`).join('<br/>')}
-        </div>
-        <div class="row" style="gap:6px;flex-wrap:wrap">
-          <input id="neg-offer" type="number" min="0" step="1000000" placeholder="我方出价（总价，未含支付溢价）" style="flex:1;min-width:150px" />
-          <button class="btn small primary" id="neg-bid">出价</button>
-          <button class="btn small" id="neg-accept">接受要价</button>
-          <button class="btn small ghost" id="neg-charm" ${(n.charmUsed || 0) >= 3 ? 'disabled' : ''}>公关游说（${n.charmUsed || 0}/3）</button>
-          <button class="btn small ghost" id="neg-walk">放弃谈判</button>
-        </div>
-        <div class="tiny dim" style="margin-top:6px">提示：出价达到要价即刻成交；低于要价 80% 会被拒绝，多次低球报价会让对方离席。分期首付 35%，换股会稀释母公司股东。</div>
-        ${n.hostile
-          ? '<div class="tiny bad" style="margin-top:5px">敌意收购：不接受还价，防御越高越可能被董事会直接拒绝。</div>'
-          : '<div class="tiny" style="margin-top:8px"><button class="btn tiny ghost danger" id="neg-hostile">转为敌意收购（溢价 35%）</button><span class="tiny dim"> 需品牌 ≥ 55</span></div>'}`;
+        <details class="neg-rules"><summary>谈判规则 / 支付说明</summary>
+          <div style="line-height:1.8;margin-top:5px">出价达到当前要价即刻成交；低于要价 80% 会被拒绝，多次低球会让对方离席。分期首付 35%，换股会稀释母公司股东；敌意收购只接受现金且不还价。</div>
+        </details>
+        <div class="neg-log" id="neg-log">${log.map((l) => `· ${esc(l)}`).join('<br/>')}</div>
+        <div class="neg-actions">
+          <button class="btn tiny ghost" id="neg-charm" ${(n.charmUsed || 0) >= 3 ? 'disabled' : ''}>公关游说（${n.charmUsed || 0}/3）</button>
+          <button class="btn tiny ghost" id="neg-walk">放弃谈判</button>
+          <span style="flex:1"></span>
+          ${n.hostile
+            ? '<span class="chip bad">敌意收购 · 不接受还价</span>'
+            : '<button class="btn tiny ghost danger" id="neg-hostile">转为敌意收购（+35%）</button>'}
+        </div>`;
     };
     const { mask, close } = modalShell(`收购谈判 · ${comp.name}`, '谈判桌', body(), 'modal-wide');
     const refresh = () => {
       const n = state.negotiation;
       if (!n) return;
-      mask.querySelector('#neg-ask') && (mask.querySelector('#neg-ask').textContent = fmtMoney(n.ask));
+      const askEl = mask.querySelector('#neg-ask');
+      if (askEl) askEl.textContent = fmtMoney(n.ask);
+      const defense = Math.round((n.defense || 0) * 100);
+      const defBar = mask.querySelector('#neg-defense-bar');
+      if (defBar) defBar.style.width = defense + '%';
+      const defTxt = mask.querySelector('#neg-defense');
+      if (defTxt) defTxt.textContent = defense + '%';
+      const mood = Math.round(n.mood || 0);
+      const moodBar = mask.querySelector('#neg-mood-bar');
+      if (moodBar) moodBar.style.width = mood + '%';
       const moodEl = mask.querySelector('#neg-mood');
-      if (moodEl) moodEl.textContent = '●'.repeat(Math.max(1, Math.round(n.mood / 20))) + ' ' + n.mood.toFixed(0);
+      if (moodEl) moodEl.textContent = `${mood}/100`;
       const total = dealPrice(n, n.payMode || 'cash');
       const first = (n.payMode || 'cash') === 'installment' ? Math.round(total * 0.35)
         : (n.payMode === 'equity' ? 0 : total);
@@ -3614,7 +3706,17 @@ export function renderGame(root, state, opts = {}) {
       if (totEl) totEl.innerHTML = fmtMoney(first) + ((n.payMode || 'cash') === 'installment' ? ` <span class="dim">/ ${fmtMoney(total)}</span>` : '');
       const payEl = mask.querySelector('#neg-pay');
       if (payEl) payEl.innerHTML = payButtons();
-      const logEl = mask.querySelector('div.tiny.dim[style*="max-height"]');
+      const accBtn = mask.querySelector('#neg-accept');
+      if (accBtn) {
+        accBtn.textContent = `接受当前要价（${fmtMoney(first)}${(n.payMode || 'cash') === 'installment' ? ' 首付' : ''}）`;
+        accBtn.disabled = (n.payMode || 'cash') !== 'equity' && state.company.cash < total;
+      }
+      const charmBtn = mask.querySelector('#neg-charm');
+      if (charmBtn) {
+        charmBtn.textContent = `公关游说（${n.charmUsed || 0}/3）`;
+        charmBtn.disabled = (n.charmUsed || 0) >= 3;
+      }
+      const logEl = mask.querySelector('#neg-log');
       if (logEl) logEl.innerHTML = log.map((l) => `· ${esc(l)}`).join('<br/>');
     };
     const step = (offer) => {

@@ -121,6 +121,9 @@ const sandbox = (cash = 2e10) => {
   m.released = true;
   tick(s);
   check('发布后开始销售', (m.sold || 0) > 0, `sold=${Math.round(m.sold || 0)}`);
+  m.heat = 200;
+  tick(s);
+  check('热度上限 120', m.heat <= 120 && m.heat > 0, `heat=${Math.round(m.heat)}`);
   const legacy = sandbox();
   legacy.models[0].launched = { year: 2020, month: 1 };
   legacy.models[0].released = undefined;
