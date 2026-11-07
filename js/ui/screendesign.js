@@ -32,7 +32,8 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
   // ---------- 编辑逻辑 ----------
   function newDesign(name) {
     return { uid: 'ui' + Date.now().toString(36) + Math.random().toString(36).slice(2, 4), name, wallpaper: '', wallColor: '#0a1020',
-      carrier: '5G', showTime: true, showBattery: true, showSignal: true, navStyle: 'gesture', dockCount: 4, cols: 4, rows: 5 };
+      carrier: '5G', showTime: true, showBattery: true, showSignal: true, navStyle: 'gesture', dockCount: 4, cols: 4, rows: 5,
+      canvasW: 1080, canvasH: 2340, lockAspect: true };
   }
   function ensureActive() {
     if (!active) { active = newDesign('默认 UI'); state.uiDesigns.push(active); }
@@ -40,6 +41,10 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
 
   function renderControls() {
     ensureActive();
+    // 旧方案迁移：画布/比例字段幂等补齐
+    if (!active.canvasW) { active.canvasW = 1080; active.canvasH = 2340; active.lockAspect = true; }
+    if (!active.canvasH) active.canvasH = Math.round(active.canvasW * 19.5 / 9);
+    if (active.lockAspect === undefined) active.lockAspect = true;
     const designs = state.uiDesigns.map((d, i) => `<option value="${i}" ${d === active ? 'selected' : ''}>${d.name}</option>`).join('');
     controlsEl.innerHTML = `
       <div class="field"><span>方案</span>
@@ -80,6 +85,21 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
         <span class="tiny dim">应用数</span>
         ${[0, 3, 4, 5].map((n) => `<button class="btn tiny ${active.dockCount === n ? 'primary' : ''}" data-sd="dock" data-v="${n}">${n || '无'}</button>`).join('')}
       </div>
+      <div class="section-label">画布</div>
+      <div class="row" style="gap:5px;flex-wrap:wrap;margin-bottom:6px">
+        ${[['16:9', 16 / 9], ['19.5:9', 19.5 / 9], ['21:9', 21 / 9], ['4:3', 4 / 3], ['1:1', 1]].map(([n, r]) => {
+          const cur = Math.abs(active.canvasH / active.canvasW - r) < 0.01;
+          return `<button class="btn tiny ${cur ? 'primary' : ''}" data-sd="ratio" data-v="${r}">${n}</button>`;
+        }).join('')}
+      </div>
+      <label class="form-check" style="margin:0 0 6px"><input type="checkbox" class="form-check-input" data-sd="lock" ${active.lockAspect ? 'checked' : ''} /><span class="form-check-label tiny">锁定比例（改宽自动算高）</span></label>
+      <div class="row" style="gap:6px;align-items:center">
+        <span class="tiny dim" style="width:52px">宽</span>
+        <input type="number" data-sd="canvas-w" value="${active.canvasW}" min="240" max="2160" step="10" style="width:80px" />
+        <span class="tiny dim">高</span>
+        <input type="number" data-sd="canvas-h" value="${active.canvasH}" min="240" max="4680" step="10" style="width:80px" />
+      </div>
+      <div class="tiny dim" style="margin:4px 0 6px">设计分辨率（预览按窗口缩放显示）；壁纸导入按此比例裁切</div>
       <div class="section-label">桌面网格</div>
       <div class="row" style="gap:8px;align-items:center">
         <span class="tiny dim">列</span>${[3, 4, 5].map((n) => `<button class="btn tiny ${active.cols === n ? 'primary' : ''}" data-sd="cols" data-v="${n}">${n}</button>`).join('')}
@@ -180,16 +200,19 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
   }
 
   function draw() {
+    ensureActive();
     const wrap = overlay.querySelector('[data-sd=preview-wrap]');
+    const W = active.canvasW || 1080;
+    const H = active.canvasH || Math.round(W * 19.5 / 9);
+    const ratio = H / W;
     const maxH = wrap.clientHeight - 20;
     const maxW = wrap.clientWidth - 20;
-    const aspect = 19.5 / 9;
-    let pw = maxW, ph = pw / aspect;
-    if (ph > maxH) { ph = maxH; pw = ph * aspect; }
+    let pw = maxW, ph = pw * ratio;
+    if (ph > maxH) { ph = maxH; pw = ph / ratio; }
     cv.style.width = pw + 'px'; cv.style.height = ph + 'px';
-    cv.width = pw * 2; cv.height = ph * 2;
-    ctx.setTransform(2, 0, 0, 2, 0, 0);
-    compose(ctx, pw, ph);
+    cv.width = W; cv.height = H;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    compose(ctx, W, H);
   }
 
   // ---------- 事件 ----------
@@ -208,7 +231,15 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
       }
     } else if (k === 'import') { controlsEl.querySelector('[data-sd=file]').click(); return; }
     else if (k === 'clear-wp') { active.wallpaper = ''; dirty = true; }
-    else if (k === 'nav' || k === 'dock' || k === 'cols' || k === 'rows') {
+    else if (k === 'ratio') {
+      const r = Number(act.dataset.v);
+      active.canvasH = Math.round(active.canvasW * r);
+      if (active.canvasH > 4680) { active.canvasH = 4680; active.canvasW = Math.round(active.canvasH / r); }
+      dirty = true;
+    } else if (k === 'lock') {
+      active.lockAspect = !active.lockAspect;
+      dirty = true;
+    } else if (k === 'nav' || k === 'dock' || k === 'cols' || k === 'rows') {
       const v = k === 'dock' || k === 'cols' || k === 'rows' ? Number(act.dataset.v) : act.dataset.v;
       if (k === 'nav') active.navStyle = v;
       else if (k === 'dock') active.dockCount = v;
@@ -227,7 +258,20 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
     else if (k === 'showTime') active.showTime = e.target.checked;
     else if (k === 'showSignal') active.showSignal = e.target.checked;
     else if (k === 'showBattery') active.showBattery = e.target.checked;
-    if (k !== 'name') { draw(); persist(); }
+    else if (k === 'canvas-w') {
+      const prevRatio = (active.canvasH || 2340) / (active.canvasW || 1080);
+      active.canvasW = Math.round(Math.min(2160, Math.max(240, Number(e.target.value) || 1080)));
+      if (active.lockAspect) active.canvasH = Math.round(active.canvasW * prevRatio);
+    } else if (k === 'canvas-h') {
+      const prevRatio = (active.canvasH || 2340) / (active.canvasW || 1080);
+      const nh = Math.round(Math.min(4680, Math.max(240, Number(e.target.value) || 2340)));
+      if (active.lockAspect) active.canvasW = Math.round(nh / prevRatio);
+      active.canvasH = nh;
+    } else if (k === 'lock') {
+      active.lockAspect = e.target.checked;
+    }
+    if (k === 'canvas-w' || k === 'canvas-h') { draw(); persist(); renderControls(); }
+    else if (k !== 'name') { draw(); persist(); }
     else { draw(); } // 名称不触发持久化（打字中）
   });
   controlsEl.addEventListener('change', (e) => {
@@ -240,11 +284,11 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
       if (!file) return;
       const img = new Image();
       img.onload = () => {
-        // 压缩到屏幕纵横比，最大高度 640（控制存档体积）
-        const maxH = 640;
-        const aspect = 19.5 / 9;
-        const tw = Math.min(360, Math.round(maxH * aspect));
-        const th = Math.round(tw / aspect);
+        // 压缩到方案画布纵横比（宽度跟随画布，控制存档体积）
+        const ratio2 = (active.canvasH || 2340) / (active.canvasW || 1080);
+        let tw = Math.min(active.canvasW || 1080, 720);
+        let th = Math.round(tw * ratio2);
+        while (tw * th > 1300000) { tw = Math.round(tw * 0.9); th = Math.round(tw * ratio2); }
         const c = document.createElement('canvas');
         c.width = tw; c.height = th;
         const cctx = c.getContext('2d');
