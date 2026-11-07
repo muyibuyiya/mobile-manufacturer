@@ -271,6 +271,7 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
   function importWallpaper(file, key) {
     if (!file) return;
     const img = new Image();
+    const objUrl = URL.createObjectURL(file);
     img.onload = () => {
       const ratio2 = (active.canvasH || 2340) / (active.canvasW || 1080);
       let tw = Math.min(active.canvasW || 1080, 720);
@@ -282,12 +283,24 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
       const s = Math.max(tw / img.width, th / img.height);
       const dw = img.width * s, dh = img.height * s;
       cctx.drawImage(img, (tw - dw) / 2, (th - dh) / 2, dw, dh);
-      active[key] = c.toDataURL('image/jpeg', 0.82);
+      try {
+        active[key] = c.toDataURL('image/jpeg', 0.82);
+      } catch (e) {
+        if (onToast) onToast('图片过大或格式不支持，请换一张 JPG/PNG', 'warn');
+        return;
+      }
       markDirty();
+      // 导入后自动切到对应画面，避免在桌面预览里导入锁屏壁纸“看不到效果”
+      previewMode = key === 'lockWallpaper' ? 'lock' : 'home';
       renderControls(); draw();
+      URL.revokeObjectURL(objUrl);
       if (onToast) onToast(key === 'lockWallpaper' ? '锁屏壁纸已导入（自动裁剪适配屏幕）' : '桌面壁纸已导入（自动裁剪适配屏幕）', 'good');
     };
-    img.src = URL.createObjectURL(file);
+    img.onerror = () => {
+      URL.revokeObjectURL(objUrl);
+      if (onToast) onToast('图片格式无法识别（HEIC 等格式不支持），请选 JPG/PNG', 'warn');
+    };
+    img.src = objUrl;
   }
 
   // ---------- 提交 / 退出 ----------

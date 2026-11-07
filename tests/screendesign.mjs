@@ -121,7 +121,42 @@ async function main() {
   }))()`);
   check('锁屏预览可切换', lock.active === true, JSON.stringify(lock));
   check('锁屏壁纸/通知选项', lock.hasLockFile && lock.hasLockColor && lock.hasNotif);
-  await shot('lock');
+
+  // 导入壁纸：应自动切到对应画面，且缩略图出现
+  const uploadLock = await ev(`(async () => {
+    document.querySelector('[data-sd=preview][data-v=home]').click();
+    const c = document.createElement('canvas'); c.width = 80; c.height = 160;
+    const x = c.getContext('2d'); x.fillStyle = '#00ff00'; x.fillRect(0, 0, 80, 160);
+    const blob = await new Promise(r => c.toBlob(r, 'image/png'));
+    const dt = new DataTransfer(); dt.items.add(new File([blob], 'lock.png', { type: 'image/png' }));
+    const input = document.querySelector('[data-sd=lock-file]');
+    input.files = dt.files;
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    await new Promise(r => setTimeout(r, 700));
+    return {
+      lock: document.querySelector('[data-sd=preview][data-v=lock]')?.classList.contains('primary'),
+      thumb: (document.querySelector('[data-sd=wp-thumb]')?.src || '').startsWith('data:image'),
+    };
+  })()`);
+  check('导入锁屏壁纸自动切到锁屏', uploadLock.lock === true && uploadLock.thumb === true, JSON.stringify(uploadLock));
+
+  const uploadHome = await ev(`(async () => {
+    document.querySelector('[data-sd=preview][data-v=lock]').click();
+    const c = document.createElement('canvas'); c.width = 80; c.height = 160;
+    const x = c.getContext('2d'); x.fillStyle = '#ff00ff'; x.fillRect(0, 0, 80, 160);
+    const blob = await new Promise(r => c.toBlob(r, 'image/png'));
+    const dt = new DataTransfer(); dt.items.add(new File([blob], 'home.png', { type: 'image/png' }));
+    const input = document.querySelector('[data-sd=file]');
+    input.files = dt.files;
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    await new Promise(r => setTimeout(r, 700));
+    return {
+      home: document.querySelector('[data-sd=preview][data-v=home]')?.classList.contains('primary'),
+      thumb: (document.querySelector('[data-sd=wp-thumb]')?.src || '').startsWith('data:image'),
+    };
+  })()`);
+  check('导入桌面壁纸自动切到桌面', uploadHome.home === true && uploadHome.thumb === true, JSON.stringify(uploadHome));
+  await shot('upload');
 
   // 不保存退出：草稿不应写回；重新进入仍是默认手势 28%
   await ev(`document.querySelector('[data-sd=discard]').click()`);
