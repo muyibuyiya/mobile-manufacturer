@@ -127,7 +127,7 @@ export function defaultDesign(year = 2020, unlocked = []) {
       offX: 0, offY: 0, modScale: 1,
       step: true, // 摄像头凸台（台阶）：关闭后镜头直接嵌在背盖上
       // deco 装饰台形状：circle 圆形 / square 正方形 / rounded 圆角矩形 / pill 胶囊
-      deco: { shape: 'rounded', w: modern ? 26 : 16, h: modern ? 26 : 16, radius: 8 },
+      deco: { shape: 'rounded', w: modern ? 26 : 16, h: modern ? 26 : 16, radius: 8, material: 'metal', color: '' },
       // 闪光灯位置（相对 deco 中心，mm）与半径
       flash: { x: 0, y: 0, r: 1.5, offDeco: true },
       // 逐镜设计：type 决定焦段类型；sensor 为真实传感器 id（sn_own=自研）；
@@ -204,7 +204,10 @@ export function makeLens(role, year, unlocked, x = 0, y = 0, oisByDefault = fals
 export function ensureLenses(design) {
   const c = design?.camera;
   if (!c) return design;
-  if (!c.deco) c.deco = { shape: 'rounded', w: 26, h: 26, radius: 8 };
+  if (!c.deco) c.deco = { shape: 'rounded', w: 26, h: 26, radius: 8, material: 'metal', color: '' };
+  // deco 材质（metal/glass/plastic）与颜色（'' = 跟随后盖）：旧档幂等补齐
+  if (!['metal', 'glass', 'plastic'].includes(c.deco.material)) c.deco.material = 'metal';
+  if (c.deco.color === undefined) c.deco.color = '';
   if (!c.flash) c.flash = { x: 0, y: 0, r: 1.5, offDeco: true };
   // 闪光灯样式（round/rounded/slot/ring）与宽/长（矩形/槽形用），旧档幂等补齐
   if (!c.flash.style) c.flash.style = 'round';
@@ -748,14 +751,15 @@ export function validate(design, year, opts = {}) {
     if (camR.x0 < -b.width / 2 || camR.x1 > b.width / 2 || camR.y0 < -b.length / 2 || camR.y1 > b.length / 2) {
       issues.push({ level: 'error', text: '摄像头模组超出机身范围，请调整位置或尺寸。' });
     }
-    // 每颗镜头必须在 deco 内（deco 中心坐标系）；潜望方形基座占位更宽
-    const halfW = camR.w / 2, halfH = camR.h / 2;
+    // 镜头允许装到 deco 之外的后盖（真机常见：独立镜圈/镜头岛外挂）；
+    // 只校验不越出机身，且开凸台时镜头不能被 deco 板遮住中心区域（给出提示而非拦截）
     const lenses = design.camera.lenses || [];
     for (let i = 0; i < lenses.length; i++) {
       const l = lenses[i];
       const r = lensRadiusMm((sensorById(l.sensor) || {}).format) * (l.size || 1) * (l.type === 'periscope' ? 1.25 : 1);
-      if (Math.abs(l.x) + r > halfW + 0.5 || Math.abs(l.y) + r > halfH + 0.5) {
-        issues.push({ level: 'error', text: `镜头 ${i + 1} 超出 deco 范围，请调整镜头位置或加大 deco。` });
+      const lxAbs = Math.abs(camR.cx + l.x) + r, lyAbs = Math.abs(camR.cy + l.y) + r;
+      if (lxAbs > b.width / 2 - 0.6 || lyAbs > b.length / 2 - 0.6) {
+        issues.push({ level: 'error', text: `镜头 ${i + 1} 超出机身范围，请向内调整。` });
         break;
       }
     }
@@ -907,5 +911,24 @@ export function ensureTemplate(d, year = 2020) {
   else d.homeStyle = '';
   if (!T.notch.includes(d.screen.notch)) d.screen.notch = T.notch[0] || 'none';
   if (!T.screen.aspects.includes(d.screen.aspect)) d.screen.aspect = T.screen.aspects.includes(d.screen.aspect) ? d.screen.aspect : T.screen.aspects[0];
+  // 背部智窗：字段幂等补齐（否则 setPath 写入会崩）
+  d.backWindow = d.backWindow || {};
+  if (typeof d.backWindow.on !== 'boolean') d.backWindow.on = false;
+  if (!Number.isFinite(d.backWindow.inch)) d.backWindow.inch = 1.8;
+  if (!Number.isFinite(d.backWindow.cx)) d.backWindow.cx = 0;
+  if (!Number.isFinite(d.backWindow.cy)) d.backWindow.cy = -18;
+  // 配置版本：独立定价（v.price 按市场存绝对值）；老档 priceMul 迁移为等效价格
+  if (Array.isArray(d.variants)) {
+    for (const v of d.variants) {
+      if (v && !v.price) v.price = {};
+      if (v && !v.uid) v.uid = 'v' + Math.random().toString(36).slice(2, 8);
+    }
+  }
+  // 听筒：宽度/粗细/纵向偏移/形状（slot 胶囊 / rounded 圆角矩形）
+  d.earpiece = d.earpiece || {};
+  if (!Number.isFinite(d.earpiece.w)) d.earpiece.w = 8;
+  if (!Number.isFinite(d.earpiece.h)) d.earpiece.h = 1.1;
+  if (!Number.isFinite(d.earpiece.y)) d.earpiece.y = 0;
+  if (!['slot', 'rounded'].includes(d.earpiece.shape)) d.earpiece.shape = 'rounded';
   return d;
 }

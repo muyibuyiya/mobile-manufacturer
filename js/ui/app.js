@@ -99,6 +99,7 @@ const PAGES = [
   { id: 'finance', name: '财务中心', icon: '¥' },
   { id: 'rivals', name: '竞争对手', icon: '⚔' },
   { id: 'hq', name: '公司园区', icon: '⌂' },
+  { id: 'news', name: '通知与新闻', icon: '🔔' },
 ];
 
 export function renderGame(root, state, opts = {}) {
@@ -322,7 +323,7 @@ export function renderGame(root, state, opts = {}) {
       saveGame(state, Number(el.dataset.slot));
       opts.onToast?.('已保存到槽位 ' + el.dataset.slot, 'good');
     }
-    if (el.dataset.act === 'open-news') { openNewsPanel(); return; }
+    if (el.dataset.act === 'open-news') { tab = 'news'; designer?.destroy(); designer = null; render(); return; }
     if (el.dataset.act === 'open-gamemenu') { gameMenu(); return; }
     if (el.dataset.act === 'toggle-audio') {
       unlockAudio();
@@ -582,6 +583,43 @@ export function renderGame(root, state, opts = {}) {
         openScreenDesignUI();
         break;
       case 'open-poster': openPoster(ds.id); break;
+      case 'clone-model': {
+        const src = state.models.find((x) => x.id === ds.id);
+        if (!src) break;
+        const series = src.series || String(src.name).trim().split(/\s+/)[0] || '新系列';
+        const inSeries = state.models.filter((x) => (x.series || String(x.name).trim().split(/\s+/)[0]) === series);
+        const suffixes = ['Pro', 'Pro Max', 'Ultra', 'Plus', 'Lite', 'SE', 'Max', 'Mini'];
+        const used = new Set(inSeries.map((x) => String(x.name).slice(series.length).trim()));
+        const suffix = suffixes.find((sf) => !used.has(sf)) || `Gen${inSeries.length + 1}`;
+        const nm = {
+          ...JSON.parse(JSON.stringify(src)),
+          id: 'm_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
+          name: `${series} ${suffix}`,
+          series,
+          status: 'draft',
+          launched: null,
+          price: {},
+          inventory: 0,
+          sold: 0,
+          revenue: 0,
+          rating: 0,
+          hype: 0,
+          heat: 0,
+          reviews: [],
+          history: [],
+          comments: [],
+          awards: [],
+          markets: ['cn'],
+        };
+        nm.design.series = series;
+        // 配置与销量历史不继承（新机型重新定价/重新售卖）
+        if (nm.design.variants) nm.design.variants = nm.design.variants.map((v2) => ({ ...v2, sold: 0, revenue: 0, price: {} }));
+        state.models.push(nm);
+        addLog(state, 'product', `基于 ${src.name} 复制出同系列新机型 ${nm.name}（设计已继承，可继续调规格）`);
+        opts.onToast?.(`已复制为「${nm.name}」，可直接改设计（尺寸/规格）`, 'good');
+        render();
+        break;
+      }
       case 'open-news': openNewsPanel(); break;
       case 'rival-chart':
         rivalChart = ds.v;
@@ -625,6 +663,13 @@ export function renderGame(root, state, opts = {}) {
         break;
       }
       case 'emp-filter': empFilter = ds.v; render(); break;
+      case 'news-read-all': {
+        (state.news || []).forEach((n) => { n.read = true; });
+        paintTopbar();
+        opts.onToast?.('已全部标为已读', 'good');
+        render();
+        break;
+      }
       case 'series-fold': {
         if (foldedSeries.has(ds.v)) foldedSeries.delete(ds.v); else foldedSeries.add(ds.v);
         render();
@@ -888,6 +933,21 @@ export function renderGame(root, state, opts = {}) {
         m.price[ds.market] = suggestedPrice(state, m, ds.market);
         render(); break;
       }
+      case 'v-auto-price': {
+        const m = state.models.find((x) => x.id === ds.model);
+        const vv = m && (m.design?.variants || [])[Number(ds.vi)];
+        if (vv) {
+          // 建议价 = 机型建议价 × 该版本相对基础配置的容量溢价（RAM+存储）
+          const base = suggestedPrice(state, m, ds.market);
+          const r0 = RAMS.find((x) => x.id === m.design.parts.ram), s0 = STORAGES.find((x) => x.id === m.design.parts.storage);
+          const r1 = RAMS.find((x) => x.id === vv.ram), s1 = STORAGES.find((x) => x.id === vv.stg);
+          const cap = (r, s2) => (r?.gb || 0.25) * 0.6 + (s2?.gb || 16) * 0.12;
+          const mul = Math.max(0.75, Math.min(2.2, (cap(r1, s1) + 12) / (cap(r0, s0) + 12)));
+          vv.price = vv.price || {};
+          vv.price[ds.market] = Math.round(base * mul / 10) * 10;
+        }
+        render(); break;
+      }
       case 'toggle-mode': {
         if (ds.mode === 'own' && !state.factories.length) {
           opts.onToast?.('还没有工厂，请先购地建厂', 'warn');
@@ -927,6 +987,15 @@ export function renderGame(root, state, opts = {}) {
       if (m) m.price[el.dataset.market] = Math.max(1, Math.round(v));
       render();
     }
+    if (name === 'vprice') {
+      const m = state.models.find((x) => x.id === el.dataset.model);
+      const vv = m && (m.design?.variants || [])[Number(el.dataset.vi)];
+      if (vv) {
+        vv.price = vv.price || {};
+        vv.price[el.dataset.market] = Math.max(1, Math.round(v));
+      }
+      render();
+    }
     if (name === 'sandbox-cash') { state.company.cash = v; render(); }
     if (name === 'auto-supply') { ensureSupply(state).auto = el.checked; render(); }
   }
@@ -946,7 +1015,7 @@ export function renderGame(root, state, opts = {}) {
     content.innerHTML = pageShell(page, PAGES[tab] || ({}));
     // 各页面内容
     const fn = {
-      overview: pageOverview, product: pageProducts, tech: pageTech, supply: pageSupply,
+      overview: pageOverview, news: pageNews, product: pageProducts, tech: pageTech, supply: pageSupply,
       selfrnd: pageSelfRnd,
       market: pageMarket, company: pageCompany, finance: pageFinance, rivals: pageRivals,
       hq: pageHQ,
@@ -989,6 +1058,58 @@ export function renderGame(root, state, opts = {}) {
 
   function head(title, sub, right = '') {
     return `<div class="page-head"><h1>${title}</h1><div class="sub">${sub}</div><div class="spacer"></div>${right}</div>`;
+  }
+
+  // ---------- 通知与新闻：左「公司内部通知」/ 右「外部信息新闻」 ----------
+  const NEWS_INTERNAL_TYPES = ['star', 'group', 'award'];
+  const LOG_INTERNAL = ['hr', 'rnd', 'tech', 'finance', 'product', 'company', 'build', 'guide', 'system', 'good', 'bad', 'warn'];
+  const LOG_EXTERNAL = ['rival', 'market'];
+
+  function pageNews() {
+    const news = state.news || [];
+    const log = state.log || [];
+    const internalNews = news.filter((n) => NEWS_INTERNAL_TYPES.includes(n.type));
+    const externalNews = news.filter((n) => !NEWS_INTERNAL_TYPES.includes(n.type));
+    const internalLog = log.filter((l) => LOG_INTERNAL.includes(l.type)).slice(0, 60);
+    const externalLog = log.filter((l) => LOG_EXTERNAL.includes(l.type)).slice(0, 60);
+    const unread = news.filter((n) => !n.read).length;
+    const chipOf = (t) => t === 'competitor' ? ['对手', '#f56b6b'] : t === 'attack' ? ['攻击', '#f56b6b']
+      : t === 'award' ? ['奖项', '#f5a542'] : t === 'star' ? ['员工', '#7de3b0'] : t === 'group' ? ['集团', '#8fd0ff'] : ['消息', '#4aa3ff'];
+    const newsRow = (n) => {
+      const [label, col] = chipOf(n.type);
+      return `<div class="list-item" style="align-items:flex-start;${n.read ? 'opacity:.55' : ''}">
+        <div style="flex:1;min-width:0">
+          <div class="between"><b class="tiny">${esc(n.title)}</b><span class="tiny dim mono">${esc(n.time || '')}</span></div>
+          ${n.text ? `<div class="tiny dim" style="margin-top:2px">${esc(n.text)}</div>` : ''}
+        </div>
+        <span class="chip tiny" style="border-color:${col}55;color:${col};flex-shrink:0">${label}</span>
+      </div>`;
+    };
+    const logRow = (l) => `<div class="tiny" style="line-height:1.7;padding:3px 0;border-bottom:1px solid rgba(255,255,255,.04)">
+      <span class="dim mono">${esc(l.t)}</span>
+      <span class="${l.type === 'bad' || l.type === 'rival' ? 'warn' : l.type === 'good' ? 'good' : ''}"> ${esc(l.text)}</span>
+    </div>`;
+    return `
+      ${head('通知与新闻', `内部 ${internalNews.length + internalLog.length} 条 · 外部 ${externalNews.length + externalLog.length} 条`,
+        unread ? `<button class="btn small" data-act="news-read-all">全部标为已读（${unread}）</button>` : '<span class="chip good">全部已读</span>')}
+      <div class="two-col" style="align-items:start">
+        <div class="card">
+          <div class="card-title">公司内部通知 <span class="right">人事 · 研发 · 财务 · 集团</span></div>
+          <div class="list">
+            ${internalNews.slice(0, 40).map(newsRow).join('') || ''}
+            ${internalNews.length ? '<div class="section-label">运营日志</div>' : ''}
+            ${internalLog.map(logRow).join('') || (internalNews.length ? '' : '<div class="empty">暂无内部通知</div>')}
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-title">外部信息新闻 <span class="right">竞品动态 · 市场消息</span></div>
+          <div class="list">
+            ${externalNews.slice(0, 40).map(newsRow).join('') || ''}
+            ${externalNews.length ? '<div class="section-label">行业动态</div>' : ''}
+            ${externalLog.map(logRow).join('') || (externalNews.length ? '' : '<div class="empty">暂无外部新闻</div>')}
+          </div>
+        </div>
+      </div>`;
   }
 
   function pageOverview() {
@@ -1259,7 +1380,7 @@ export function renderGame(root, state, opts = {}) {
               ${(m.design?.variants || []).length ? `<div class="between" style="align-items:flex-start"><span class="dim">配置版本</span><span class="tiny" style="text-align:right;line-height:1.7">${m.design.variants.map((v) => {
                 const r = RAMS.find((x) => x.id === v.ram), st = STORAGES.find((x) => x.id === v.stg);
                 const gb = (g) => g >= 1 ? `${Math.round(g * 10) / 10}G` : `${Math.round(g * 1024)}M`;
-                return `${gb(r?.gb || 0)}+${gb(st?.gb || 0)} ×${(v.priceMul || 1).toFixed(2)}${m.status === 'production' ? ` · ${fmtNum(v.sold || 0)}台` : ''}`;
+                return `${gb(r?.gb || 0)}+${gb(st?.gb || 0)}${v.price?.cn ? ` · ¥${fmtNum(v.price.cn)}` : ''}${m.status === 'production' ? ` · ${fmtNum(v.sold || 0)}台` : ''}`;
               }).join('<br/>')}</span></div>` : ''}
               ${m.review ? `<div class="between"><span class="dim">故障率 / 退货率</span><b class="${m.review.defect > 0.05 ? 'warn' : ''}">${(m.review.defect * 100).toFixed(1)}% / ${(m.review.returns * 100).toFixed(1)}%</b></div>` : ''}
             </div>
@@ -1275,6 +1396,7 @@ export function renderGame(root, state, opts = {}) {
               <button class="btn small" data-act="design" data-id="${m.id}">设计</button>
               <button class="btn small ghost" data-act="rename-model" data-id="${m.id}" title="按「系列 代数 版本」规范命名">✏️ 改名</button>
               <button class="btn small" data-act="open-poster" data-id="${m.id}">🖼 宣传图</button>
+              <button class="btn small" data-act="clone-model" data-id="${m.id}" title="复制此设计为同系列新机型（Pro / Pro Max / Ultra 等）">⧉ 复制为新机型</button>
               ${m.status === 'draft' ? `<button class="btn small primary" data-act="launch" data-id="${m.id}" ${!v.ok ? 'disabled' : ''}>量产上市</button>` : ''}
               ${m.status === 'production' ? `<button class="btn small" data-act="goto" data-tab="market">定价</button><button class="btn small danger" data-act="discontinue" data-id="${m.id}">下市</button>` : ''}
               ${m.status === 'draft' ? `<button class="btn small ghost danger" data-act="delete-model" data-id="${m.id}">删除</button>` : ''}
@@ -1530,6 +1652,56 @@ export function renderGame(root, state, opts = {}) {
       ${head('市场与销售', `全球份额 ${(totalShare * 100).toFixed(2)}% · ${models.length} 款在售`,
         `<button class="btn small" data-act="goto" data-tab="rivals">竞争格局</button>
          <button class="btn small primary" data-act="open-stage" data-model="${models[0] ? models[0].id : ''}" ${models.length ? '' : 'disabled'}>举办发布会（¥500万）</button>`)}
+      ${(() => {
+        // 销量/销售额多维统计：上月 / 本季 / 本年 / 累计（用 model.history 月度记录）
+        const ym = state.date.year, mm = state.date.month;
+        const lastKey = ym * 12 + mm - 1;        // 上一个已结算月份
+        const ly = Math.floor(lastKey / 12), lm = lastKey % 12;
+        const qStart = ly * 12 + Math.floor(lm / 3) * 3; // 本季首月（以最近结算月所在季度计）
+        const yStart = ly * 12;                  // 本年 1 月
+        const keyOf = (h) => h.y * 12 + h.m;
+        const rows = models.map((m) => {
+          const hist = (m.history || []);
+          let lastU = 0, lastR = 0, qU = 0, qR = 0, yU = 0, yR = 0;
+          for (const h of hist) {
+            const k = keyOf(h);
+            if (k === lastKey) { lastU += h.units || 0; lastR += h.rev || 0; }
+            if (k >= qStart && k <= lastKey) { qU += h.units || 0; qR += h.rev || 0; }
+            if (k >= yStart && k <= lastKey) { yU += h.units || 0; yR += h.rev || 0; }
+          }
+          return { m, lastU, lastR, qU, qR, yU, yR, totalU: m.sold || 0, totalR: m.revenue || 0 };
+        });
+        const tot = rows.reduce((a, r) => ({ lastU: a.lastU + r.lastU, lastR: a.lastR + r.lastR, qU: a.qU + r.qU, qR: a.qR + r.qR, yU: a.yU + r.yU, yR: a.yR + r.yR, totalU: a.totalU + r.totalU, totalR: a.totalR + r.totalR }), { lastU: 0, lastR: 0, qU: 0, qR: 0, yU: 0, yR: 0, totalU: 0, totalR: 0 });
+        const cell = (v) => fmtNum(Math.round(v || 0));
+        return `<div class="card" style="margin-bottom:12px">
+          <div class="card-title">机型销量与销售额 <span class="right">以 ${ly}年${lm + 1}月 为最近结算月 · 季度按自然季度</span></div>
+          <div style="overflow:auto"><table class="tbl" style="width:100%;min-width:820px">
+            <thead><tr>
+              <th>机型</th>
+              <th class="num">上月销量</th><th class="num">上月销售额</th>
+              <th class="num">本季销量</th><th class="num">本季销售额</th>
+              <th class="num">本年销量</th><th class="num">本年销售额</th>
+              <th class="num">累计销量</th><th class="num">累计销售额</th>
+            </tr></thead>
+            <tbody>
+              ${rows.map((r) => `<tr>
+                <td>${esc(r.m.name)} <span class="tiny dim">${r.m.lineup && LINEUP_MAP[r.m.lineup] ? LINEUP_MAP[r.m.lineup].name : ''}</span></td>
+                <td class="num">${cell(r.lastU)}</td><td class="num">¥${fmtNum(Math.round(r.lastR))}</td>
+                <td class="num">${cell(r.qU)}</td><td class="num">¥${fmtNum(Math.round(r.qR))}</td>
+                <td class="num">${cell(r.yU)}</td><td class="num">¥${fmtNum(Math.round(r.yR))}</td>
+                <td class="num">${cell(r.totalU)}</td><td class="num">¥${fmtNum(Math.round(r.totalR))}</td>
+              </tr>`).join('') || '<tr><td colspan="9" class="dim">还没有在售机型</td></tr>'}
+              <tr style="border-top:1px solid var(--line-2)">
+                <td><b>合计</b></td>
+                <td class="num"><b>${cell(tot.lastU)}</b></td><td class="num"><b>¥${fmtNum(Math.round(tot.lastR))}</b></td>
+                <td class="num"><b>${cell(tot.qU)}</b></td><td class="num"><b>¥${fmtNum(Math.round(tot.qR))}</b></td>
+                <td class="num"><b>${cell(tot.yU)}</b></td><td class="num"><b>¥${fmtNum(Math.round(tot.yR))}</b></td>
+                <td class="num"><b>${cell(tot.totalU)}</b></td><td class="num"><b>¥${fmtNum(Math.round(tot.totalR))}</b></td>
+              </tr>
+            </tbody>
+          </table></div>
+        </div>`;
+      })()}
       <div class="card" style="margin-bottom:12px">
         <div class="card-title">渠道关系 <span class="right">三渠道平均关系影响全局销量 ×${channelSalesMul(state).toFixed(2)} · 每月自然滑落</span></div>
         <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px">
@@ -1610,25 +1782,53 @@ export function renderGame(root, state, opts = {}) {
         <table class="tbl">
           <thead><tr><th>机型</th><th>市场</th><th class="num">建议价</th><th class="num">我的定价</th><th class="num">毛利率</th><th></th></tr></thead>
           <tbody>
-            ${models.flatMap((m) => MARKETS.map((mk) => {
-              const on = m.markets.includes(mk.id);
-              const p = m.price[mk.id] || 0;
-              const cost = unitCost(state, m);
-              const margin = p > 0 ? (p - cost) / p : 0;
-              return `<tr>
-                <td>${mk === MARKETS[0] ? `<b>${esc(m.name)}</b>` : ''}</td>
-                <td>${mk.name}</td>
-                <td class="num">¥${fmtNum(suggestedPrice(state, m, mk.id))}</td>
-                <td class="num" style="width:130px">
-                  ${on ? `<input type="number" value="${Math.round(p)}" step="50" data-field="price" data-model="${m.id}" data-market="${mk.id}" />` : '<span class="dim tiny">未进入</span>'}
-                </td>
-                <td class="num ${margin > 0.15 ? 'good' : margin > 0 ? 'warn' : 'bad'}">${on ? (margin * 100).toFixed(0) + '%' : '—'}</td>
-                <td class="num">
-                  <button class="btn small ${on ? 'ghost' : ''}" data-act="toggle-market" data-model="${m.id}" data-market="${mk.id}">${on ? '退出' : '进入 ¥80万'}</button>
-                  ${on ? `<button class="btn small ghost" data-act="auto-price" data-model="${m.id}" data-market="${mk.id}">建议价</button>` : ''}
-                </td>
-              </tr>`;
-            })).join('')}
+            ${models.flatMap((m) => {
+              const variants = (m.design?.variants || []).filter((v) => v && v.ram && v.stg);
+              const gb = (g) => g >= 1 ? `${Math.round(g * 10) / 10}G` : `${Math.round(g * 1024)}M`;
+              const vLabel = (v) => {
+                const r = RAMS.find((x) => x.id === v.ram), st = STORAGES.find((x) => x.id === v.stg);
+                return `${gb(r?.gb || 0)}+${gb(st?.gb || 0)}`;
+              };
+              return MARKETS.map((mk) => {
+                const on = m.markets.includes(mk.id);
+                // 基础款价格缺失（老档/新进市场）时用建议价兜底并写回，避免显示 0 与 0% 毛利
+                if (on && !(m.price[mk.id] > 0)) m.price[mk.id] = suggestedPrice(state, m, mk.id);
+                const p = m.price[mk.id] || 0;
+                const cost = unitCost(state, m);
+                const margin = p > 0 ? (p - cost) / p : 0;
+                const rows = [];
+                rows.push(`<tr>
+                  <td>${mk === MARKETS[0] ? `<b>${esc(m.name)}</b>` : ''}</td>
+                  <td>${mk.name}${variants.length ? ' <span class="tiny dim">（基础款）</span>' : ''}</td>
+                  <td class="num">¥${fmtNum(suggestedPrice(state, m, mk.id))}</td>
+                  <td class="num" style="width:130px">
+                    ${on ? `<input type="number" value="${Math.round(p)}" step="50" data-field="price" data-model="${m.id}" data-market="${mk.id}" />` : '<span class="dim tiny">未进入</span>'}
+                  </td>
+                  <td class="num ${margin > 0.15 ? 'good' : margin > 0 ? 'warn' : 'bad'}">${on ? (margin * 100).toFixed(0) + '%' : '—'}</td>
+                  <td class="num">
+                    <button class="btn small ${on ? 'ghost' : ''}" data-act="toggle-market" data-model="${m.id}" data-market="${mk.id}">${on ? '退出' : '进入 ¥80万'}</button>
+                    ${on ? `<button class="btn small ghost" data-act="auto-price" data-model="${m.id}" data-market="${mk.id}">建议价</button>` : ''}
+                  </td>
+                </tr>`);
+                // 每个配置版本单独一行定价（价格存 v.price[market]，缺省跟随机型基准价）
+                variants.forEach((v, vi) => {
+                  const vp = (v.price && (v.price[mk.id] ?? v.price.cn)) || p;
+                  const vCost = cost + (v.ram === m.design.parts.ram && v.stg === m.design.parts.storage ? 0 : 0);
+                  const vMargin = vp > 0 ? (vp - vCost) / vp : 0;
+                  rows.push(`<tr class="vrow">
+                    <td></td>
+                    <td class="tiny dim">└ ${vLabel(v)}</td>
+                    <td class="num tiny dim">¥${fmtNum(Math.round(suggestedPrice(state, m, mk.id)))}</td>
+                    <td class="num" style="width:130px">
+                      ${on ? `<input type="number" value="${Math.round(vp)}" step="50" data-field="vprice" data-model="${m.id}" data-market="${mk.id}" data-vi="${vi}" />` : '<span class="dim tiny">—</span>'}
+                    </td>
+                    <td class="num ${vMargin > 0.15 ? 'good' : vMargin > 0 ? 'warn' : 'bad'}">${on ? (vMargin * 100).toFixed(0) + '%' : '—'}</td>
+                    <td class="num">${on ? `<button class="btn tiny ghost" data-act="v-auto-price" data-model="${m.id}" data-market="${mk.id}" data-vi="${vi}">建议价</button>` : ''}</td>
+                  </tr>`);
+                });
+                return rows.join('');
+              });
+            }).join('')}
           </tbody>
         </table>
       </div>` : `<div class="card"><div class="empty">还没有在售机型，先去设计并量产一款手机。<br/><button class="btn small primary" data-act="goto" data-tab="product">去设计</button></div></div>`}`;

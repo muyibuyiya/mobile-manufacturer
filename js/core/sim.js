@@ -432,16 +432,20 @@ function stepSales(state, report) {
       const take = Math.min(demand, model.inventory);
       model.inventory -= take;
       model.sold += take;
-      // 多配置变体：库存共用，按定价倍率的反比分配销量与收入
+      // 多配置变体：库存共用，各版本按**自己的价格**结算；
+      // 销量分配 = 价格越低卖得越多的弹性权重（相对机型基准价）
       const variants = (model.design?.variants || []).filter((v) => v && v.ram && v.stg);
       let rev = take * price;
       if (variants.length) {
-        const raw = variants.map((v) => Math.pow(1 / Math.max(0.3, v.priceMul || 1), 1.5));
+        const base = price || 1;
+        const vp = variants.map((v) => (v.price && v.price[market.id]) || (v.price && v.price.cn) || base);
+        // 相对基准价的弹性：低于基准价卖得更多
+        const raw = vp.map((pp) => Math.pow(base / Math.max(1, pp), 1.5));
         const wSum = raw.reduce((a, b) => a + b, 0) || 1;
         rev = 0;
         variants.forEach((v, vi) => {
           const vTake = take * (raw[vi] / wSum);
-          const vRev = vTake * price * (v.priceMul || 1);
+          const vRev = vTake * vp[vi];
           v.sold = (v.sold || 0) + vTake;
           v.revenue = (v.revenue || 0) + vRev;
           rev += vRev;
