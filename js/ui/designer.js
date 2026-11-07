@@ -149,6 +149,8 @@ export function renderDesigner(container, state, model, hooks = {}) {
   let camAnim = null;
   let foldView = 'open'; // 折叠机型 2D 显示状态：open 展开 / folded 折叠
   const lensFolded = new Set(); // 镜头卡片折叠状态（会话级）
+  let openPicker = null; // 当前展开的品牌二级选择器 key
+  const pickerBrand = {}; // 各选择器记住的品牌筛选
   let schemeEdit = null;   // 配色方案编辑面板打开时保存 { name }（颜色实时写在机身上）
   let schemeSnapshot = null; // 打开编辑面板时的配色快照（取消时恢复）
   // 公司 Logo 预加载（预设 SVG 字符串 → dataURL；上传/绘制为 PNG dataURL），加载完成后重绘
@@ -732,21 +734,21 @@ export function renderDesigner(container, state, model, hooks = {}) {
       if (!sByName.has(g)) { const grp = { name: g, items: [] }; sByName.set(g, grp); sGroups.push(grp); }
       sByName.get(g).items.push(s);
     }
-    const sensorOpts = sGroups.map((g) => `<optgroup label="${g.name}">${g.items.map((s) => {
-      const ok = s.year <= availYear && unlocked.includes(s.tech);
-      return `<option value="${s.id}" ${l.sensor === s.id ? 'selected' : ''} ${ok ? '' : 'disabled'}>${s.name} · ${s.mp}MP · ${s.format} · ¥${s.price}${ok ? '' : '（未解锁）'}</option>`;
-    }).join('')}</optgroup>`).join('');
-    const ownOpt = ownLv >= 1 || l.sensor === 'sn_own'
-      ? `<option value="sn_own" ${l.sensor === 'sn_own' ? 'selected' : ''}>自研传感器${l.sensor === 'sn_own' ? ' · 已采用' : ''}</option>`
-      : `<option value="sn_own" disabled>自研传感器（需光学影像部）</option>`;
+    const sensorEntries = [];
+    for (const g of sGroups) for (const sn of g.items) {
+      const ok = sn.year <= availYear && unlocked.includes(sn.tech);
+      sensorEntries.push({ id: sn.id, text: `${sn.name} · ${sn.mp}MP · ${sn.format}`, disabled: !ok, tip: ok ? `¥${sn.price}` : '未解锁', brand: g.name });
+    }
+    sensorEntries.push({ id: 'sn_own', text: `自研传感器${l.sensor === 'sn_own' ? ' · 已采用' : ''}`, disabled: !(ownLv >= 1 || l.sensor === 'sn_own'), tip: '需光学影像部', brand: '自研' });
+    const sensorPicker = pickerHTML(`camera.lenses.${i}.sensor`, sensorEntries, l.sensor);
     const folded = lensFolded.has(i);
     return `
-      <div style="border:1px solid var(--line-2);border-radius:8px;padding:8px;margin-bottom:6px">
+      <div style="border:1px solid ${folded ? 'rgba(255,255,255,.1)' : 'var(--line-2)'};border-radius:${folded ? '16px' : '8px'};padding:${folded ? '4px 10px' : '8px'};margin-bottom:${folded ? 4 : 6}px;background:${folded ? 'rgba(255,255,255,.03)' : 'none'}">
         <div class="between" style="margin-bottom:${folded ? 0 : 5}px">
           <b style="cursor:pointer" data-lens-fold="${i}">镜头 ${i + 1} <span class="tiny dim">${(LENS_TYPES.find((t) => t.id === l.type) || {}).name || ''}</span> ${folded ? '▸' : '▾'}</b>
           ${d.camera.lenses.length > 1 ? `<button type="button" class="btn small ghost danger" data-lens-del="${i}">移除</button>` : ''}
         </div>
-        ${folded ? '' : '<div>'}
+        ${folded ? '<div style="display:none">' : '<div>'}
         <label class="field"><span>类型</span>
           <select data-k="camera.lenses.${i}.type">
             ${LENS_TYPES.map((t) => {
@@ -756,9 +758,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
           </select>
         </label>
         <label class="field"><span>传感器</span>
-          <select data-k="camera.lenses.${i}.sensor">
-            ${sensorOpts}${ownOpt}
-          </select>
+                    ${sensorPicker}
         </label>
         ${sliderRow('光圈 ƒ/', `camera.lenses.${i}.ap`, l.ap, 0.95, 4, 0.1, '')}
         ${sliderRow('等效焦距', `camera.lenses.${i}.focal`, l.focal, 8, 160, 1, 'mm')}
@@ -769,7 +769,9 @@ export function renderDesigner(container, state, model, hooks = {}) {
         ${sliderRow('镜头位置 · 横', `camera.lenses.${i}.x`, l.x, -(d.camera.deco.w / 2), d.camera.deco.w / 2, 0.5, 'mm')}
         ${sliderRow('镜头位置 · 纵', `camera.lenses.${i}.y`, l.y, -(d.camera.deco.h / 2), d.camera.deco.h / 2, 0.5, 'mm')}
         ${sliderRow('镜头大小', `camera.lenses.${i}.size`, l.size ?? 1, 0.75, 1.5, 0.05, '×')}
-        </div>${folded ? '' : '</div>'}`;
+        ${sliderRow('镜头厚度', `camera.lenses.${i}.thick`, l.thick ?? 1, 0.6, 1.6, 0.05, '×')}
+        </div>
+      </div>`;
   }
 
   const fmtGb = (gb) => gb >= 1 ? `${Math.round(gb * 10) / 10}GB` : gb >= 0.001 ? `${Math.round(gb * 1024)}MB` : `${Math.round(gb * 1024 * 1024)}KB`;
@@ -833,52 +835,46 @@ export function renderDesigner(container, state, model, hooks = {}) {
     if (target === 'back') b.color = hex;
   }
 
+  // 品牌二级选择器：收起=当前值胶囊；展开=品牌按钮行 + 型号列表（替代原生 select+optgroup）
+  function pickerHTML(key, entries, curId) {
+    const open = openPicker === key;
+    const brands = [];
+    const seenB = new Set();
+    for (const e of entries) { if (!seenB.has(e.brand)) { seenB.add(e.brand); brands.push(e.brand); } }
+    const hasBrands = entries.some((e) => e.brand);
+    const curEntry = entries.find((e) => e.id === curId);
+    const brandF = pickerBrand[key] ?? 'all';
+    const shown = hasBrands && brandF !== 'all' ? entries.filter((e) => e.brand === brandF) : entries;
+    const curText = curEntry ? curEntry.text : '—';
+    return `<div class="pselect" data-pick="${key}">
+      <button type="button" class="pselect-btn" data-pick-open="${key}"><span>${curText}</span><span class="pselect-caret">${open ? '▴' : '▾'}</span></button>
+      ${open ? `<div class="pselect-panel">
+        ${hasBrands ? `<div class="pselect-brands">
+          <button type="button" class="btn tiny ${brandF === 'all' ? 'primary' : 'ghost'}" data-pick-brand="${key}" data-b="all">全部</button>
+          ${brands.map((b) => `<button type="button" class="btn tiny ${brandF === b ? 'primary' : 'ghost'}" data-pick-brand="${key}" data-b="${b}">${b}</button>`).join('')}
+        </div>` : ''}
+        <div class="pselect-list">
+          ${shown.map((e) => `<div class="pselect-item ${e.id === curId ? 'on' : ''} ${e.disabled ? 'disabled' : ''}" data-pick-item="${key}" data-id="${e.id}" data-brand="${e.brand}" ${e.tip && e.disabled ? `title="${e.tip}"` : ''}>
+            <span>${e.text}</span>${e.tip ? `<span class="tiny dim">${e.tip}</span>` : ''}
+          </div>`).join('')}
+        </div>
+      </div>` : ''}
+    </div>`;
+  }
+
   function selectRow(label, key, list, fmt, techKey, divs = {}) {
     const cur = model.design.parts[key.split('.')[1]];
     const lv = key === 'parts.cpu' ? (divs.chip?.level || 0) : key === 'parts.os' ? (divs.osd?.level || 0) : 99;
     // 有 vendor 字段的部件按品牌分组（optgroup）：同品牌全部归入一组（列表按年代排序，
     // 同品牌会穿插出现，不能只合并相邻项），组间保持品牌首次出现顺序
-    const hasVendor = list.some((x) => x.vendor);
-    if (hasVendor) {
-      const groups = [];
-      const byName = new Map();
-      for (const x of list) {
-        const g = x.vendor || '公版';
-        if (!byName.has(g)) {
-          const grp = { name: g, items: [] };
-          byName.set(g, grp);
-          groups.push(grp);
-        }
-        byName.get(g).items.push(x);
-      }
-      return `<label class="field"><span>${label}</span>
-      <select data-k="${key}">
-        ${groups.map((g) => `<optgroup label="${g.name}">${g.items.map((x) => {
-          const ok = unlocked.includes(x[techKey]) && x.year <= availYear;
-          let ownOk = true, ownTip = '';
-          if (x.own && key === 'parts.cpu') { ownOk = lv >= 1; ownTip = '（需成立半导体研发中心）'; }
-          return `<option value="${x.id}" ${cur === x.id ? 'selected' : ''} ${ok && ownOk ? '' : 'disabled'}>${fmt(x)}${ok ? '' : '（未解锁）'}${ownTip}</option>`;
-        }).join('')}</optgroup>`).join('')}
-      </select>
-    </label>`;
-    }
-    return `<label class="field"><span>${label}</span>
-      <select data-k="${key}">
-        ${list.map((x) => {
-          const ok = unlocked.includes(x[techKey]) && x.year <= availYear;
-          // 自研部件需要对应部门等级
-          let ownOk = true, ownTip = '';
-          if (x.own) {
-            if (key === 'parts.cpu') { ownOk = lv >= 1; ownTip = '（需成立半导体研发中心）'; }
-            if (key === 'parts.os' && x.kind === 'own') {
-              ownOk = lv >= (x.ownLv || 1);
-              ownTip = ownOk ? '' : `（需系统开发部 Lv.${x.ownLv}）`;
-            }
-          }
-          return `<option value="${x.id}" ${cur === x.id ? 'selected' : ''} ${ok && ownOk ? '' : 'disabled'}>${fmt(x)}${ok ? '' : '（未解锁）'}${ownTip}</option>`;
-        }).join('')}
-      </select>
-    </label>`;
+    const entries = list.map((x) => {
+      const ok = unlocked.includes(x[techKey]) && x.year <= availYear;
+      let ownOk = true, ownTip = '';
+      if (x.own && key === 'parts.cpu') { ownOk = lv >= 1; ownTip = '需成立半导体研发中心'; }
+      if (x.own && key === 'parts.os' && x.kind === 'own') { ownOk = lv >= (x.ownLv || 1); ownTip = ownOk ? '' : `需系统开发部 Lv.${x.ownLv}`; }
+      return { id: x.id, text: fmt(x), disabled: !(ok && ownOk), tip: !ok ? '未解锁' : ownTip, brand: x.vendor || '公版' };
+    });
+    return `<label class="field"><span>${label}</span>${pickerHTML(key, entries, cur)}</label>`;
   }
 
   // ---------- 右侧评估 ----------
@@ -2444,6 +2440,9 @@ export function renderDesigner(container, state, model, hooks = {}) {
           periShift = pd + 0.08; // 镜组贴装在凸台外表面，金属圈半嵌进台面
         }
         const zL = zBase - periShift;
+        // 镜头厚度：thick 倍率缩放镜组凸出量（镜身/玻璃/内圈随之移动）
+        const th = clamp(l.thick ?? 1, 0.6, 1.6);
+        const barrelH = (bump + 1.5) * th;
         // 金属装饰圈：主摄/潜望亮银、长焦近黑（粗糙度更高）
         const ringMat2 = new THREE.MeshStandardMaterial({ color: look.ring, metalness: 1, roughness: l.type === 'tele' ? 0.42 : 0.2 });
         const ring = new THREE.Mesh(new THREE.TorusGeometry(lensR * 0.96, Math.max(0.32, lensR * 0.13), 10, 28), ringMat2);
@@ -2451,11 +2450,11 @@ export function renderDesigner(container, state, model, hooks = {}) {
         ring.position.set(lx, ly, zL - 0.06);
         g.add(ring);
         // 镜身（标准圆柱上下等径；openEnded——端盖会挡住玻璃，且镜口本该是空的）
-        const barrel = new THREE.Mesh(new THREE.CylinderGeometry(lensR * 0.98, lensR * 0.98, bump + 1.5, 26, 1, true),
+        const barrel = new THREE.Mesh(new THREE.CylinderGeometry(lensR * 0.98, lensR * 0.98, barrelH, 26, 1, true),
           new THREE.MeshStandardMaterial({ color: look.barrel, metalness: 0.55, roughness: 0.32 }));
         barrel.userData.part = 'camera';
         barrel.rotation.x = Math.PI / 2;
-        barrel.position.set(lx, ly, zL - bump / 2 - 0.35);
+        barrel.position.set(lx, ly, zL + 0.4 - barrelH / 2);
         g.add(barrel);
         // 内圈：OIS 亮绿圈 / 普通暗圈（浮在玻璃面外 0.02mm，作镀膜刻环）
         const innerRing = new THREE.Mesh(new THREE.TorusGeometry(lensR * 0.68, Math.max(0.06, lensR * 0.045), 8, 22),
@@ -2465,14 +2464,14 @@ export function renderDesigner(container, state, model, hooks = {}) {
           }));
         innerRing.userData.part = 'camera';
         innerRing.rotation.y = Math.PI;
-        innerRing.position.set(lx, ly, zL - bump - 1.04);
+        innerRing.position.set(lx, ly, zL + 0.46 - barrelH);
         g.add(innerRing);
         // 最外层玻璃：程序化法线贴图（同心元件棱 + 弧面）+ roughnessMap + clearcoat，
         // 层次感与自然高光来自环境反射，不再用白球假高光（瞳孔已烘进颜色图）
         const glass = new THREE.Mesh(new THREE.CircleGeometry(lensR * 0.94, 28), lensGlassMaterial(look));
         glass.userData.part = 'camera';
         glass.rotation.y = Math.PI;
-        glass.position.set(lx, ly, zL - bump - 1.02);
+        glass.position.set(lx, ly, zL + 0.48 - barrelH);
         g.add(glass);
       }
 
@@ -3372,6 +3371,10 @@ export function renderDesigner(container, state, model, hooks = {}) {
       if (kk === 'navY') d.keypad.navY = clamp(Number(v) || 0, -6, 10);
     }
     if (key === 'earpiece.w') { d.earpiece = d.earpiece || {}; d.earpiece.w = clamp(Number(v) || 8, 0, 16); }
+    if (key.endsWith('.thick') && key.startsWith('camera.lenses.')) {
+      const li = Number(key.split('.')[2]);
+      if (d.camera.lenses[li]) d.camera.lenses[li].thick = clamp(Number(v) || 1, 0.6, 1.6);
+    }
     if (key === 'earpiece.y') { d.earpiece = d.earpiece || {}; d.earpiece.y = clamp(Number(v) || 0, -8, 24); }
     else if (key !== 'screen.inch') { /* 输入源控件保持用户输入 */ }
     // 比例预设切到「自由」时需重建控件，出现长宽比滑杆；充电口切自定义时出现形状编辑；
@@ -3560,6 +3563,30 @@ export function renderDesigner(container, state, model, hooks = {}) {
       if (viewMode === '2d') draw2D(); else buildPhone();
       return;
     }
+    // 品牌二级选择器：展开 / 切品牌 / 选型
+    const pickOpen = e.target.closest('[data-pick-open]');
+    if (pickOpen) {
+      const k = pickOpen.dataset.pickOpen;
+      openPicker = openPicker === k ? null : k;
+      renderControls();
+      return;
+    }
+    const pickBrand = e.target.closest('[data-pick-brand]');
+    if (pickBrand) {
+      const pk = pickBrand.dataset.pickBrand, bv = pickBrand.dataset.b;
+      pickerBrand[pk] = bv;
+      renderControls();
+      return;
+    }
+    const pickItem = e.target.closest('[data-pick-item]');
+    if (pickItem) {
+      if (pickItem.classList.contains('disabled')) return;
+      const k = pickItem.dataset.pickItem;
+      openPicker = null;
+      applyValue(k, pickItem.dataset.id);
+      return;
+    }
+    if (openPicker && !e.target.closest('[data-pick]')) { openPicker = null; renderControls(); return; }
     const lensFoldBtn = e.target.closest('[data-lens-fold]');
     if (lensFoldBtn) {
       const fi = Number(lensFoldBtn.dataset.lensFold);

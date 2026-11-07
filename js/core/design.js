@@ -216,7 +216,7 @@ export function ensureLenses(design) {
   if (Array.isArray(c.lenses) && c.lenses.length) {
     c.count = c.lenses.length;
     // 旧档镜头补 size 字段（幂等）
-    for (const l of c.lenses) if (l.size === undefined) l.size = 1;
+    for (const l of c.lenses) { if (l.size === undefined) l.size = 1; if (l.thick === undefined) l.thick = 1; }
     return design;
   }
   const year = design._year || 2020;
@@ -603,7 +603,7 @@ export function derive(design, year, opts = {}) {
     if (!sn) continue;
     const f = formatFactor(sn.format);
     camWeight += 3 + f * 7;
-    camThick = Math.max(camThick, lensThicknessMm(sn.format, l.type));
+    camThick = Math.max(camThick, lensThicknessMm(sn.format, l.type) * (l.thick ?? 1));
   }
   if (!design.camera.lenses.length) { camWeight = 0; camThick = 0; }
   const weight = Math.round(

@@ -680,3 +680,24 @@ html, body { touch-action: manipulation; -webkit-text-size-adjust: 100%; }
       env(safe-area-inset-bottom) env(safe-area-inset-left);
   }
 }
+
+/* 品牌二级选择器（v1.4）：品牌按钮行 + 型号列表 */
+.pselect { position: relative; }
+.pselect-btn {
+  width: 100%; display: flex; justify-content: space-between; align-items: center; gap: 8px;
+  background: #10151c; border: 1px solid var(--line-2); border-radius: 7px; padding: 7px 9px;
+  color: var(--text); cursor: pointer; font-size: 13px; text-align: left;
+}
+.pselect-btn:hover { border-color: var(--accent); }
+.pselect-caret { color: var(--dim); font-size: 11px; flex-shrink: 0; }
+.pselect-panel { margin-top: 5px; background: #10151c; border: 1px solid var(--accent); border-radius: 8px; padding: 6px; }
+.pselect-brands { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 6px; }
+.pselect-list { max-height: 230px; overflow-y: auto; }
+.pselect-item {
+  display: flex; justify-content: space-between; gap: 8px; padding: 6px 8px; border-radius: 6px;
+  cursor: pointer; font-size: 12.5px; align-items: baseline;
+}
+.pselect-item:hover { background: rgba(74,163,255,.12); }
+.pselect-item.on { background: rgba(74,163,255,.18); }
+.pselect-item.disabled { opacity: .45; cursor: not-allowed; }
+.pselect-item.disabled:hover { background: none; }
