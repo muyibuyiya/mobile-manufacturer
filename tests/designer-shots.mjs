@@ -35,7 +35,7 @@ async function main() {
   };
 
   await ev("localStorage.clear()");
-  await ev("document.querySelector('[data-mode=career]').click()"); await sleep(200);
+  await ev("[...document.querySelectorAll('.menu-item')].find(x=>x.textContent.includes('经营模式')).click()"); await sleep(200);
   await ev("(()=>{const y=document.querySelector('#f-year');y.value='2010';y.dispatchEvent(new Event('change'));return 1})()");
   await ev("document.querySelector('#start').click()"); await sleep(700);
   await ev("document.querySelector('[data-tab=product]').click()"); await sleep(200);

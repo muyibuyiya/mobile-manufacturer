@@ -194,6 +194,9 @@ export function buyPlot(state, plotId) {
 }
 
 export function stepConstruction(state, report) {
+  if (state.sandboxInstant?.build) {
+    for (const plot of state.campus.plots) if (plot.building?.status === 'building') plot.building.monthsLeft = 0.01;
+  }
   for (const plot of state.campus.plots) {
     const b = plot.building;
     if (!b || b.status !== 'building') continue;

@@ -42,7 +42,7 @@ async function main() {
   await ev("localStorage.clear()");
   await send('Page.reload'); await sleep(1400);
   errors.length = 0;
-  await ev("document.querySelector('[data-mode=sandbox]').click()"); await sleep(250);
+  await ev("[...document.querySelectorAll('.menu-item')].find(x=>x.textContent.includes('沙盒模式')).click()"); await sleep(250);
   await ev("document.querySelector('#start').click()"); await sleep(800);
 
   // ---- 1. 产品线 ----

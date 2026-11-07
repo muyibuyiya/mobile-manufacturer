@@ -59,12 +59,12 @@ export const IMAGE_SENSORS = [
 // 镜头类型：focal 典型区间（mm 等效焦距）、defFocal/defAp 默认值、weight 在评分中的权重、
 // thickBoost 附加厚度（mm，潜望光路横向折叠——厚度只比普通镜头略厚，焦距藏在平面尺寸里）、priceMul 成本系数
 export const LENS_TYPES = [
-  { id: 'main', name: '主摄', focal: [20, 35], defFocal: 23, defAp: 1.7, weight: 1.0, thickBoost: 0, priceMul: 1.0 },
-  { id: 'ultrawide', name: '超广角', focal: [10, 18], defFocal: 13, defAp: 2.2, weight: 0.55, thickBoost: 0, priceMul: 0.8 },
-  { id: 'tele', name: '长焦', focal: [45, 79], defFocal: 66, defAp: 2.4, weight: 0.6, thickBoost: 0.3, priceMul: 1.1 },
-  { id: 'periscope', name: '潜望长焦', focal: [80, 135], defFocal: 90, defAp: 3.0, weight: 0.65, thickBoost: 0.5, priceMul: 1.4 },
-  { id: 'depth', name: '景深', focal: [20, 30], defFocal: 24, defAp: 2.8, weight: 0.12, thickBoost: 0, priceMul: 0.4 },
-  { id: 'macro', name: '微距', focal: [20, 40], defFocal: 26, defAp: 2.6, weight: 0.18, thickBoost: 0, priceMul: 0.45 },
+  { id: 'main', name: '主摄', year: 1980, focal: [20, 35], defFocal: 23, defAp: 1.7, weight: 1.0, thickBoost: 0, priceMul: 1.0 },
+  { id: 'ultrawide', name: '超广角', year: 2015, focal: [10, 18], defFocal: 13, defAp: 2.2, weight: 0.55, thickBoost: 0, priceMul: 0.8 },
+  { id: 'tele', name: '长焦', year: 2005, focal: [45, 79], defFocal: 66, defAp: 2.4, weight: 0.6, thickBoost: 0.3, priceMul: 1.1 },
+  { id: 'periscope', name: '潜望长焦', year: 2019, focal: [80, 135], defFocal: 90, defAp: 3.0, weight: 0.65, thickBoost: 0.5, priceMul: 1.4 },
+  { id: 'depth', name: '景深', year: 2016, focal: [20, 30], defFocal: 24, defAp: 2.8, weight: 0.12, thickBoost: 0, priceMul: 0.4 },
+  { id: 'macro', name: '微距', year: 2018, focal: [20, 40], defFocal: 26, defAp: 2.6, weight: 0.18, thickBoost: 0, priceMul: 0.45 },
 ];
 
 // deco 形状预设（尺寸与圆角均可再自定义）

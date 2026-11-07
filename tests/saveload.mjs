@@ -30,21 +30,22 @@ async function main() {
   };
 
   await ev("localStorage.clear()");
-  await ev("document.querySelector('[data-mode=sandbox]').click()"); await sleep(250);
+  await ev("[...document.querySelectorAll('.menu-item')].find(x=>x.textContent.includes('沙盒模式')).click()"); await sleep(250);
   await ev("document.querySelector('#start').click()"); await sleep(700);
   for (let i = 0; i < 6; i++) { await ev("document.querySelector('[data-act=advance]').click()"); await sleep(60); }
   await sleep(300);
   const before = await ev("(()=>{const s=JSON.parse(localStorage.getItem('mm_autosave'));return {cash:Math.round(s.company.cash),date:s.date,emp:s.employees.length}})()");
 
   // 保存到槽位 1
-  await ev("document.querySelector('[data-tab=settings]').click()"); await sleep(400);
-  const saved = await ev("(()=>{const b=[...document.querySelectorAll('[data-act=save-slot], [data-act=save]')].find(x=>x.dataset.slot==='1');if(!b)return 'no-btn';b.click();return 'ok'})()");
+  await ev("document.querySelector('[data-act=open-gamemenu]').click()"); await sleep(300);
+  await ev("[...document.querySelectorAll('[data-gm]')].find(x=>x.dataset.gm==='save').click()"); await sleep(300);
+  const saved = await ev(`(()=>{const b=document.querySelector('[data-sp=save][data-slot="1"]');if(!b)return 'no-btn';b.click();return 'ok'})()`);
   await sleep(400);
   const hasSave = await ev("Object.keys(localStorage).filter(k=>k.includes('save')).join(',')");
 
   // 刷新后读档
   await send('Page.reload'); await sleep(1500);
-  await ev("document.querySelector('#btn-load').click()"); await sleep(400);
+  await ev("[...document.querySelectorAll('.menu-item')].find(x=>x.textContent.includes('存档')).click()"); await sleep(400);
   const loaded = await ev("(()=>{const b=document.querySelector('[data-slot=\"1\"]');if(!b)return 'no-slot';if(b.disabled)return 'disabled';b.click();return 'clicked'})()");
   await sleep(700);
   const after = await ev("(()=>{const s=JSON.parse(localStorage.getItem('mm_autosave'));return {cash:Math.round(s.company.cash),date:s.date,emp:s.employees.length,tab:!!document.querySelector('.game')}})()");
@@ -70,7 +71,7 @@ async function main() {
     return 'ok';
   })()`);
   await send('Page.reload'); await sleep(1500);
-  await ev("document.querySelector('#btn-load').click()"); await sleep(400);
+  await ev("[...document.querySelectorAll('.menu-item')].find(x=>x.textContent.includes('存档')).click()"); await sleep(400);
   const legacyPick = await ev("(()=>{const b=document.querySelector('[data-slot=\"1\"]');if(!b)return 'no-slot';if(b.disabled)return 'disabled';b.click();return 'clicked'})()");
   await sleep(700);
   // 顶栏直接反映内存中的当前状态，比 mm_autosave（按月结算才写）更可靠

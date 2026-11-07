@@ -99,7 +99,6 @@ const PAGES = [
   { id: 'finance', name: '财务中心', icon: '¥' },
   { id: 'rivals', name: '竞争对手', icon: '⚔' },
   { id: 'hq', name: '公司园区', icon: '⌂' },
-  { id: 'settings', name: '设置与存档', icon: '⚙' },
 ];
 
 export function renderGame(root, state, opts = {}) {
@@ -114,6 +113,8 @@ export function renderGame(root, state, opts = {}) {
   let activeModal = null;
   let rivalChart = 'bar';
   let empFilter = 'all';
+  let sbCollapsed = localStorage.getItem('mm_sb_collapsed') === '1';
+  const foldedSeries = new Set();
   let rivalRank = 'month';
   let renameTargetId = null;
 
@@ -217,11 +218,19 @@ export function renderGame(root, state, opts = {}) {
   const sidebar = root.querySelector('#sidebar');
   const content = root.querySelector('#content');
 
-  sidebar.innerHTML = PAGES.map((p) => `
-    <div class="nav-item" data-tab="${p.id}">
+  sidebar.innerHTML = '<div class="nav-item sb-toggle" data-act="sb-toggle" title="折叠 / 展开侧边栏"><span class="ico">«</span><span class="txt">收起</span></div><div class="nav-sep"></div>' +
+    PAGES.map((p) => `
+    <div class="nav-item" data-tab="${p.id}" title="${p.name}">
       <span class="ico">${p.icon}</span><span class="txt">${p.name}</span>
-    </div>`).join('') + '<div class="nav-sep"></div>' +
-    '<div class="nav-item" data-act="exit"><span class="ico">←</span><span class="txt">返回主菜单</span></div>';
+    </div>`).join('');
+  const syncSbToggle = () => {
+    const t = sidebar.querySelector('[data-act="sb-toggle"]');
+    if (!t) return;
+    t.querySelector('.ico').textContent = sbCollapsed ? '»' : '«';
+    t.querySelector('.txt').textContent = sbCollapsed ? '' : '收起';
+  };
+  if (sbCollapsed) { sidebar.classList.add('collapsed'); root.querySelector('.layout').classList.add('sb-collapsed'); }
+  syncSbToggle();
 
   // 竖屏提示关闭
   root.addEventListener('click', (e) => {
@@ -232,6 +241,14 @@ export function renderGame(root, state, opts = {}) {
   });
 
   sidebar.addEventListener('click', (e) => {
+    if (e.target.closest('[data-act="sb-toggle"]')) {
+      sbCollapsed = !sbCollapsed;
+      localStorage.setItem('mm_sb_collapsed', sbCollapsed ? '1' : '0');
+      sidebar.classList.toggle('collapsed', sbCollapsed);
+      root.querySelector('.layout')?.classList.toggle('sb-collapsed', sbCollapsed);
+      syncSbToggle();
+      return;
+    }
     const nav = e.target.closest('[data-tab]');
     if (nav) { tab = nav.dataset.tab; designer?.destroy(); designer = null; render(); }
     if (e.target.closest('[data-act="exit"]')) openExitConfirm();
@@ -293,9 +310,7 @@ export function renderGame(root, state, opts = {}) {
       </div>
       <button class="btn small" data-act="advance">下个月 ▸</button>
       <button class="btn small ghost" data-act="open-news" title="通知与新闻">🔔${unreadNews ? ` <b style="color:#f56b6b">${unreadNews}</b>` : ''}</button>
-      <button class="btn small ghost" data-act="save" data-slot="1">存档</button>
-      <button class="btn small ghost audio-btn ${audioEnabled() ? '' : 'off'}" data-act="toggle-audio"
-        title="${audioEnabled() ? '关闭音效' : '开启音效'}">${audioEnabled() ? '🔊' : '🔇'}</button>`;
+      <button class="btn small ghost" data-act="open-gamemenu" title="菜单">☰</button>`;
   }
 
   topbar.addEventListener('click', (e) => {
@@ -308,6 +323,7 @@ export function renderGame(root, state, opts = {}) {
       opts.onToast?.('已保存到槽位 ' + el.dataset.slot, 'good');
     }
     if (el.dataset.act === 'open-news') { openNewsPanel(); return; }
+    if (el.dataset.act === 'open-gamemenu') { gameMenu(); return; }
     if (el.dataset.act === 'toggle-audio') {
       unlockAudio();
       const on = setAudioEnabled(!audioEnabled());
@@ -609,6 +625,11 @@ export function renderGame(root, state, opts = {}) {
         break;
       }
       case 'emp-filter': empFilter = ds.v; render(); break;
+      case 'series-fold': {
+        if (foldedSeries.has(ds.v)) foldedSeries.delete(ds.v); else foldedSeries.add(ds.v);
+        render();
+        break;
+      }
       case 'channel-invest': {
         const r = channelInvest(state, ds.id);
         opts.onToast?.(r.msg, r.ok ? 'good' : 'bad');
@@ -928,7 +949,7 @@ export function renderGame(root, state, opts = {}) {
       overview: pageOverview, product: pageProducts, tech: pageTech, supply: pageSupply,
       selfrnd: pageSelfRnd,
       market: pageMarket, company: pageCompany, finance: pageFinance, rivals: pageRivals,
-      hq: pageHQ, settings: pageSettings,
+      hq: pageHQ,
     }[tab];
     if (fn) content.innerHTML = fn();
     // 新手引导横幅：插在页面头部之后
@@ -960,34 +981,6 @@ export function renderGame(root, state, opts = {}) {
     prevTab = tab;
     if (tab === 'hq') mountOffice();
     if (tab === 'overview') drawSpark();
-    if (tab === 'settings') {
-      // 导入存档：file input 的事件需要每次渲染后现挂
-      const f = content.querySelector('#import-file');
-      if (f) f.onchange = (e) => {
-        const file = e.target.files && e.target.files[0];
-        if (!file) return;
-        const reader = new FileReader();
-        reader.onload = () => {
-          try {
-            state = importSave(String(reader.result));
-            lastReport = null;
-            opts.onToast?.('存档已导入，进度已替换', 'good');
-            sfx('good');
-            render();
-          } catch (err) {
-            opts.onToast?.('导入失败：' + err.message, 'bad');
-          }
-        };
-        reader.readAsText(file);
-      };
-      // 音量滑杆
-      const vol = content.querySelector('#vol-slider');
-      if (vol) vol.oninput = () => {
-        setAudioVolume(Number(vol.value) / 100);
-        const b = vol.closest('.field')?.querySelector('b');
-        if (b) b.textContent = Math.round(audioVolume() * 100) + '%';
-      };
-    }
   }
 
   function pageShell(page) {
@@ -1212,7 +1205,8 @@ export function renderGame(root, state, opts = {}) {
     })();
     return `
       ${head('设计与产品', '从零设计一款手机，2D 六视图与 3D 模型实时同步',
-        `<button class="btn primary small" data-act="open-lineup">+ 新建机型</button>`)}
+        `<button class="btn primary small" data-act="open-lineup">+ 新建机型</button>
+         <button class="btn small" data-act="open-screendesign">屏幕设计</button>`)}
       ${lineOverview}
       ${models.length ? `<div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(320px,1fr))">
         ${(() => {
@@ -1229,8 +1223,8 @@ export function renderGame(root, state, opts = {}) {
           const st = statusMap[m.status] || ['未知', ''];
           const bw = 58, bh = Math.round(clamp(58 * (m.design.body.length / m.design.body.width), 96, 150));
           const camOn = (CAMERAS.find((c) => c.id === m.design.camera.part) || {}).mp > 0;
-          return `${firstIdx.get(ser) === gi && multi ? `<div class="card" style="grid-column:1/-1;padding:7px 12px;background:rgba(74,163,255,.05);border-color:rgba(143,208,255,.25)"><b class="tiny" style="color:#8fd0ff">系列 · ${esc(ser)}</b><span class="tiny dim" style="margin-left:8px">${models.filter((mm) => serOf(mm) === ser).length} 款机型</span></div>` : ''}
-            <div class="card">
+          return `${firstIdx.get(ser) === gi && multi ? `<div class="card" data-act="series-fold" data-v="${esc(ser)}" style="grid-column:1/-1;padding:7px 12px;background:rgba(74,163,255,.05);border-color:rgba(143,208,255,.25);cursor:pointer"><b class="tiny" style="color:#8fd0ff">系列 · ${esc(ser)}</b><span class="tiny dim" style="margin-left:8px">${models.filter((mm) => serOf(mm) === ser).length} 款机型</span><span class="tiny dim" style="float:right">${foldedSeries.has(ser) ? '▸ 已折叠' : '▾ 收起'}</span></div>` : ''}
+            <div class="card" style="${foldedSeries.has(ser) ? 'display:none' : ''}">
             <div class="row" style="gap:12px;align-items:flex-start;margin-bottom:10px">
               <img class="phone-thumb" alt="外观" src="${phoneFrontDataUrl(m.design, bw)}" style="width:${bw}px;height:${bh}px;object-fit:cover;border-radius:12px;background:#0b0f15;border:1px solid rgba(255,255,255,.08)" />
               <div style="flex:1;min-width:0">
@@ -1670,17 +1664,18 @@ export function renderGame(root, state, opts = {}) {
         <div class="card-title">系统科技树 <span class="right">系统开发部专属技术路线 · 软件部人力驱动研发</span></div>
         <div class="tiny dim" style="margin-bottom:8px">当前加成：评分 +${tb.scoreBonus} · 生态 +${tb.appsBonus} · 流行度上限 +${tb.popCap} · 流行度增速 +${tb.popGrowth}% · 授权收入 +${tb.licRate}%</div>
         ${ot.proj ? `<div class="tiny" style="color:#8fd0ff;margin-bottom:6px">🔧 「${esc(OS_TECHS.find((t) => t.id === ot.proj.id)?.name || '')}」研发中 — 预计还需 ${Math.max(1, Math.ceil(ot.proj.monthsLeft))} 个月</div>` : ''}
-        <div class="tiny" style="margin:8px 0 4px"><b>系统路线</b> <span class="tiny dim">三选一 · 互斥不可更换 · 选定即长期生效</span></div>
+        <div class="tiny" style="margin:8px 0 4px"><b>系统路线</b> <span class="tiny dim">按世代迭代 · 前代为前置 · 加成永久叠加</span></div>
         <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px;margin-bottom:10px">
           ${OS_ROUTES.map((r) => {
-            const chosen = (state.osTech && state.osTech.route) === r.id;
-            const taken = !!(state.osTech && state.osTech.route) && !chosen;
+            const routes = Array.isArray(ot.routes) ? ot.routes : (ot.route ? [ot.route] : []);
+            const done = routes.includes(r.id);
+            const prevOk = !r.prev || routes.includes(r.prev);
             const okYear = r.year <= state.date.year;
             const okLv = (state.divisions?.osd?.level || 0) >= r.osdLv;
-            const canGo = !chosen && !taken && okYear && okLv;
-            return `<div class="tech-node ${chosen ? 'done' : taken ? 'locked' : canGo ? 'ready' : 'future'}" ${canGo ? `data-act="os-route" data-id="${r.id}" title="${esc(r.desc)}"` : `title="${esc(r.desc)}"`}>
-              <div class="tname">${r.name}${chosen ? ' ✓' : ''}</div>
-              <div class="tmeta"><span>${r.year} 年 · 系统部 Lv.${r.osdLv}</span><span>${chosen ? '当前路线' : taken ? '互斥锁定' : canGo ? `选定 ${fmtMoney(r.cost)}` : `${r.year} 年 / Lv.${r.osdLv}`}</span></div>
+            const canGo = !done && prevOk && okYear && okLv;
+            return `<div class="tech-node ${done ? 'done' : canGo ? 'ready' : prevOk ? 'future' : 'locked'}" ${canGo ? `data-act="os-route" data-id="${r.id}" title="${esc(r.desc)}"` : `title="${esc(r.desc)}"`}>
+              <div class="tname">${r.name}${done ? ' ✓' : ''}</div>
+              <div class="tmeta"><span>${r.year} 年 · 系统部 Lv.${r.osdLv}</span><span>${done ? '已迭代' : canGo ? `迭代 ${fmtMoney(r.cost)}` : !prevOk ? '需先迭代上一代' : `${r.year} 年 / Lv.${r.osdLv}`}</span></div>
             </div>`;
           }).join('')}
         </div>
@@ -2398,88 +2393,6 @@ export function renderGame(root, state, opts = {}) {
   }
 
 
-  function pageSettings() {
-    const slots = saveSlots();
-    const q = readQualityPref();
-    const on = audioEnabled();
-    const g = state.guide;
-    const gOn = !(g?.skipped) && (g?.step || 0) < GUIDE_STEPS.length;
-    return `
-      ${head('设置与存档', '音效与画质保存在本设备，存档随游戏进度保存')}
-      <div class="two-col">
-        <div>
-          <div class="card" style="margin-bottom:12px">
-            <div class="card-title">存档槽位</div>
-            ${slots.map((s) => `<div class="list-item" style="margin-bottom:8px">
-              <div style="flex:1">
-                <b>槽位 ${s.slot}</b> <span class="tiny dim">${s.empty ? '空' : `${s.name} · ${s.date.year}年${s.date.month + 1}月`}</span>
-                ${s.empty ? '' : `<div class="tiny dim">现金 ${fmtMoney(s.cash)} · ${s.models} 款机型</div>`}
-              </div>
-              <button class="btn small primary" data-act="save" data-slot="${s.slot}">保存</button>
-              <button class="btn small" data-act="load" data-slot="${s.slot}" ${s.empty ? 'disabled' : ''}>读取</button>
-              <button class="btn small ghost danger" data-act="delete-save" data-slot="${s.slot}" ${s.empty ? 'disabled' : ''}>删除</button>
-            </div>`).join('')}
-          </div>
-          <div class="card">
-            <div class="card-title">存档文件（跨设备迁移）</div>
-            <div class="tiny dim" style="margin-bottom:9px">导出为 .json 文件备份或带到其他设备 / APP 使用；导入会替换当前进度，建议先导出备份。</div>
-            <div class="row">
-              <button class="btn small" data-act="export-save">⬇ 导出存档文件</button>
-              <button class="btn small" data-act="import-save">⬆ 导入存档文件</button>
-              <input type="file" id="import-file" accept=".json,application/json" style="display:none" />
-            </div>
-          </div>
-        </div>
-        <div>
-          <div class="card" style="margin-bottom:12px">
-            <div class="card-title">音效</div>
-            <div class="between" style="margin-bottom:10px">
-              <span class="small">界面与事件音效</span>
-              <button class="btn small ${on ? 'primary' : ''}" data-act="audio-toggle">${on ? '已开启' : '已关闭'}</button>
-            </div>
-            <label class="field"><span>音量 <b class="tiny">${Math.round(audioVolume() * 100)}%</b></span>
-              <input type="range" id="vol-slider" min="0" max="100" step="5" value="${Math.round(audioVolume() * 100)}" />
-            </label>
-          </div>
-          <div class="card" style="margin-bottom:12px">
-            <div class="card-title">画面质量</div>
-            <div class="tiny dim" style="margin-bottom:9px">影响园区 3D 的分辨率与阴影。低端设备 / 手机建议「标准」或「流畅」。</div>
-            <div class="row">
-              ${[['auto', '自动'], ['high', '高'], ['standard', '标准'], ['low', '流畅']].map(([k, n]) =>
-                `<button class="btn small ${q === k ? 'primary' : ''}" data-act="quality-set" data-q="${k}">${n}${q === k ? ' ✓' : ''}</button>`).join('')}
-            </div>
-          </div>
-          <div class="card" style="margin-bottom:12px">
-            <div class="card-title">新手引导</div>
-            <div class="between">
-              <div>
-                <span class="small">助理引导</span>
-                <div class="tiny dim">当前${gOn ? `进行到第 ${(g?.step || 0) + 1} 步` : g && g.step >= GUIDE_STEPS.length ? '已完成' : '已关闭'}</div>
-              </div>
-              <button class="btn small ${gOn ? '' : 'primary'}" data-act="guide-toggle">${gOn ? '关闭引导' : '开启引导'}</button>
-            </div>
-          </div>
-          <div class="card">
-            <div class="card-title">游戏信息</div>
-            <div class="tiny" style="line-height:2">
-              <div class="between"><span class="dim">模式</span><b>${state.mode === 'career' ? '经营模式' : '自由沙盒'}</b></div>
-              <div class="between"><span class="dim">开局年份</span><b>${state.company.founded}</b></div>
-              <div class="between"><span class="dim">当前日期</span><b>${fmtDate(state.date)}</b></div>
-              <div class="between"><span class="dim">已掌握技术</span><b>${state.tech.unlocked.length} 项</b></div>
-              <div class="between"><span class="dim">历史机型</span><b>${state.models.length} 款</b></div>
-            </div>
-            <div class="section-label">键位</div>
-            <div class="tiny dim" style="line-height:1.9">空格：暂停 / 继续　1-4：1×/2×/4×/8× 速度　Esc：退出设计器</div>
-            ${state.mode === 'sandbox' ? `
-              <div class="section-label">沙盒工具</div>
-              <label class="field"><span>直接设置现金</span>
-                <input type="number" value="${Math.round(state.company.cash)}" step="10000000" data-field="sandbox-cash" />
-              </label>` : ''}
-          </div>
-        </div>
-      </div>`;
-  }
-
   // ---------- 3D / 图表挂载 ----------
   function mountOffice() {
     const el = content.querySelector('#office-scene');
@@ -2754,6 +2667,244 @@ export function renderGame(root, state, opts = {}) {
       onClose: () => { posterUI = null; },
       onToast: (m3, k) => opts.onToast?.(m3, k),
     });
+  }
+
+  // ---------- 右上角 ☰ 菜单：保存存档 / 设置 / 返回主菜单 + 游戏信息 ----------
+  function gameMenu() {
+    document.querySelector('.modal-mask')?.remove();
+    const mask = document.createElement('div');
+    mask.className = 'modal-mask';
+    mask.innerHTML = `<div class="modal" style="width:min(440px,94vw)">
+      <h2>菜单</h2>
+      <div class="modal-sub">${esc(state.company.name)} · ${fmtDate(state.date)}</div>
+      <div class="list">
+        <div class="list-item" data-gm="save" style="cursor:pointer">
+          <div style="flex:1"><b>保存存档</b><div class="tiny dim">选择槽位保存 · 自动存档每回合都会进行</div></div><span class="tiny dim">▸</span>
+        </div>
+        <div class="list-item" data-gm="settings" style="cursor:pointer">
+          <div style="flex:1"><b>设置</b><div class="tiny dim">音量、画质、引导与存档文件</div></div><span class="tiny dim">▸</span>
+        </div>
+        <div class="list-item" data-gm="exit" style="cursor:pointer">
+          <div style="flex:1"><b>返回主菜单</b><div class="tiny dim">退出前可保存进度</div></div><span class="tiny dim">▸</span>
+        </div>
+      </div>
+      <div class="card" style="margin-top:10px;padding:10px 12px;background:rgba(255,255,255,.02)">
+        <div class="card-title" style="margin-bottom:6px">游戏信息</div>
+        <div class="tiny" style="line-height:2">
+          <div class="between"><span class="dim">模式</span><b>${state.mode === 'career' ? '经营模式' : '自由沙盒'}</b></div>
+          <div class="between"><span class="dim">开局年份</span><b>${state.company.founded}</b></div>
+          <div class="between"><span class="dim">当前日期</span><b>${fmtDate(state.date)}</b></div>
+          <div class="between"><span class="dim">已掌握技术</span><b>${state.tech.unlocked.length} 项</b></div>
+          <div class="between"><span class="dim">历史机型</span><b>${state.models.length} 款</b></div>
+        </div>
+        <div class="tiny dim" style="line-height:1.9;margin-top:6px">键位：空格 暂停/继续 · 1-4 速度 · Esc 退出设计器</div>
+        ${state.mode === 'sandbox' ? `<label class="field" style="margin-top:6px"><span>沙盒工具 · 直接设置现金</span>
+          <input type="number" id="gm-cash" value="${Math.round(state.company.cash)}" step="10000000" /></label>
+        <div class="row" style="gap:8px;margin-top:8px">
+          <button class="btn small ${state.sandboxInstant?.research ? 'primary' : 'ghost'}" id="gm-ir">研究瞬间完成：${state.sandboxInstant?.research ? '开' : '关'}</button>
+          <button class="btn small ${state.sandboxInstant?.build ? 'primary' : 'ghost'}" id="gm-ib">建设瞬间完成：${state.sandboxInstant?.build ? '开' : '关'}</button>
+        </div>` : ''}
+      </div>
+      <div class="row" style="margin-top:12px;justify-content:flex-end"><button class="btn" data-close>关闭</button></div>
+    </div>`;
+    document.body.appendChild(mask);
+    const close = () => mask.remove();
+    mask.querySelector('[data-close]').onclick = close;
+    mask.onclick = (e) => { if (e.target === mask) close(); };
+    mask.addEventListener('click', (e) => {
+      const item = e.target.closest('[data-gm]');
+      if (!item) return;
+      if (item.dataset.gm === 'save') { close(); slotPicker(); }
+      else if (item.dataset.gm === 'settings') { close(); settingsPanel(); }
+      else if (item.dataset.gm === 'exit') { close(); openExitConfirm(); }
+    });
+    const cash = mask.querySelector('#gm-cash');
+    if (cash) cash.onchange = () => {
+      state.company.cash = Number(cash.value) || 0;
+      opts.onToast?.('现金已设置', 'good');
+      paintTopbar();
+    };
+    const ir = mask.querySelector('#gm-ir');
+    if (ir) ir.onclick = () => {
+      state.sandboxInstant = state.sandboxInstant || {};
+      state.sandboxInstant.research = !state.sandboxInstant.research;
+      ir.textContent = `研究瞬间完成：${state.sandboxInstant.research ? '开' : '关'}`;
+      ir.className = 'btn small ' + (state.sandboxInstant.research ? 'primary' : 'ghost');
+      opts.onToast?.(state.sandboxInstant.research ? '研究将瞬间完成' : '恢复正常研发速度', 'good');
+    };
+    const ib = mask.querySelector('#gm-ib');
+    if (ib) ib.onclick = () => {
+      state.sandboxInstant = state.sandboxInstant || {};
+      state.sandboxInstant.build = !state.sandboxInstant.build;
+      ib.textContent = `建设瞬间完成：${state.sandboxInstant.build ? '开' : '关'}`;
+      ib.className = 'btn small ' + (state.sandboxInstant.build ? 'primary' : 'ghost');
+      opts.onToast?.(state.sandboxInstant.build ? '建设将瞬间完成' : '恢复正常建造速度', 'good');
+    };
+  }
+
+  // 保存存档：槽位选择（保存 / 读取 / 删除）
+  function slotPicker() {
+    document.querySelector('.modal-mask')?.remove();
+    const mask = document.createElement('div');
+    mask.className = 'modal-mask';
+    const renderSlots = () => {
+      const slots = saveSlots();
+      mask.innerHTML = `<div class="modal" style="width:min(480px,94vw)">
+        <h2>保存存档</h2>
+        <div class="modal-sub">选择槽位 · 自动存档每回合都会进行</div>
+        <div class="list">
+          ${slots.map((s) => `<div class="list-item">
+            <div style="flex:1"><b>槽位 ${s.slot}</b> ${s.empty ? '<span class="tiny dim">空</span>' : s.name}
+              <div class="tiny dim">${s.empty ? '—' : `${s.date.year}年${s.date.month + 1}月 · 现金 ${fmtMoney(s.cash)} · ${s.models} 款机型`}</div></div>
+            <button class="btn small primary" data-sp="save" data-slot="${s.slot}">保存</button>
+            <button class="btn small" data-sp="load" data-slot="${s.slot}" ${s.empty ? 'disabled' : ''}>读取</button>
+            <button class="btn small ghost danger" data-sp="del" data-slot="${s.slot}" ${s.empty ? 'disabled' : ''}>删除</button>
+          </div>`).join('')}
+        </div>
+        <div class="row" style="margin-top:12px;justify-content:flex-end"><button class="btn" data-close>关闭</button></div>
+      </div>`;
+      mask.querySelector('[data-close]').onclick = () => mask.remove();
+      mask.onclick = (e) => { if (e.target === mask) mask.remove(); };
+      mask.querySelectorAll('[data-sp]').forEach((b) => {
+        b.onclick = () => {
+          const n = Number(b.dataset.slot);
+          if (b.dataset.sp === 'save') {
+            saveGame(state, n);
+            opts.onToast?.(`已保存到槽位 ${n}`, 'good');
+            sfx('good');
+            renderSlots();
+          } else if (b.dataset.sp === 'load') {
+            const s2 = loadGame(n);
+            if (!s2) { opts.onToast?.('槽位为空', 'warn'); return; }
+            stop();
+            if (designer) { designer.destroy(); designer = null; }
+            mask.remove();
+            opts.onLoad?.(s2);
+          } else {
+            deleteSave(n);
+            opts.onToast?.(`槽位 ${n} 已删除`, 'good');
+            renderSlots();
+          }
+        };
+      });
+    };
+    renderSlots();
+    document.body.appendChild(mask);
+  }
+
+  // ---------- 统一设置弹窗（主菜单 / 游戏内共用结构） ----------
+  function settingsPanel() {
+    document.querySelector('.modal-mask')?.remove();
+    const q = readQualityPref();
+    const on = audioEnabled();
+    const g = state.guide;
+    const gOn = !(g?.skipped) && (g?.step || 0) < GUIDE_STEPS.length;
+    const QUALS = [['auto', '自动'], ['high', '高'], ['standard', '标准'], ['low', '流畅']];
+    const mask = document.createElement('div');
+    mask.className = 'modal-mask';
+    mask.innerHTML = `<div class="modal" style="width:min(480px,94vw)">
+      <h2>设置</h2>
+      <div class="modal-sub">音效与画质保存在本设备</div>
+      <div class="list">
+        <div class="list-item">
+          <div style="flex:1"><b>音效</b><div class="tiny dim">界面与事件音效</div></div>
+          <button class="btn small ${on ? 'primary' : 'ghost'}" data-set="audio">${on ? '已开启' : '已关闭'}</button>
+        </div>
+        <div class="list-item" style="display:block">
+          <label class="field"><span>音量 <b>${Math.round(audioVolume() * 100)}%</b></span>
+            <input type="range" id="set-vol" min="0" max="100" step="5" value="${Math.round(audioVolume() * 100)}" style="width:100%" /></label>
+        </div>
+        <div class="list-item" style="display:block">
+          <b>画面质量</b>
+          <div class="tiny dim" style="margin:4px 0">影响园区 3D 的分辨率与阴影，低端设备建议「标准」或「流畅」</div>
+          <div class="row">${QUALS.map(([k, n]) => `<button class="btn small ${q === k ? 'primary' : 'ghost'}" data-set="q" data-q="${k}">${n}${q === k ? ' ✓' : ''}</button>`).join('')}</div>
+        </div>
+        <div class="list-item">
+          <div style="flex:1"><b>新手引导</b><div class="tiny dim">当前${gOn ? `进行到第 ${(g?.step || 0) + 1} 步` : g && g.step >= GUIDE_STEPS.length ? '已完成' : '已关闭'}</div></div>
+          <button class="btn small ${gOn ? 'ghost' : 'primary'}" data-set="guide">${gOn ? '关闭引导' : '开启引导'}</button>
+        </div>
+        <div class="list-item" style="display:block">
+          <b>存档文件（跨设备迁移）</b>
+          <div class="tiny dim" style="margin:4px 0">导出为 .json 备份或带到其他设备 / APP；导入会替换当前进度，建议先导出备份</div>
+          <div class="row">
+            <button class="btn small" data-set="export">⬇ 导出存档文件</button>
+            <button class="btn small" data-set="import">⬆ 导入存档文件</button>
+            <input type="file" id="set-import-file" accept=".json,application/json" style="display:none" />
+          </div>
+        </div>
+        <div class="list-item" style="opacity:.55">
+          <div style="flex:1"><b class="dim">更多设置</b><div class="tiny dim">敬请期待</div></div><span class="tiny dim">—</span>
+        </div>
+      </div>
+      <div class="row" style="margin-top:12px;justify-content:flex-end"><button class="btn" data-close>关闭</button></div>
+    </div>`;
+    document.body.appendChild(mask);
+    const close = () => mask.remove();
+    mask.querySelector('[data-close]').onclick = close;
+    mask.onclick = (e) => { if (e.target === mask) close(); };
+    const QN = { auto: '自动', high: '高', standard: '标准', low: '流畅' };
+    mask.querySelector('[data-set="audio"]').onclick = (e) => {
+      unlockAudio();
+      const on2 = setAudioEnabled(!audioEnabled());
+      e.target.textContent = on2 ? '已开启' : '已关闭';
+      e.target.className = 'btn small ' + (on2 ? 'primary' : 'ghost');
+      if (on2) sfx('good');
+    };
+    const vol = mask.querySelector('#set-vol');
+    vol.oninput = () => {
+      unlockAudio();
+      setAudioVolume(Number(vol.value) / 100);
+      vol.closest('.field').querySelector('b').textContent = Math.round(audioVolume() * 100) + '%';
+    };
+    mask.querySelectorAll('[data-set="q"]').forEach((b) => {
+      b.onclick = () => {
+        writeQualityPref(b.dataset.q);
+        mask.querySelectorAll('[data-set="q"]').forEach((x) => {
+          const sel = x.dataset.q === b.dataset.q;
+          x.className = 'btn small ' + (sel ? 'primary' : 'ghost');
+          x.textContent = QN[x.dataset.q] + (sel ? ' ✓' : '');
+        });
+        opts.onToast?.(`画质已设为「${QN[b.dataset.q]}」，进入园区 3D 后生效`, 'good');
+      };
+    });
+    mask.querySelector('[data-set="guide"]').onclick = (e) => {
+      if (state.guide?.skipped || (state.guide?.step || 0) >= GUIDE_STEPS.length) { restartGuide(state); opts.onToast?.('新手引导已开启', 'good'); }
+      else { skipGuide(state); opts.onToast?.('新手引导已关闭', 'good'); }
+      const g2 = state.guide;
+      const gOn2 = !(g2?.skipped) && (g2?.step || 0) < GUIDE_STEPS.length;
+      const row = e.target.closest('.list-item');
+      row.querySelector('.tiny.dim').textContent = `当前${gOn2 ? `进行到第 ${(g2?.step || 0) + 1} 步` : g2 && g2.step >= GUIDE_STEPS.length ? '已完成' : '已关闭'}`;
+      e.target.textContent = gOn2 ? '关闭引导' : '开启引导';
+      e.target.className = 'btn small ' + (gOn2 ? 'ghost' : 'primary');
+    };
+    mask.querySelector('[data-set="export"]').onclick = () => {
+      try {
+        const blob = new Blob([exportSave(state)], { type: 'application/json' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `手机开发商_${state.company.name}_${state.date.year}年${state.date.month + 1}月.mm save.json`.replace(/\s+/g, '_');
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(a.href), 3000);
+        opts.onToast?.('存档已导出为文件', 'good');
+      } catch (e2) { opts.onToast?.('导出失败：' + e2.message, 'bad'); }
+    };
+    const f = mask.querySelector('#set-import-file');
+    f.onchange = (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          state = importSave(String(reader.result));
+          lastReport = null;
+          opts.onToast?.('存档已导入，进度已替换', 'good');
+          sfx('good');
+          close();
+          render();
+        } catch (err) { opts.onToast?.('导入失败：' + err.message, 'bad'); }
+      };
+      reader.readAsText(file);
+    };
   }
 
   function openNewsPanel() {

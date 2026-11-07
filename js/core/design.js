@@ -1,4 +1,5 @@
 // 手机设计：参数化几何 + 配置 + 合理性校验 + 评分/成本推导
+import { PHONE_TEMPLATES, PHONE_TPL_MAP, templateForYear } from '../data/templates.js';
 import { clamp, round } from './util.js';
 import { CPUS, RAMS, STORAGES, SCREENS, CAMERAS, BATTERIES, SYSTEMS, EXTRAS, MATERIALS, FINISHES, CHARGERS } from '../data/parts.js';
 import { IMAGE_SENSORS, LENS_TYPES, PANEL_VENDORS, RES_TIERS, formatFactor, lensRadiusMm, lensThicknessMm, sensorById, lensTypeById } from '../data/hardware.js';
@@ -6,7 +7,11 @@ import { TECHS } from '../data/tech.js';
 import { expectedPrice } from '../data/world.js';
 
 export const SCREEN_ASPECTS = {
+  '1:1': 1,
+  '5:4': 5 / 4,
   '4:3': 4 / 3,
+  '3:2': 3 / 2,
+  '5:3': 5 / 3,
   '16:9': 16 / 9,
   '19.5:9': 19.5 / 9,
   '21:9': 21 / 9,
@@ -65,8 +70,8 @@ export function defaultDesign(year = 2020, unlocked = []) {
           ? { length: 110, width: 50, thickness: 14, corner: 5 }
           : year >= 1995
             ? { length: 105, width: 45, thickness: 20, corner: 4 }
-            : { length: 180, width: 55, thickness: 28, corner: 3 };
-  const inch = year >= 2017 ? 6.5 : year >= 2013 ? 5.0 : year >= 2010 ? 4.0 : year >= 2005 ? 2.4 : year >= 1995 ? 1.8 : 1.2;
+            : { length: 130, width: 50, thickness: 22, corner: 3 };
+  const inch = year >= 2017 ? 6.5 : year >= 2013 ? 5.0 : year >= 2010 ? 4.0 : year >= 2005 ? 2.4 : year >= 1995 ? 1.8 : 1.4;
   const bezel = year >= 2017 ? 1.8 : year >= 2013 ? 3.0 : year >= 2010 ? 3.4 : year >= 2005 ? 4.2 : 4;
   const bestCharge = (list) => {
     const ok = list.filter((x) => unlocked.includes(x.tech) && x.year <= year && x.watt > 0);
@@ -77,6 +82,9 @@ export function defaultDesign(year = 2020, unlocked = []) {
     return ok.length ? [...ok].sort((a, b) => a.bonus - b.bonus)[ok.length - 1].id : list[0].id;
   };
   const out = {
+    template: templateForYear(year),
+    keypad: { kind: year >= 2007 ? 'none' : 't9', style: 'grid', scale: 1 },
+    homeStyle: year >= 2007 && year < 2017 ? 'circle' : '',
     body: {
       ...body,
       frame: modern ? 'alu' : 'plastic',
@@ -87,7 +95,7 @@ export function defaultDesign(year = 2020, unlocked = []) {
       colors: { frame: '#2b3440', back: '#2b3440', cover: '#05070a' },
       schemeName: '',
       // 侧键样式：classic 双键 / strip 细长条 / split 分离音量键 / opposite 电源键异侧
-      buttons: 'classic',
+      buttons: year >= 1998 ? 'classic' : 'none',
       // 侧键纵向偏移（mm，0 = 各样式默认位置）
       btnVolY: 0, btnPowY: 0,
       // 顶底开孔配置：双扬声器 / 顶部麦克风 / 充电口类型 / 扬声器开孔样式 / 各开孔横向位置（mm）
@@ -353,7 +361,8 @@ export function maxScreenInch(design) {
   const w = Math.min(availW, availH / a);
   const h = w * a;
   const diag = Math.sqrt(w * w + h * h);
-  return Math.round(clamp(diag / 25.4, 1, 8.2) * 10) / 10;
+  const cap = PHONE_TPL_MAP[design.template]?.screen.maxInch ?? 8.2;
+  return Math.round(clamp(diag / 25.4, 1, cap) * 10) / 10;
 }
 
 export function bodyVolume(design) {
@@ -565,9 +574,20 @@ export function derive(design, year, opts = {}) {
   const finishBonus = (FINISHES.find((f) => f.id === b.finish) || FINISHES[0]).quality;
   // 显示清晰度：分辨率档位（level 0.72~1.05），时代差距会折损
   const resFit = clamp(panel.resLevel * 100 - Math.max(0, year - (RES_TIERS.find((r) => r.id === design.screen.res)?.year || year)) * 1.2, 30, 105);
-  const craft = clamp(
-    ratioScore * 0.18 + thinScore * 0.16 + screenRatio * 0.22 + bezelScore * 0.14 +
-    materialScore * 0.12 + finishBonus + resFit * 0.16 + Math.min(5, (hz - 60) * 0.05), 0, 100);
+  // 评分按形态世代分支：按键机不奖励大屏/高刷/超薄，奖励材质/清晰度/键盘工艺
+  const TPLD = PHONE_TPL_MAP[design.template] || PHONE_TPL_MAP.full_screen;
+  const keypadForm = TPLD.keypad[0] !== 'none';
+  let craft;
+  if (keypadForm) {
+    const kpBonus = design.keypad?.kind === 'qwerty' ? 6 : 4;
+    craft = clamp(
+      ratioScore * 0.1 + thinScore * 0.1 + screenRatio * 0.05 + bezelScore * 0.05 +
+      materialScore * 0.22 + finishBonus * 1.2 + resFit * 0.3 + kpBonus, 0, 100);
+  } else {
+    craft = clamp(
+      ratioScore * 0.18 + thinScore * 0.16 + screenRatio * 0.22 + bezelScore * 0.14 +
+      materialScore * 0.12 + finishBonus + resFit * 0.16 + Math.min(5, (hz - 60) * 0.05), 0, 100);
+  }
   const eraFit = techEraFit(design, year, opts);
 
   // 折叠盖板技术路线：UTG 折痕更浅（+3 分），CPI 经济之选（+1 分），未指定不加分
@@ -872,4 +892,20 @@ export function newModel(year, unlocked, name = '新机型') {
     reviews: [],
     history: [],
   };
+}
+
+// ---------- 手机模板（形态世代） ----------
+// 老档迁移：无 template 字段按年代/屏幕尺寸推断；键盘与 Home 键按模板归位
+export function ensureTemplate(d, year = 2020) {
+  if (!PHONE_TPL_MAP[d.template]) d.template = templateForYear(year);
+  const T = PHONE_TPL_MAP[d.template];
+  d.keypad = d.keypad || { kind: T.keypad.includes('none') ? 'none' : T.keypad[0], style: 'grid', scale: 1 };
+  if (!T.keypad.includes(d.keypad.kind)) d.keypad.kind = T.keypad.includes('none') ? 'none' : T.keypad[0];
+  if (!['grid', 'full'].includes(d.keypad.style)) d.keypad.style = 'grid';
+  d.keypad.scale = clamp(Number(d.keypad.scale) || 1, 0.8, 1.3);
+  if (T.home) { if (!T.home.includes(d.homeStyle)) d.homeStyle = T.home[0]; }
+  else d.homeStyle = '';
+  if (!T.notch.includes(d.screen.notch)) d.screen.notch = T.notch[0] || 'none';
+  if (!T.screen.aspects.includes(d.screen.aspect)) d.screen.aspect = T.screen.aspects.includes(d.screen.aspect) ? d.screen.aspect : T.screen.aspects[0];
+  return d;
 }

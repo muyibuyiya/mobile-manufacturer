@@ -2,7 +2,7 @@
 import { clamp, rand, randInt, pick, uid, gauss, chance } from './util.js';
 import { MARKETS, COMPETITORS, COUNTRIES, ERAS, SURNAMES, GIVEN, FOREIGN, FIELDS, EDUS, makeCompetitorPhone } from '../data/world.js';
 import { TECHS } from '../data/tech.js';
-import { newModel, ensureBranding } from './design.js';
+import { newModel, ensureBranding, ensureTemplate } from './design.js';
 import { RAMS, STORAGES } from '../data/parts.js';
 import { newCampus, ensureCampus, officeCapacity } from './campus.js';
 import { ensureSupply, START_STOCK } from './supply.js';
@@ -22,7 +22,7 @@ import { migrateV1, normalizeLayout } from './floorplan.js';
 
 export { DEPT_DEFS, ROLE_BY_DEPT };
 
-export const GAME_VERSION = '1.3.0'; // 全局唯一版本号（启动页/关于/存档兼容判断）
+export const GAME_VERSION = '1.4.0'; // 全局唯一版本号（启动页/关于/存档兼容判断）
 
 // 室内布局（v2）：房间可拖放/调尺寸 + 家具/隔墙单数据源。
 // 旧档（v1：仅 items/edges，房间位置硬编码）经 migrateV1 迁移：rooms 取默认双排布局，items/edges 原样保留
@@ -340,6 +340,7 @@ export function sanitizeState(s) {
     for (const k of Object.keys(m.price)) m.price[k] = fix(m.price[k]) || 1;
     m.history = m.history || [];
     if (!m.lineup) m.lineup = 'main';
+    ensureTemplate(m.design, s.date.year);
     if (m.heat === undefined) m.heat = m.status === 'production' ? 100 : 0;
     if (!m.series) m.series = String(m.name || '').trim().split(/\s+/)[0] || null;
     if (!Array.isArray(m.awards)) m.awards = [];
@@ -349,6 +350,11 @@ export function sanitizeState(s) {
   if (!Array.isArray(s.departments)) s.departments = DEPT_DEFS.map((d) => ({ ...d, budget: 0, focus: 50 }));
   else for (const def of DEPT_DEFS) {
     if (!s.departments.some((d) => d.id === def.id)) s.departments.push({ ...def, budget: 0, focus: 50 });
+  }
+  // 沙盒瞬间完成开关
+  if (s.sandboxInstant) {
+    s.sandboxInstant.research = !!s.sandboxInstant.research;
+    s.sandboxInstant.build = !!s.sandboxInstant.build;
   }
   // 通知与新闻：结构校验 + 截断
   if (!Array.isArray(s.news)) s.news = [];

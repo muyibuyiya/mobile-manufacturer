@@ -1,8 +1,9 @@
 // 启动器：主菜单、开局配置、读档、进入游戏
-import { createGame, saveSlots, loadGame, GENES, autoSave, peekAutoSave, GAME_VERSION } from './core/state.js';
+import { createGame, saveSlots, loadGame, GENES, autoSave, peekAutoSave, GAME_VERSION, exportSave, importSave } from './core/state.js';
 import { ERAS, COUNTRIES } from './data/world.js';
 import { renderGame } from './ui/app.js';
-import { sfx, unlockAudio, startAmbient } from './core/audio.js';
+import { sfx, unlockAudio, startAmbient, audioEnabled, setAudioEnabled, audioVolume, setAudioVolume } from './core/audio.js';
+import { readQualityPref, writeQualityPref } from './three/office.js';
 import { LOGO_EXTRA } from './data/logo-extra.js';
 
 const root = document.getElementById('root');
@@ -51,101 +52,138 @@ const MODE_INFO = {
 function menu() {
   if (current && current.destroy) current.destroy();
   current = null;
-  const slots = saveSlots();
-  const hasSaves = slots.some((s) => !s.empty);
   root.innerHTML = `
     <div class="menu-screen">
       <div class="menu-inner">
         <div class="row" style="gap:14px">
-          <div class="logo-mark">M</div>
+          <div class="logo-mark">${LOGO_SVG}</div>
           <div>
             <div class="game-title" style="margin:0">手机开发商</div>
             <div class="game-sub">MOBILE MANUFACTURER · 企业模拟经营</div>
           </div>
-          <div class="spacer"></div>
-          <div class="tiny dim" style="text-align:right;line-height:1.7">
-            原型版本 ${GAME_VERSION}<br/>纯前端 · three.js · 本地存档
-          </div>
         </div>
 
-        <div class="menu-cards">
-          ${Object.entries(MODE_INFO).map(([id, m]) => `
-            <div class="mode-card" data-mode="${id}">
-              <span class="badge">${m.tag}</span>
-              <h3>${m.name}</h3>
-              <p>${m.desc}</p>
-              <div class="row tiny dim" style="margin-top:14px;gap:6px">
-                <span class="chip">${id === 'career' ? '七个发展阶段' : '全参数可调'}</span>
-                <span class="chip">${id === 'career' ? '真实年代科技' : '无限资金可选'}</span>
-              </div>
-            </div>`).join('')}
-        </div>
-
-        ${(() => {
-          const auto = peekAutoSave();
-          if (!auto) return '';
-          return `<div class="card" style="padding:10px 14px;margin-top:14px;border-color:rgba(74,163,255,.5)">
-            <div class="row" style="gap:10px;align-items:center">
-              <span class="chip good">自动存档</span>
-              <div style="flex:1">
-                <b>${auto.name}</b>
-                <span class="tiny dim"> · ${auto.date.year}年${auto.date.month + 1}月 · 现金 ¥${(auto.cash / 1e4).toFixed(0)}万 · ${auto.models} 款机型</span>
-              </div>
-              <button class="btn small primary" id="btn-resume">继续上次进度 ▸</button>
-            </div>
-          </div>`;
-        })()}
-
-        ${hasSaves ? `
-        <div class="card" style="padding:12px 14px;margin-top:14px">
-          <div class="row tiny dim" style="margin-bottom:8px"><b>最近存档</b><div class="spacer"></div><button class="btn small ghost" id="btn-load">读取存档 →</button></div>
-          <div class="grid" style="grid-template-columns:repeat(3,1fr);gap:8px">
-            ${slots.map((s) => s.empty ? `
-              <div style="border:1px dashed var(--border);border-radius:8px;padding:10px;text-align:center" class="tiny dim">槽位 ${s.slot}<br/>空</div>` : `
-              <div class="list-item" style="padding:10px 12px;border-radius:8px;cursor:pointer" data-quick-load="${s.slot}">
-                <div style="flex:1">
-                  <div><b>${s.name}</b></div>
-                  <div class="tiny dim">${s.date.year}年${s.date.month + 1}月 · 现金 ¥${(s.cash / 1e4).toFixed(0)}万 · ${s.models} 款机型</div>
-                </div>
-                <span class="tiny dim">▸</span>
-              </div>`).join('')}
-          </div>
-        </div>` : ''}
-
-        <div class="row" style="margin-top:14px;gap:6px;flex-wrap:wrap">
-          ${['🏭 3D 园区与房间建造', '📱 六视图手机设计器', '⚔ 16 家真实厂商竞争', '🌐 9 大市场 · 关税与海外建厂', '📈 供应商与断供事件', '🏛 12 类政策系统', '🎬 发布会 3D 舞台', '🔊 程序化音效'].map((t) => `<span class="chip tiny dim">${t}</span>`).join('')}
-        </div>
-
-        <div class="row" style="margin-top:14px;gap:10px">
-          <button class="btn" id="btn-load2">读取存档</button>
-          <button class="btn ghost" id="btn-about">玩法说明</button>
-          <div class="spacer"></div>
-          <span class="tiny dim">建议 1440×900 以上窗口</span>
-        </div>
+        <nav class="menu-list">
+          <div class="menu-item" data-menu="career">经营模式<span class="mi-arrow">▸</span></div>
+          <div class="menu-item" data-menu="sandbox">沙盒模式<span class="mi-arrow">▸</span></div>
+          <div class="menu-item" data-menu="saves">存档<span class="mi-arrow">▸</span></div>
+          <div class="menu-item" data-menu="settings">设置<span class="mi-arrow">▸</span></div>
+          <div class="menu-item" data-menu="about">关于游戏<span class="mi-arrow">▸</span></div>
+        </nav>
+        <div class="menu-foot">原型版本 ${GAME_VERSION} · 纯前端 · three.js · 本地存档</div>
       </div>
     </div>`;
 
-  root.querySelectorAll('[data-mode]').forEach((el) => {
-    el.onclick = () => config(el.dataset.mode);
-  });
-  document.getElementById('btn-load2').onclick = loadPanel;
-  document.getElementById('btn-load')?.addEventListener?.('click', loadPanel);
-  document.getElementById('btn-about').onclick = about;
-  root.querySelectorAll('[data-quick-load]').forEach((el) => {
+  root.querySelectorAll('[data-menu]').forEach((el) => {
     el.onclick = () => {
-      const s = loadGame(Number(el.dataset.quickLoad));
-      if (!s) return toast('存档损坏，无法读取', 'bad');
-      enter(s);
+      const k = el.dataset.menu;
+      if (k === 'career' || k === 'sandbox') config(k);
+      else if (k === 'saves') loadPanel();
+      else if (k === 'settings') settingsPanel();
+      else aboutPanel();
     };
   });
-  const resumeBtn = document.getElementById('btn-resume');
-  if (resumeBtn) {
-    resumeBtn.onclick = () => {
-      const s = loadGame('auto');
-      if (!s) return toast('自动存档损坏，无法读取', 'bad');
-      enter(s);
+}
+
+// 主菜单 Logo（与 PWA/桌面图标同源：icons/icon.svg）
+const LOGO_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="54" height="54">   <defs>     <linearGradient id="mbg" x1="0" y1="0" x2="1" y2="1">       <stop offset="0" stop-color="#57a8f8"/>       <stop offset=".52" stop-color="#2e6fd6"/>       <stop offset="1" stop-color="#1b3f92"/>     </linearGradient>     <linearGradient id="mm" x1="0" y1="0" x2="0" y2="1">       <stop offset="0" stop-color="#ffffff"/>       <stop offset="1" stop-color="#bfe0ff"/>     </linearGradient>     <radialGradient id="mhl" cx=".26" cy=".16" r="1">       <stop offset="0" stop-color="rgba(255,255,255,.32)"/>       <stop offset=".55" stop-color="rgba(255,255,255,0)"/>     </radialGradient>   </defs>   <rect width="512" height="512" rx="112" fill="url(#mbg)"/>   <rect width="512" height="512" rx="112" fill="url(#mhl)"/>   <g fill="url(#mm)">     <rect x="168" y="116" width="36" height="280" rx="9"/>     <rect x="308" y="116" width="36" height="280" rx="9"/>   </g>   <path d="M180 130 L256 292 L332 130" stroke="url(#mm)" stroke-width="38" fill="none" stroke-linecap="butt"/>   <circle cx="256" cy="300" r="14" fill="#ffffff"/> </svg>`;
+
+// ---------- 主菜单：设置面板（与游戏内 ☰ 菜单设置同一套） ----------
+function settingsPanel() {
+  document.querySelector('.modal-mask')?.remove();
+  const q = readQualityPref();
+  const on = audioEnabled();
+  const QUALS = [['auto', '自动'], ['high', '高'], ['standard', '标准'], ['low', '流畅']];
+  const QN = { auto: '自动', high: '高', standard: '标准', low: '流畅' };
+  const mask = document.createElement('div');
+  mask.className = 'modal-mask';
+  mask.innerHTML = `
+    <div class="modal" style="width:min(480px,94vw)">
+      <h2>设置</h2>
+      <div class="modal-sub">音效与画质保存在本设备</div>
+      <div class="list">
+        <div class="list-item">
+          <div style="flex:1"><b>音效</b><div class="tiny dim">界面与事件音效</div></div>
+          <button class="btn small ${on ? 'primary' : 'ghost'}" data-set="audio">${on ? '已开启' : '已关闭'}</button>
+        </div>
+        <div class="list-item" style="display:block">
+          <label class="field"><span>音量 <b>${Math.round(audioVolume() * 100)}%</b></span>
+            <input type="range" id="set-vol" min="0" max="100" step="5" value="${Math.round(audioVolume() * 100)}" style="width:100%" /></label>
+        </div>
+        <div class="list-item" style="display:block">
+          <b>画面质量</b>
+          <div class="tiny dim" style="margin:4px 0">影响园区 3D 的分辨率与阴影，低端设备建议「标准」或「流畅」</div>
+          <div class="row">${QUALS.map(([k, n]) => `<button class="btn small ${q === k ? 'primary' : 'ghost'}" data-set="q" data-q="${k}">${n}${q === k ? ' ✓' : ''}</button>`).join('')}</div>
+        </div>
+        <div class="list-item" style="display:block">
+          <b>存档文件（跨设备迁移）</b>
+          <div class="tiny dim" style="margin:4px 0">导出为 .json 备份或带到其他设备 / APP；导入会替换当前进度并开局</div>
+          <div class="row">
+            <button class="btn small" data-set="export">⬇ 导出存档文件</button>
+            <button class="btn small" data-set="import">⬆ 导入存档文件</button>
+            <input type="file" id="set-import-file" accept=".json,application/json" style="display:none" />
+          </div>
+        </div>
+        <div class="list-item" style="opacity:.55">
+          <div style="flex:1"><b class="dim">更多设置</b><div class="tiny dim">敬请期待</div></div><span class="tiny dim">—</span>
+        </div>
+      </div>
+      <div class="row" style="margin-top:16px;justify-content:flex-end"><button class="btn" data-close>关闭</button></div>
+    </div>`;
+  document.body.appendChild(mask);
+  const close = () => mask.remove();
+  mask.querySelector('[data-close]').onclick = close;
+  mask.onclick = (e) => { if (e.target === mask) close(); };
+  mask.querySelector('[data-set="audio"]').onclick = (e) => {
+    unlockAudio();
+    const on2 = setAudioEnabled(!audioEnabled());
+    e.target.textContent = on2 ? '已开启' : '已关闭';
+    e.target.className = 'btn small ' + (on2 ? 'primary' : 'ghost');
+    if (on2) sfx('good');
+  };
+  const vol = mask.querySelector('#set-vol');
+  vol.oninput = () => {
+    unlockAudio();
+    setAudioVolume(Number(vol.value) / 100);
+    vol.closest('.field').querySelector('b').textContent = Math.round(audioVolume() * 100) + '%';
+  };
+  mask.querySelectorAll('[data-set="q"]').forEach((b) => {
+    b.onclick = () => {
+      writeQualityPref(b.dataset.q);
+      mask.querySelectorAll('[data-set="q"]').forEach((x) => {
+        const sel = x.dataset.q === b.dataset.q;
+        x.className = 'btn small ' + (sel ? 'primary' : 'ghost');
+        x.textContent = QN[x.dataset.q] + (sel ? ' ✓' : '');
+      });
     };
-  }
+  });
+  mask.querySelector('[data-set="export"]').onclick = () => {
+    try {
+      const st = loadGame('auto');
+      if (!st) return toast('还没有自动存档可导出', 'warn');
+      const blob = new Blob([exportSave(st)], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `手机开发商_${st.company.name}_${st.date.year}年${st.date.month + 1}月.mm save.json`.replace(/\s+/g, '_');
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 3000);
+      toast('存档已导出为文件', 'good');
+    } catch (e2) { toast('导出失败：' + e2.message, 'bad'); }
+  };
+  const f = mask.querySelector('#set-import-file');
+  f.onchange = (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const st = importSave(String(reader.result));
+        close();
+        enter(st);
+      } catch (err) { toast('导入失败：' + err.message, 'bad'); }
+    };
+    reader.readAsText(file);
+  };
 }
 
 // ---------- 随机公司名 ----------
@@ -369,6 +407,12 @@ function config(mode) {
               <span>初始资金（元，0 = 不限）</span>
               <input type="number" id="f-cash" value="500000000" step="1000000" />
             </label>
+        ${isSandbox ? `<div class="field"><span>沙盒加速</span>
+          <div class="row" style="gap:14px;flex-wrap:wrap">
+            <label style="display:inline-flex;gap:5px;align-items:center;cursor:pointer"><input type="checkbox" id="sb-instant-r" style="width:auto" /> 研究瞬间完成</label>
+            <label style="display:inline-flex;gap:5px;align-items:center;cursor:pointer"><input type="checkbox" id="sb-instant-b" style="width:auto" /> 建设瞬间完成</label>
+          </div>
+        </div>` : ''}
             <label class="field">
               <span>科技解锁</span>
               <select id="f-tech">
@@ -512,6 +556,12 @@ function config(mode) {
       cfg.techAll = document.getElementById('f-tech').value === 'yes';
     }
     const s = createGame(cfg);
+    if (isSandbox) {
+      s.sandboxInstant = {
+        research: !!document.getElementById('sb-instant-r')?.checked,
+        build: !!document.getElementById('sb-instant-b')?.checked,
+      };
+    }
     enter(s);
   };
 }
@@ -522,9 +572,20 @@ function loadPanel() {
   mask.className = 'modal-mask';
   mask.innerHTML = `
     <div class="modal">
-      <h2>读取存档</h2>
+      <h2>存档</h2>
       <div class="modal-sub">存档保存在浏览器本地（localStorage）</div>
       <div class="list">
+        ${(() => {
+          const auto = peekAutoSave();
+          if (!auto) return '';
+          return `<div class="list-item" style="border-color:rgba(74,163,255,.45)">
+            <div style="flex:1">
+              <div><span class="chip good" style="margin-right:6px">自动存档</span><b>${auto.name}</b></div>
+              <div class="tiny dim">${auto.date.year}年${auto.date.month + 1}月 · 现金 ¥${(auto.cash / 1e4).toFixed(0)}万 · ${auto.models} 款机型</div>
+            </div>
+            <button class="btn small primary" id="btn-resume">继续上次进度 ▸</button>
+          </div>`;
+        })()}
         ${slots.map((s) => `
           <div class="list-item">
             <div style="flex:1">
@@ -549,22 +610,45 @@ function loadPanel() {
       enter(s);
     };
   });
+  const resumeBtn = mask.querySelector('#btn-resume');
+  if (resumeBtn) {
+    resumeBtn.onclick = () => {
+      const s = loadGame('auto');
+      if (!s) return toast('自动存档损坏，无法读取', 'bad');
+      mask.remove();
+      enter(s);
+    };
+  }
 }
 
+function aboutPanel() { about(); }
 function about() {
   const mask = document.createElement('div');
   mask.className = 'modal-mask';
   mask.innerHTML = `
-    <div class="modal">
-      <h2>玩法说明</h2>
-      <div class="modal-sub">这是一款以手机产业为核心的深度经营模拟原型</div>
-      <div class="small" style="line-height:1.9;color:var(--muted)">
-        <p><b class="accent">1. 时间</b>　以月为单位推进，可暂停并调整 1×/2×/4×/8× 速度。每月结算销量、研发、工资与现金流。</p>
-        <p><b class="accent">2. 科技</b>　按年代解锁通信、处理器、屏幕、影像、电池等技术。研发需要分配研发人员与预算，前置技术必须先完成。</p>
-        <p><b class="accent">3. 设计</b>　在「设计中心」里真正地设计手机：调机身尺寸、屏幕、摄像头、材质，2D 六视图与 3D 模型实时同步，系统会校验内部空间、装配与成本。</p>
-        <p><b class="accent">4. 生产与销售</b>　设计通过后量产，选择代工厂或自建工厂；给不同市场定价，销量由产品力、品牌、价格与渠道共同决定。</p>
-        <p><b class="accent">5. 竞争</b>　九家竞争对手会自主研发、发布新机、调整定价，不会站在原地等你。</p>
-        <p class="dim tiny">提示：先在「科技」立项，同时用「设计中心」做一款能卖的手机，再去「生产」设置产量，最后到「市场」定价上市。</p>
+    <div class="modal" style="width:min(680px,94vw)">
+      <h2>关于游戏</h2>
+      <div class="modal-sub">手机开发商 v${GAME_VERSION} · 纯前端 · three.js · 本地存档</div>
+      <div style="max-height:66vh;overflow-y:auto;padding-right:4px">
+        <div class="small" style="line-height:1.9;color:var(--muted)">
+          <div class="section-label">核心循环</div>
+          <p><b class="accent">1. 时间</b>　以月为单位推进，可暂停并调整 1×/2×/4×/8× 速度。每月结算销量、研发、工资与现金流，顶栏可随时查看现金、份额与品牌。</p>
+          <p><b class="accent">2. 研发</b>　在「研发中心」按年代与前置关系解锁通信 / 处理器 / 屏幕 / 影像 / 电池技术；研发需要研发部人力与月预算。也可以直接「技术引进」购买对手的成熟技术。</p>
+          <p><b class="accent">3. 设计</b>　在「设计与产品」里真正地设计手机：机身尺寸、屏幕、逐颗摄像头、材质配色、折叠形态，2D 六视图与 3D 模型实时同步，系统会校验内部空间、装配与成本。设计完成的产品可长期放在产品池里迭代。</p>
+          <p><b class="accent">4. 生产与供应链</b>　排产量按销量与热度匹配；元器件向供应商下采购单，交期不足会触发现货溢价，断供事件会冲击全行业。自建工厂或委托代工决定产能上限。</p>
+          <p><b class="accent">5. 市场与销售</b>　9 大市场分别定价，销量由产品力、品牌、价格、渠道关系与产品热度共同决定；新品可办发布会造势，产品有完整的生命周期（上市爆发 → 高峰 → 衰退 → 清仓）。</p>
+          <p><b class="accent">6. 竞争</b>　16 家真实厂商按历史节奏入场与退出，会自主研发、对标定价、清仓促销、发动价格战 / 营销攻势，甚至挖走你的核心员工。</p>
+          <div class="section-label">特色系统</div>
+          <p>· <b>自研部门</b>：成立半导体 / 光学 / 系统 / 面板四部门，多款产品并行研发，产出专属部件；系统开发部可经营自研 OS 生态（系统科技树 + 路线分化 + 对外授权收费）。</p>
+          <p>· <b>组织与员工</b>：十个职能部门、职级晋升、培训深造、三渠道招聘（社招 / 校招 / 猎头）；明星员工自带影响力也会被挖角；3D 园区可自由规划房间与工位。</p>
+          <p>· <b>渠道与营销</b>：媒体投放按人群匹配，运营商 / 电商 / 线下三渠道关系需要持续维护。</p>
+          <p>· <b>资本运作</b>：融资扩股、IPO 上市、收购谈判；子公司会自主经营、向你转让技术、推荐人才。</p>
+          <p>· <b>工业设计</b>：屏幕 UI 设计器、宣传图生成器、设计奖评选，都可以直接影响产品口碑与品牌。</p>
+          <div class="section-label">快速上手</div>
+          <p class="dim">先在「研发中心」立项一项科技 → 用「设计与产品」做一款能卖的手机 → 到「生产供应链」排产备料 → 在「市场与销售」定价上市。头几年现金流紧张，量入为出；第一款机型不必激进，活下来再谈理想。</p>
+          <div class="section-label">存档</div>
+          <p class="dim">进度自动保存在浏览器本地（localStorage），另有 3 个手动槽位；设置面板可管理存档与数值偏好。卸载浏览器数据前记得导出重要进度。</p>
+        </div>
       </div>
       <div class="row" style="margin-top:16px;justify-content:flex-end"><button class="btn" data-close>知道了</button></div>
     </div>`;
