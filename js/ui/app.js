@@ -145,11 +145,11 @@ export function renderGame(root, state, opts = {}) {
 
   function stop() { if (timer) clearInterval(timer); timer = null; }
 
-  // 任意 .modal-mask 弹窗打开时暂停时间，关闭后恢复原速度（避免 8× 速度下谈判/发布会期间继续结算）
+  // 任意 .modal-mask 弹窗 / 全屏编辑页（data-pause-game）打开时暂停时间，关闭后恢复原速度
   let modalPausedSpeed = 0;
   let modalPaused = false;
   const modalObserver = new MutationObserver(() => {
-    const open = !!document.querySelector('.modal-mask');
+    const open = !!(document.querySelector('.modal-mask') || document.querySelector('[data-pause-game]'));
     if (open && !modalPaused) {
       modalPaused = true;
       modalPausedSpeed = speed;

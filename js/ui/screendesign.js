@@ -1,22 +1,71 @@
-// 屏幕设计独立页（v0.9.0）：壁纸导入/裁剪 + 状态栏 + 导航键 + Dock，多方案保存
-// 与设计器解耦：提前做好保存到 state.uiDesigns[]，设计器屏幕下拉选用
+// 屏幕设计独立页（v1.8.0）：桌面 + 锁屏双画面设计
+// 壁纸导入/裁剪 + 状态栏 + 导航键 + Dock + 锁屏通知，多方案保存
+// 编辑使用草稿副本：保存/完成才写回 state，不保存退出不留痕迹
 import { autoSave } from '../core/state.js';
-import { fmtMoney } from '../core/util.js';
+
+const ICON_COLORS = ['#3a7bd5', '#e0533d', '#2fb37a', '#f2b134', '#8b5cf6', '#22a8c9', '#e8548a', '#5b6b7f'];
+
+function num(v, d) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : d;
+}
+function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
+function escAttr(s) {
+  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// 旧方案幂等补齐新字段
+function normalizeDesign(d) {
+  if (!d || typeof d !== 'object') return d;
+  if (d.canvasW === undefined) d.canvasW = 1080;
+  if (d.canvasH === undefined) d.canvasH = Math.round(d.canvasW * 19.5 / 9);
+  if (d.lockAspect === undefined) d.lockAspect = true;
+  if (d.navDir === undefined) d.navDir = 'ltr';
+  if (d.gestureW === undefined) d.gestureW = 28;
+  if (d.gestureH === undefined) d.gestureH = 2.4;
+  if (d.batteryDY === undefined) d.batteryDY = 0.9;
+  if (d.lockWallpaper === undefined) d.lockWallpaper = '';
+  if (d.lockWallColor === undefined) d.lockWallColor = '#141c33';
+  if (d.lockShowTime === undefined) d.lockShowTime = true;
+  if (d.lockShowDate === undefined) d.lockShowDate = true;
+  if (d.lockShowNotif === undefined) d.lockShowNotif = true;
+  return d;
+}
+
+// 底部导航区占用的高度：Dock 需整体上抬避让
+function navReserve(H, d) {
+  if (d.navStyle === 'buttons') return H * 0.052;
+  if (d.navStyle === 'gesture') return H * 0.046;
+  return H * 0.01;
+}
+function dockGeom(W, H, d) {
+  const dockH = H * 0.095;
+  const dockY = H - navReserve(H, d) - H * 0.012 - dockH;
+  return { dockY, dockH };
+}
 
 export function openScreenDesign(mount, state, { onClose, onToast }) {
-  state.uiDesigns = state.uiDesigns || [];
-  let active = state.uiDesigns[0] || null;
+  // 草稿副本：所有编辑先落在 draft，保存/完成才提交到 state
+  const draft = JSON.parse(JSON.stringify(state.uiDesigns || []));
+  let active = draft[0] || null;
   let dirty = false;
+  let previewMode = 'home';
+  let onChangedCb = null;
+  let dead = false;
 
   // ---------- DOM ----------
   const overlay = document.createElement('div');
+  overlay.dataset.pauseGame = '1';
   overlay.style.cssText = 'position:fixed;inset:0;z-index:70;background:rgba(6,9,14,.97);display:flex;flex-direction:column';
   overlay.innerHTML = `
-    <div style="display:flex;gap:8px;align-items:center;padding:10px 14px;border-bottom:1px solid #232e3d">
+    <div style="display:flex;gap:8px;align-items:center;padding:10px 14px;border-bottom:1px solid #232e3d;flex-wrap:wrap">
       <b style="font-size:15px">屏幕设计</b>
-      <span class="tiny dim">壁纸导入 + 状态栏 + 导航键 + Dock · 保存后在设计器屏幕区选用</span>
+      <span class="tiny dim">桌面 + 锁屏 · 保存后在设计器屏幕区选用</span>
+      <span class="tiny" data-sd="status" style="color:#f2b134">未保存</span>
       <div style="flex:1"></div>
-      <button class="btn small" data-sd="close">完成</button>
+      <button class="btn small ghost" data-sd="discard">不保存退出</button>
+      <button class="btn small" data-sd="save">保存</button>
+      <button class="btn small primary" data-sd="done">完成</button>
     </div>
     <div style="flex:1;display:flex;min-height:0">
       <div style="width:340px;flex-shrink:0;padding:10px 14px;border-right:1px solid #232e3d;overflow-y:auto" data-sd="controls"></div>
@@ -28,45 +77,83 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
   const cv = overlay.querySelector('[data-sd=cv]');
   const ctx = cv.getContext('2d');
   const controlsEl = overlay.querySelector('[data-sd=controls]');
+  const statusEl = overlay.querySelector('[data-sd=status]');
 
   // ---------- 编辑逻辑 ----------
   function newDesign(name) {
-    return { uid: 'ui' + Date.now().toString(36) + Math.random().toString(36).slice(2, 4), name, wallpaper: '', wallColor: '#0a1020',
-      carrier: '5G', showTime: true, showBattery: true, showSignal: true, navStyle: 'gesture', dockCount: 4, cols: 4, rows: 5,
-      canvasW: 1080, canvasH: 2340, lockAspect: true };
+    return {
+      uid: 'ui' + Date.now().toString(36) + Math.random().toString(36).slice(2, 4), name,
+      wallpaper: '', wallColor: '#0a1020',
+      carrier: '5G', showTime: true, showBattery: true, showSignal: true,
+      navStyle: 'gesture', navDir: 'ltr', gestureW: 28, gestureH: 2.4, batteryDY: 0.9,
+      dockCount: 4, cols: 4, rows: 5,
+      canvasW: 1080, canvasH: 2340, lockAspect: true,
+      lockWallpaper: '', lockWallColor: '#141c33', lockShowTime: true, lockShowDate: true, lockShowNotif: true,
+    };
   }
   function ensureActive() {
-    if (!active) { active = newDesign('默认 UI'); state.uiDesigns.push(active); }
+    if (!active) { active = newDesign('默认 UI'); draft.push(active); dirty = true; }
+    normalizeDesign(active);
+  }
+  function markDirty() {
+    dirty = true;
+    updateStatus();
+  }
+  function updateStatus() {
+    if (!statusEl) return;
+    statusEl.textContent = dirty ? '未保存' : '已保存';
+    statusEl.style.color = dirty ? '#f2b134' : '#2fb37a';
+  }
+
+  function wallpaperButton(kind) {
+    const wp = kind === 'lock' ? active.lockWallpaper : active.wallpaper;
+    const importAct = kind === 'lock' ? 'lock-import' : 'import';
+    const clearAct = kind === 'lock' ? 'lock-clear' : 'clear-wp';
+    return `<div class="row" style="gap:5px;margin-bottom:6px">
+        <button class="btn small" data-sd="${importAct}">📁 导入图片</button>
+        <button class="btn small ghost" data-sd="${clearAct}">清除</button>
+      </div>
+      ${wp
+        ? `<img data-sd="wp-thumb" src="${wp}" style="width:80px;height:140px;object-fit:cover;border-radius:6px;border:1px solid #2a3546" />`
+        : `<div style="width:80px;height:140px;border-radius:6px;border:1px dashed #2a3546;display:flex;align-items:center;justify-content:center" class="tiny dim">无壁纸</div>`}`;
   }
 
   function renderControls() {
     ensureActive();
-    // 旧方案迁移：画布/比例字段幂等补齐
-    if (!active.canvasW) { active.canvasW = 1080; active.canvasH = 2340; active.lockAspect = true; }
-    if (!active.canvasH) active.canvasH = Math.round(active.canvasW * 19.5 / 9);
-    if (active.lockAspect === undefined) active.lockAspect = true;
-    const designs = state.uiDesigns.map((d, i) => `<option value="${i}" ${d === active ? 'selected' : ''}>${d.name}</option>`).join('');
+    const designs = draft.map((d, i) => `<option value="${i}" ${d === active ? 'selected' : ''}>${escAttr(d.name)}</option>`).join('');
+    const isGesture = active.navStyle === 'gesture';
     controlsEl.innerHTML = `
       <div class="field"><span>方案</span>
         <div class="row" style="gap:5px">
           <select data-sd="sel" style="flex:1">${designs}</select>
           <button class="btn tiny" data-sd="new">＋</button>
-          ${state.uiDesigns.length > 1 ? '<button class="btn tiny ghost" data-sd="del">✕</button>' : ''}
+          ${draft.length > 1 ? '<button class="btn tiny ghost" data-sd="del">✕</button>' : ''}
         </div>
       </div>
       <div class="field"><span>方案名称</span>
-        <input type="text" data-sd="name" value="${active.name}" maxlength="14" style="width:100%" />
+        <input type="text" data-sd="name" value="${escAttr(active.name)}" maxlength="14" style="width:100%" />
       </div>
-      <div class="section-label">壁纸</div>
-      <div class="row" style="gap:5px;margin-bottom:6px">
-        <button class="btn small" data-sd="import">📁 导入图片</button>
-        <button class="btn small ghost" data-sd="clear-wp">清除</button>
-        <input type="file" accept="image/*" data-sd="file" style="display:none" />
+      <div class="field"><span>预览画面</span>
+        <div class="row" style="gap:5px">
+          <button class="btn tiny ${previewMode === 'home' ? 'primary' : ''}" data-sd="preview" data-v="home">桌面</button>
+          <button class="btn tiny ${previewMode === 'lock' ? 'primary' : ''}" data-sd="preview" data-v="lock">锁屏</button>
+        </div>
       </div>
-      ${active.wallpaper ? '<img data-sd="wp-thumb" src="' + active.wallpaper + '" style="width:80px;height:140px;object-fit:cover;border-radius:6px;border:1px solid #2a3546" />' : `<div style="width:80px;height:140px;border-radius:6px;border:1px dashed #2a3546;display:flex;align-items:center;justify-content:center" class="tiny dim">无壁纸</div>`}
+      <div class="section-label">桌面壁纸</div>
+      ${wallpaperButton('home')}
       <label class="field"><span>底色（无壁纸时）</span>
-        <input type="color" data-sd="wall-color" value="${active.wallColor}" style="width:44px;height:26px;padding:1px" />
+        <input type="color" data-sd="wall-color" value="${active.wallColor || '#0a1020'}" style="width:44px;height:26px;padding:1px" />
       </label>
+      <div class="section-label">锁屏画面</div>
+      ${wallpaperButton('lock')}
+      <label class="field"><span>锁屏底色（无壁纸时）</span>
+        <input type="color" data-sd="lock-wall-color" value="${active.lockWallColor || '#141c33'}" style="width:44px;height:26px;padding:1px" />
+      </label>
+      <div class="row" style="gap:5px;flex-wrap:wrap;margin-bottom:6px">
+        <label class="form-check" style="margin:0"><input type="checkbox" class="form-check-input" data-sd="lockShowTime" ${active.lockShowTime ? 'checked' : ''} /><span class="form-check-label tiny">时间</span></label>
+        <label class="form-check" style="margin:0"><input type="checkbox" class="form-check-input" data-sd="lockShowDate" ${active.lockShowDate ? 'checked' : ''} /><span class="form-check-label tiny">日期</span></label>
+        <label class="form-check" style="margin:0"><input type="checkbox" class="form-check-input" data-sd="lockShowNotif" ${active.lockShowNotif ? 'checked' : ''} /><span class="form-check-label tiny">通知</span></label>
+      </div>
       <div class="section-label">状态栏</div>
       <div class="row" style="gap:5px;flex-wrap:wrap">
         <label class="form-check" style="margin:0"><input type="checkbox" class="form-check-input" data-sd="showTime" ${active.showTime ? 'checked' : ''} /><span class="form-check-label tiny">时间</span></label>
@@ -74,17 +161,43 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
         <label class="form-check" style="margin:0"><input type="checkbox" class="form-check-input" data-sd="showBattery" ${active.showBattery ? 'checked' : ''} /><span class="form-check-label tiny">电量</span></label>
       </div>
       <label class="field" style="margin-top:6px"><span>运营商文字</span>
-        <input type="text" data-sd="carrier" value="${active.carrier}" maxlength="6" style="width:100%" />
+        <input type="text" data-sd="carrier" value="${escAttr(active.carrier)}" maxlength="6" style="width:100%" />
+      </label>
+      <label class="field" style="margin-top:2px"><span>电池纵向位置</span>
+        <div class="row" style="gap:6px;align-items:center">
+          <input type="range" data-sd="batteryDY" min="-2" max="4" step="0.2" value="${num(active.batteryDY, 0.9)}" style="flex:1" />
+          <span class="tiny dim" data-sd="batteryDY-v" style="width:36px;text-align:right">${num(active.batteryDY, 0.9).toFixed(1)}u</span>
+        </div>
       </label>
       <div class="section-label">导航键</div>
       <div class="row" style="gap:5px;flex-wrap:wrap">
         ${[['gesture', '手势横条'], ['buttons', '三大键'], ['none', '无']].map(([v, n]) => `<button class="btn tiny ${active.navStyle === v ? 'primary' : ''}" data-sd="nav" data-v="${v}">${n}</button>`).join('')}
       </div>
+      ${active.navStyle === 'buttons' ? `
+        <div class="row" style="gap:5px;align-items:center;margin-top:6px">
+          <span class="tiny dim">方向</span>
+          <button class="btn tiny ${active.navDir !== 'rtl' ? 'primary' : ''}" data-sd="navdir" data-v="ltr">◁ ○ □</button>
+          <button class="btn tiny ${active.navDir === 'rtl' ? 'primary' : ''}" data-sd="navdir" data-v="rtl">□ ○ ▷</button>
+        </div>` : ''}
+      ${active.navStyle === 'gesture' ? `
+        <label class="field" style="margin-top:6px${isGesture ? '' : ';opacity:.5'}"><span>横条长度</span>
+          <div class="row" style="gap:6px;align-items:center">
+            <input type="range" data-sd="gestureW" min="10" max="50" step="1" value="${clamp(num(active.gestureW, 28), 10, 50)}" style="flex:1" />
+            <span class="tiny dim" data-sd="gestureW-v" style="width:36px;text-align:right">${clamp(num(active.gestureW, 28), 10, 50)}%</span>
+          </div>
+        </label>
+        <label class="field"><span>横条粗细</span>
+          <div class="row" style="gap:6px;align-items:center">
+            <input type="range" data-sd="gestureH" min="1" max="6" step="0.2" value="${clamp(num(active.gestureH, 2.4), 1, 6)}" style="flex:1" />
+            <span class="tiny dim" data-sd="gestureH-v" style="width:36px;text-align:right">${clamp(num(active.gestureH, 2.4), 1, 6).toFixed(1)}u</span>
+          </div>
+        </label>` : ''}
       <div class="section-label">Dock 栏</div>
       <div class="row" style="gap:5px;align-items:center">
         <span class="tiny dim">应用数</span>
         ${[0, 3, 4, 5].map((n) => `<button class="btn tiny ${active.dockCount === n ? 'primary' : ''}" data-sd="dock" data-v="${n}">${n || '无'}</button>`).join('')}
       </div>
+      <div class="tiny dim" style="margin:4px 0 6px">有导航键/手势条时 Dock 会自动上抬避让</div>
       <div class="section-label">画布</div>
       <div class="row" style="gap:5px;flex-wrap:wrap;margin-bottom:6px">
         ${[['16:9', 16 / 9], ['19.5:9', 19.5 / 9], ['21:9', 21 / 9], ['4:3', 4 / 3], ['1:1', 1]].map(([n, r]) => {
@@ -104,99 +217,38 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
       <div class="row" style="gap:8px;align-items:center">
         <span class="tiny dim">列</span>${[3, 4, 5].map((n) => `<button class="btn tiny ${active.cols === n ? 'primary' : ''}" data-sd="cols" data-v="${n}">${n}</button>`).join('')}
         <span class="tiny dim" style="margin-left:8px">行</span>${[4, 5, 6].map((n) => `<button class="btn tiny ${active.rows === n ? 'primary' : ''}" data-sd="rows" data-v="${n}">${n}</button>`).join('')}
-      </div>`;
+      </div>
+      <input type="file" accept="image/*" data-sd="file" style="display:none" />
+      <input type="file" accept="image/*" data-sd="lock-file" style="display:none" />`;
+    updateStatus();
   }
 
-  // ---------- 合成渲染（共享给设计器管线） ----------
-  function compose(ctx, W, H) {
+  // ---------- 合成渲染（与共享管线保持一致） ----------
+  function compose(c) {
     ensureActive();
-    // 底色 / 壁纸
-    if (active.wallpaper) {
+    const W = active.canvasW || 1080;
+    const H = active.canvasH || Math.round(W * 19.5 / 9);
+    const isLock = previewMode === 'lock';
+    const wp = isLock ? active.lockWallpaper : active.wallpaper;
+    const color = isLock ? (active.lockWallColor || '#141c33') : (active.wallColor || '#0a1020');
+    const finish = () => {
+      if (isLock) drawLockOverlays(c, W, H, active);
+      else drawHomeOverlays(c, W, H, active);
+    };
+    if (wp) {
       const img = new Image();
       img.onload = () => {
-        ctx.drawImage(img, 0, 0, W, H);
-        drawOverlays(ctx, W, H);
+        if (dead || previewMode !== (isLock ? 'lock' : 'home')) return;
+        c.drawImage(img, 0, 0, W, H);
+        finish();
       };
-      img.src = active.wallpaper;
-      return; // 异步首次，onload 内完成
-    } else {
-      const g = ctx.createLinearGradient(0, 0, 0, H);
-      try { g.addColorStop(0, active.wallColor); g.addColorStop(1, '#05070c'); } catch (e) { g.addColorStop(1, '#05070c'); }
-      ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+      img.src = wp;
+      return;
     }
-    drawOverlays(ctx, W, H);
-  }
-
-  function drawOverlays(ctx, W, H) {
-    const u = W / 100;
-    // 状态栏
-    ctx.fillStyle = 'rgba(255,255,255,.85)';
-    const sbY = H * 0.028;
-    ctx.font = `600 ${u * 3.2}px sans-serif`;
-    ctx.textAlign = 'left';
-    if (active.showTime) ctx.fillText('9:41', u * 7, sbY + u * 3);
-    ctx.textAlign = 'right';
-    let rightX = W - u * 7;
-    if (active.showBattery) {
-      ctx.strokeRect(rightX - u * 6, sbY, u * 5, u * 2.4);
-      ctx.fillRect(rightX - u * 5.7, sbY + u * 0.3, u * 3.4, u * 1.8);
-      rightX -= u * 7.5;
-    }
-    if (active.showSignal) {
-      for (let i = 0; i < 4; i++) { ctx.fillRect(rightX - u * 4 + i * u * 1.2, sbY + u * 2.2 - i * u * 0.55, u * 0.85, u * 0.85 + i * u * 0.55); }
-      rightX -= u * 5.5;
-    }
-    if (active.carrier) {
-      ctx.font = `500 ${u * 2.6}px sans-serif`;
-      ctx.fillText(active.carrier, rightX, sbY + u * 2.8);
-    }
-    // 挖孔
-    ctx.fillStyle = '#000';
-    ctx.beginPath(); ctx.arc(W / 2, sbY + u * 1.5, u * 1.7, 0, Math.PI * 2); ctx.fill();
-    // 桌面网格图标
-    const gridTop = H * 0.09, gridBottom = active.dockCount > 0 ? H - H * 0.13 : H - H * 0.06;
-    const iconSize = Math.min((W - u * 12) / active.cols - u * 2, u * 13);
-    const iconGap = (W - u * 10 - iconSize * active.cols) / Math.max(1, active.cols - 1);
-    const rows = Math.max(1, Math.floor((gridBottom - gridTop) / (iconSize + u * 7)));
-    const iconColors = ['#3a7bd5', '#e0533d', '#2fb37a', '#f2b134', '#8b5cf6', '#22a8c9', '#e8548a', '#5b6b7f'];
-    for (let r = 0; r < Math.min(rows, active.rows); r++) {
-      for (let c2 = 0; c2 < active.cols; c2++) {
-        const ix = u * 5 + c2 * (iconSize + iconGap);
-        const iy = gridTop + r * (iconSize + u * 7);
-        const col = iconColors[(r * active.cols + c2) % iconColors.length];
-        ctx.fillStyle = col;
-        ctx.beginPath(); ctx.roundRect(ix, iy, iconSize, iconSize, iconSize * 0.22); ctx.fill();
-        ctx.fillStyle = 'rgba(255,255,255,.16)';
-        ctx.beginPath(); ctx.roundRect(ix, iy, iconSize, iconSize * 0.4, iconSize * 0.22); ctx.fill();
-      }
-    }
-    // Dock
-    if (active.dockCount > 0) {
-      const dockY = H - H * 0.115;
-      const dockH = H * 0.095;
-      ctx.fillStyle = 'rgba(255,255,255,.12)';
-      ctx.beginPath(); ctx.roundRect(u * 4, dockY, W - u * 8, dockH, dockH * 0.3); ctx.fill();
-      const dockIcon = dockH * 0.72;
-      const dockGap = (W - u * 12 - dockIcon * active.dockCount) / Math.max(1, active.dockCount + 1);
-      for (let i = 0; i < active.dockCount; i++) {
-        const dx = u * 6 + i * (dockIcon + dockGap) + dockGap / 2;
-        ctx.fillStyle = iconColors[i % iconColors.length];
-        ctx.beginPath(); ctx.roundRect(dx, dockY + (dockH - dockIcon) / 2, dockIcon, dockIcon, dockIcon * 0.22); ctx.fill();
-      }
-    }
-    // 导航键
-    const navY = H - H * 0.018;
-    if (active.navStyle === 'gesture') {
-      ctx.fillStyle = 'rgba(255,255,255,.55)';
-      ctx.beginPath(); ctx.roundRect(W / 2 - u * 14, navY - u * 1.2, u * 28, u * 2.4, u * 1.2); ctx.fill();
-    } else if (active.navStyle === 'buttons') {
-      ctx.fillStyle = 'rgba(255,255,255,.55)';
-      const by = navY;
-      // ◁ ○ □
-      ctx.beginPath(); ctx.moveTo(W * 0.22 - u * 3, by); ctx.lineTo(W * 0.22 + u * 2, by - u * 3); ctx.lineTo(W * 0.22 + u * 2, by + u * 3); ctx.closePath(); ctx.fill();
-      ctx.beginPath(); ctx.arc(W / 2, by, u * 2.8, 0, Math.PI * 2); ctx.stroke(); ctx.lineWidth = u * 0.7; ctx.strokeStyle = 'rgba(255,255,255,.55)'; ctx.stroke();
-      ctx.strokeRect(W * 0.78 - u * 2.5, by - u * 2.5, u * 5, u * 5);
-    }
+    const g = c.createLinearGradient(0, 0, 0, H);
+    try { g.addColorStop(0, color); g.addColorStop(1, '#05070c'); } catch (e) { g.addColorStop(1, '#05070c'); }
+    c.fillStyle = g; c.fillRect(0, 0, W, H);
+    finish();
   }
 
   function draw() {
@@ -212,52 +264,109 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
     cv.style.width = pw + 'px'; cv.style.height = ph + 'px';
     cv.width = W; cv.height = H;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    compose(ctx, W, H);
+    compose(ctx);
+  }
+
+  // ---------- 导入壁纸（桌面/锁屏共用） ----------
+  function importWallpaper(file, key) {
+    if (!file) return;
+    const img = new Image();
+    img.onload = () => {
+      const ratio2 = (active.canvasH || 2340) / (active.canvasW || 1080);
+      let tw = Math.min(active.canvasW || 1080, 720);
+      let th = Math.round(tw * ratio2);
+      while (tw * th > 1300000) { tw = Math.round(tw * 0.9); th = Math.round(tw * ratio2); }
+      const c = document.createElement('canvas');
+      c.width = tw; c.height = th;
+      const cctx = c.getContext('2d');
+      const s = Math.max(tw / img.width, th / img.height);
+      const dw = img.width * s, dh = img.height * s;
+      cctx.drawImage(img, (tw - dw) / 2, (th - dh) / 2, dw, dh);
+      active[key] = c.toDataURL('image/jpeg', 0.82);
+      markDirty();
+      renderControls(); draw();
+      if (onToast) onToast(key === 'lockWallpaper' ? '锁屏壁纸已导入（自动裁剪适配屏幕）' : '桌面壁纸已导入（自动裁剪适配屏幕）', 'good');
+    };
+    img.src = URL.createObjectURL(file);
+  }
+
+  // ---------- 提交 / 退出 ----------
+  function save() {
+    state.uiDesigns = JSON.parse(JSON.stringify(draft));
+    try { autoSave(state); } catch (e) { /* 忽略 */ }
+    dirty = false;
+    updateStatus();
+    if (onChangedCb) onChangedCb();
+    if (onToast) onToast('屏幕设计已保存', 'good');
+  }
+  function finish() {
+    if (dirty) save();
+    destroy();
+  }
+  function discard() {
+    if (onToast && dirty) onToast('已放弃本次修改', 'warn');
+    destroy();
   }
 
   // ---------- 事件 ----------
+  overlay.querySelector('[data-sd=save]').addEventListener('click', save);
+  overlay.querySelector('[data-sd=done]').addEventListener('click', finish);
+  overlay.querySelector('[data-sd=discard]').addEventListener('click', discard);
+
   controlsEl.addEventListener('click', (e) => {
     const act = e.target.closest('[data-sd]');
     if (!act) return;
     const k = act.dataset.sd;
     if (k === 'new') {
-      const d = newDesign(`UI 方案 ${state.uiDesigns.length + 1}`);
-      state.uiDesigns.push(d); active = d; dirty = true;
+      const d = newDesign(`UI 方案 ${draft.length + 1}`);
+      draft.push(d); active = d; markDirty();
     } else if (k === 'del') {
-      const idx = state.uiDesigns.indexOf(active);
-      if (idx >= 0 && state.uiDesigns.length > 1) {
-        state.uiDesigns.splice(idx, 1);
-        active = state.uiDesigns[Math.max(0, idx - 1)]; dirty = true;
+      const idx = draft.indexOf(active);
+      if (idx >= 0 && draft.length > 1) {
+        draft.splice(idx, 1);
+        active = draft[Math.max(0, idx - 1)]; markDirty();
       }
     } else if (k === 'import') { controlsEl.querySelector('[data-sd=file]').click(); return; }
-    else if (k === 'clear-wp') { active.wallpaper = ''; dirty = true; }
+    else if (k === 'lock-import') { controlsEl.querySelector('[data-sd=lock-file]').click(); return; }
+    else if (k === 'clear-wp') { active.wallpaper = ''; markDirty(); }
+    else if (k === 'lock-clear') { active.lockWallpaper = ''; markDirty(); }
+    else if (k === 'preview') { previewMode = act.dataset.v === 'lock' ? 'lock' : 'home'; renderControls(); draw(); return; }
     else if (k === 'ratio') {
       const r = Number(act.dataset.v);
       active.canvasH = Math.round(active.canvasW * r);
       if (active.canvasH > 4680) { active.canvasH = 4680; active.canvasW = Math.round(active.canvasH / r); }
-      dirty = true;
+      markDirty();
     } else if (k === 'lock') {
       active.lockAspect = !active.lockAspect;
-      dirty = true;
-    } else if (k === 'nav' || k === 'dock' || k === 'cols' || k === 'rows') {
+      markDirty();
+    } else if (k === 'nav' || k === 'navdir' || k === 'dock' || k === 'cols' || k === 'rows') {
       const v = k === 'dock' || k === 'cols' || k === 'rows' ? Number(act.dataset.v) : act.dataset.v;
       if (k === 'nav') active.navStyle = v;
+      else if (k === 'navdir') active.navDir = v;
       else if (k === 'dock') active.dockCount = v;
       else if (k === 'cols') active.cols = v;
       else active.rows = v;
-      dirty = true;
+      markDirty();
     }
-    if (k !== 'import') { renderControls(); draw(); persist(); }
+    if (k !== 'import' && k !== 'lock-import') { renderControls(); draw(); }
   });
+
   controlsEl.addEventListener('input', (e) => {
     const k = e.target.dataset.sd;
     if (!k) return;
     if (k === 'name') active.name = e.target.value;
     else if (k === 'wall-color') active.wallColor = e.target.value;
+    else if (k === 'lock-wall-color') active.lockWallColor = e.target.value;
     else if (k === 'carrier') active.carrier = e.target.value;
     else if (k === 'showTime') active.showTime = e.target.checked;
     else if (k === 'showSignal') active.showSignal = e.target.checked;
     else if (k === 'showBattery') active.showBattery = e.target.checked;
+    else if (k === 'lockShowTime') active.lockShowTime = e.target.checked;
+    else if (k === 'lockShowDate') active.lockShowDate = e.target.checked;
+    else if (k === 'lockShowNotif') active.lockShowNotif = e.target.checked;
+    else if (k === 'batteryDY') active.batteryDY = Number(e.target.value);
+    else if (k === 'gestureW') active.gestureW = Number(e.target.value);
+    else if (k === 'gestureH') active.gestureH = Number(e.target.value);
     else if (k === 'canvas-w') {
       const prevRatio = (active.canvasH || 2340) / (active.canvasW || 1080);
       active.canvasW = Math.round(Math.min(2160, Math.max(240, Number(e.target.value) || 1080)));
@@ -270,51 +379,35 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
     } else if (k === 'lock') {
       active.lockAspect = e.target.checked;
     }
-    if (k === 'canvas-w' || k === 'canvas-h') { draw(); persist(); renderControls(); }
-    else if (k !== 'name') { draw(); persist(); }
-    else { draw(); } // 名称不触发持久化（打字中）
+    // 输入即视为修改（是否落盘由保存按钮决定）
+    markDirty();
+    if (k === 'canvas-w' || k === 'canvas-h') { draw(); renderControls(); }
+    else if (k === 'batteryDY' || k === 'gestureW' || k === 'gestureH') {
+      // 拖动滑杆时只更新数值标签，避免重建 DOM 打断拖动
+      const label = controlsEl.querySelector(`[data-sd="${k}-v"]`);
+      if (label) {
+        label.textContent = k === 'gestureW'
+          ? `${clamp(num(active.gestureW, 28), 10, 50)}%`
+          : `${clamp(num(active[k], 1), k === 'batteryDY' ? -2 : 1, k === 'batteryDY' ? 4 : 6).toFixed(1)}u`;
+      }
+      draw();
+    }
+    else draw();
   });
+
   controlsEl.addEventListener('change', (e) => {
-    if (e.target.dataset.sd === 'sel') {
-      active = state.uiDesigns[Number(e.target.value)] || active;
+    const k = e.target.dataset.sd;
+    if (k === 'sel') {
+      active = draft[Number(e.target.value)] || active;
+      ensureActive();
       renderControls(); draw();
     }
-    if (e.target.dataset.sd === 'file') {
-      const file = e.target.files[0];
-      if (!file) return;
-      const img = new Image();
-      img.onload = () => {
-        // 压缩到方案画布纵横比（宽度跟随画布，控制存档体积）
-        const ratio2 = (active.canvasH || 2340) / (active.canvasW || 1080);
-        let tw = Math.min(active.canvasW || 1080, 720);
-        let th = Math.round(tw * ratio2);
-        while (tw * th > 1300000) { tw = Math.round(tw * 0.9); th = Math.round(tw * ratio2); }
-        const c = document.createElement('canvas');
-        c.width = tw; c.height = th;
-        const cctx = c.getContext('2d');
-        // cover 裁切
-        const s = Math.max(tw / img.width, th / img.height);
-        const dw = img.width * s, dh = img.height * s;
-        cctx.drawImage(img, (tw - dw) / 2, (th - dh) / 2, dw, dh);
-        active.wallpaper = c.toDataURL('image/jpeg', 0.82);
-        dirty = true;
-        renderControls(); draw(); persist();
-        if (onToast) onToast('壁纸已导入（自动裁剪适配屏幕）', 'good');
-      };
-      img.src = URL.createObjectURL(file);
-    }
+    if (k === 'file') importWallpaper(e.target.files[0], 'wallpaper');
+    if (k === 'lock-file') importWallpaper(e.target.files[0], 'lockWallpaper');
   });
 
-  function persist() {
-    if (!dirty) return;
-    try { autoSave(state); } catch (e) { /* 忽略 */ }
-    if (onChangedCb) onChangedCb();
-    dirty = false;
-  }
-  let onChangedCb = null;
-
   // ---------- 键盘 ----------
-  function onKey(e) { if (e.key === 'Escape') destroy(); }
+  function onKey(e) { if (e.key === 'Escape') discard(); }
   window.addEventListener('keydown', onKey);
 
   renderControls();
@@ -323,43 +416,45 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
   draw();
 
   function destroy() {
+    if (dead) return;
     dead = true;
     window.removeEventListener('keydown', onKey);
     ro.disconnect();
     overlay.remove();
     if (onClose) onClose();
   }
-  let dead = false;
 
   return {
     destroy,
     setOnChanged(cb) { onChangedCb = cb; },
-    // 供设计器合成调用：把 active 方案或按 uid 找到方案画到 ctx
     getDesigns: () => state.uiDesigns,
   };
 }
 
-// ---------- 共享合成管线（designer.js 三处调用） ----------
-// 把 UI 方案画到任意 canvas 上下文（3D 贴图 / 2D 正视 / 缩略图）
-export function composeScreenUI(ctx, W, H, ui) {
+// ---------- 共享合成管线 ----------
+// 把 UI 方案画到任意 canvas 上下文（3D 贴图 / 2D 正视 / 缩略图 / 锁屏预览）
+export function composeScreenUI(ctx, W, H, ui, mode = 'home') {
   if (!ui) return false;
-  // 底色 / 壁纸
-  if (ui.wallpaper) {
-    // 同步路径：壁纸已预加载为 HTMLImageElement（由页面初始化时预热）
-    const img = wpCache.get(ui.wallpaper);
+  normalizeDesign(ui);
+  const isLock = mode === 'lock';
+  const wp = isLock ? ui.lockWallpaper : ui.wallpaper;
+  const color = isLock ? (ui.lockWallColor || '#141c33') : (ui.wallColor || '#0a1020');
+  if (wp) {
+    const img = wpCache.get(wp);
     if (img) {
       ctx.drawImage(img, 0, 0, W, H);
     } else {
-      ctx.fillStyle = ui.wallColor || '#0a1020'; ctx.fillRect(0, 0, W, H);
-      preloadWP(ui.wallpaper);
+      ctx.fillStyle = color; ctx.fillRect(0, 0, W, H);
+      preloadWP(wp);
       return false;
     }
   } else {
     const g = ctx.createLinearGradient(0, 0, 0, H);
-    try { g.addColorStop(0, ui.wallColor || '#0a1020'); g.addColorStop(1, '#05070c'); } catch (e) { /* 忽略 */ }
+    try { g.addColorStop(0, color); g.addColorStop(1, '#05070c'); } catch (e) { /* 忽略 */ }
     ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
   }
-  drawUIOverlays(ctx, W, H, ui);
+  if (isLock) drawLockOverlays(ctx, W, H, ui);
+  else drawHomeOverlays(ctx, W, H, ui);
   return true;
 }
 
@@ -372,67 +467,165 @@ function preloadWP(src) {
   wpCache.set(src, null); // 占位防重
 }
 
-function drawUIOverlays(ctx, W, H, active) {
-  if (!active) return;
+// ---------- 状态栏 ----------
+function drawStatus(ctx, W, H, d) {
   const u = W / 100;
   ctx.fillStyle = 'rgba(255,255,255,.85)';
   const sbY = H * 0.028;
   ctx.font = `600 ${u * 3.2}px sans-serif`;
   ctx.textAlign = 'left';
-  if (active.showTime) ctx.fillText('9:41', u * 7, sbY + u * 3);
+  if (d.showTime) ctx.fillText('9:41', u * 7, sbY + u * 3);
   ctx.textAlign = 'right';
   let rightX = W - u * 7;
-  if (active.showBattery) {
-    ctx.strokeRect(rightX - u * 6, sbY, u * 5, u * 2.4);
-    ctx.fillRect(rightX - u * 5.7, sbY + u * 0.3, u * 3.4, u * 1.8);
+  if (d.showBattery) {
+    // 电池纵向偏移：旧版本贴顶偏高，默认下移 0.9u 与文字视觉居中
+    const by = sbY + u * clamp(num(d.batteryDY, 0.9), -2, 4);
+    ctx.strokeRect(rightX - u * 6, by, u * 5, u * 2.4);
+    ctx.fillRect(rightX - u * 5.7, by + u * 0.3, u * 3.4, u * 1.8);
     rightX -= u * 7.5;
   }
-  if (active.showSignal) {
+  if (d.showSignal) {
     for (let i = 0; i < 4; i++) { ctx.fillRect(rightX - u * 4 + i * u * 1.2, sbY + u * 2.2 - i * u * 0.55, u * 0.85, u * 0.85 + i * u * 0.55); }
     rightX -= u * 5.5;
   }
-  if (active.carrier) {
+  if (d.carrier) {
     ctx.font = `500 ${u * 2.6}px sans-serif`;
-    ctx.fillText(active.carrier, rightX, sbY + u * 2.8);
+    ctx.fillText(d.carrier, rightX, sbY + u * 2.8);
   }
+  // 挖孔
   ctx.fillStyle = '#000';
   ctx.beginPath(); ctx.arc(W / 2, sbY + u * 1.5, u * 1.7, 0, Math.PI * 2); ctx.fill();
-  const gridTop = H * 0.09, gridBottom = active.dockCount > 0 ? H - H * 0.13 : H - H * 0.06;
+}
+
+// ---------- 桌面 ----------
+function drawHomeOverlays(ctx, W, H, active) {
+  if (!active) return;
+  const u = W / 100;
+  drawStatus(ctx, W, H, active);
+
+  const dock = dockGeom(W, H, active);
+  const gridTop = H * 0.09;
+  const gridBottom = active.dockCount > 0 ? dock.dockY - H * 0.014 : H - navReserve(H, active) - H * 0.03;
   const iconSize = Math.min((W - u * 12) / active.cols - u * 2, u * 13);
   const iconGap = (W - u * 10 - iconSize * active.cols) / Math.max(1, active.cols - 1);
   const rows = Math.max(1, Math.floor((gridBottom - gridTop) / (iconSize + u * 7)));
-  const iconColors = ['#3a7bd5', '#e0533d', '#2fb37a', '#f2b134', '#8b5cf6', '#22a8c9', '#e8548a', '#5b6b7f'];
   for (let r = 0; r < Math.min(rows, active.rows || 5); r++) {
     for (let c2 = 0; c2 < active.cols; c2++) {
       const ix = u * 5 + c2 * (iconSize + iconGap);
       const iy = gridTop + r * (iconSize + u * 7);
-      const col = iconColors[(r * active.cols + c2) % iconColors.length];
+      const col = ICON_COLORS[(r * active.cols + c2) % ICON_COLORS.length];
       ctx.fillStyle = col;
       ctx.beginPath(); ctx.roundRect(ix, iy, iconSize, iconSize, iconSize * 0.22); ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,.16)';
+      ctx.beginPath(); ctx.roundRect(ix, iy, iconSize, iconSize * 0.4, iconSize * 0.22); ctx.fill();
     }
   }
+
+  // Dock：位于导航区上方，避让三大键/手势条
   if (active.dockCount > 0) {
-    const dockY = H - H * 0.115;
-    const dockH = H * 0.095;
     ctx.fillStyle = 'rgba(255,255,255,.12)';
-    ctx.beginPath(); ctx.roundRect(u * 4, dockY, W - u * 8, dockH, dockH * 0.3); ctx.fill();
-    const dockIcon = dockH * 0.72;
+    ctx.beginPath(); ctx.roundRect(u * 4, dock.dockY, W - u * 8, dock.dockH, dock.dockH * 0.3); ctx.fill();
+    const dockIcon = dock.dockH * 0.72;
     const dockGap = (W - u * 12 - dockIcon * active.dockCount) / Math.max(1, active.dockCount + 1);
     for (let i = 0; i < active.dockCount; i++) {
       const dx = u * 6 + i * (dockIcon + dockGap) + dockGap / 2;
-      ctx.fillStyle = iconColors[i % iconColors.length];
-      ctx.beginPath(); ctx.roundRect(dx, dockY + (dockH - dockIcon) / 2, dockIcon, dockIcon, dockIcon * 0.22); ctx.fill();
+      ctx.fillStyle = ICON_COLORS[i % ICON_COLORS.length];
+      ctx.beginPath(); ctx.roundRect(dx, dock.dockY + (dock.dockH - dockIcon) / 2, dockIcon, dockIcon, dockIcon * 0.22); ctx.fill();
     }
   }
+
+  // 导航键
   const navY = H - H * 0.018;
   if (active.navStyle === 'gesture') {
+    const gw = u * clamp(num(active.gestureW, 28), 10, 50);
+    const gh = u * clamp(num(active.gestureH, 2.4), 1, 6);
     ctx.fillStyle = 'rgba(255,255,255,.55)';
-    ctx.beginPath(); ctx.roundRect(W / 2 - u * 14, navY - u * 1.2, u * 28, u * 2.4, u * 1.2); ctx.fill();
+    ctx.beginPath(); ctx.roundRect(W / 2 - gw / 2, navY - gh / 2, gw, gh, gh / 2); ctx.fill();
   } else if (active.navStyle === 'buttons') {
+    const rtl = active.navDir === 'rtl';
+    const backX = rtl ? W * 0.78 : W * 0.22;
+    const sqX = rtl ? W * 0.22 : W * 0.78;
     ctx.fillStyle = 'rgba(255,255,255,.55)';
-    ctx.beginPath(); ctx.moveTo(W * 0.22 - u * 3, navY); ctx.lineTo(W * 0.22 + u * 2, navY - u * 3); ctx.lineTo(W * 0.22 + u * 2, navY + u * 3); ctx.closePath(); ctx.fill();
+    // 返回三角：朝返回键所在的外侧
+    ctx.beginPath();
+    if (rtl) {
+      ctx.moveTo(backX + u * 3, navY);
+      ctx.lineTo(backX - u * 2, navY - u * 3);
+      ctx.lineTo(backX - u * 2, navY + u * 3);
+    } else {
+      ctx.moveTo(backX - u * 3, navY);
+      ctx.lineTo(backX + u * 2, navY - u * 3);
+      ctx.lineTo(backX + u * 2, navY + u * 3);
+    }
+    ctx.closePath(); ctx.fill();
     ctx.lineWidth = u * 0.7; ctx.strokeStyle = 'rgba(255,255,255,.55)';
     ctx.beginPath(); ctx.arc(W / 2, navY, u * 2.8, 0, Math.PI * 2); ctx.stroke();
-    ctx.strokeRect(W * 0.78 - u * 2.5, navY - u * 2.5, u * 5, u * 5);
+    ctx.strokeRect(sqX - u * 2.5, navY - u * 2.5, u * 5, u * 5);
   }
+}
+
+// ---------- 锁屏 ----------
+function drawLockOverlays(ctx, W, H, active) {
+  if (!active) return;
+  const u = W / 100;
+  drawStatus(ctx, W, H, active);
+
+  ctx.textAlign = 'center';
+  ctx.fillStyle = 'rgba(255,255,255,.94)';
+  if (active.lockShowTime) {
+    ctx.font = `700 ${u * 16}px sans-serif`;
+    ctx.fillText('9:41', W / 2, H * 0.17);
+  }
+  if (active.lockShowDate) {
+    ctx.font = `500 ${u * 4.2}px sans-serif`;
+    ctx.fillStyle = 'rgba(255,255,255,.78)';
+    ctx.fillText('1月1日 周一', W / 2, H * 0.17 + u * 6.4);
+  }
+
+  if (active.lockShowNotif) {
+    const cardY = H * 0.28;
+    const cardH = H * 0.085;
+    ctx.fillStyle = 'rgba(255,255,255,.16)';
+    ctx.beginPath();
+    ctx.roundRect(u * 6, cardY, W - u * 12, cardH, u * 4);
+    ctx.fill();
+    // 通知图标
+    ctx.fillStyle = ICON_COLORS[2];
+    ctx.beginPath();
+    ctx.arc(u * 12, cardY + cardH / 2, u * 3.2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.roundRect(u * 10.9, cardY + cardH / 2 - u * 1.4, u * 2.2, u * 2.8, u * 0.6);
+    ctx.fill();
+    // 文案
+    ctx.textAlign = 'left';
+    ctx.fillStyle = 'rgba(255,255,255,.95)';
+    ctx.font = `600 ${u * 3.2}px sans-serif`;
+    ctx.fillText('信息', u * 17.5, cardY + cardH * 0.4);
+    ctx.fillStyle = 'rgba(255,255,255,.7)';
+    ctx.font = `400 ${u * 2.7}px sans-serif`;
+    ctx.fillText('欢迎使用你的新手机', u * 17.5, cardY + cardH * 0.72);
+    ctx.textAlign = 'right';
+    ctx.fillStyle = 'rgba(255,255,255,.55)';
+    ctx.fillText('刚刚', W - u * 9, cardY + cardH * 0.4);
+  }
+
+  // 锁头
+  ctx.strokeStyle = 'rgba(255,255,255,.6)';
+  ctx.lineWidth = u * 0.7;
+  ctx.beginPath();
+  ctx.arc(W / 2, H - u * 17, u * 2.2, Math.PI, 0);
+  ctx.stroke();
+  ctx.fillStyle = 'rgba(255,255,255,.6)';
+  ctx.beginPath();
+  ctx.roundRect(W / 2 - u * 3.2, H - u * 17, u * 6.4, u * 4.4, u * 1);
+  ctx.fill();
+
+  // 上滑解锁
+  ctx.textAlign = 'center';
+  ctx.fillStyle = 'rgba(255,255,255,.62)';
+  ctx.font = `500 ${u * 3}px sans-serif`;
+  ctx.fillText('上滑解锁', W / 2, H - u * 6);
+  ctx.textAlign = 'left';
 }
