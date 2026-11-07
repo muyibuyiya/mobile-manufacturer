@@ -37,6 +37,16 @@ function screenCornerMm(design) {
 // 法线/粗糙度/颜色三张 256² 画布：中央凸弧 + 三道同心元件棱（镜片组层次）+ 细放射波纹，
 // 供最外层玻璃的 MeshPhysicalMaterial 使用；clearcoat + 场景环境反射产生自然高光
 let _lensTex = null;
+// 中框轮廓 → 挤出剖面参数。bevelSize 恒为 0.5（外观轮廓不变，外露件定位依赖它），
+  // 只调 bevelThickness（沿厚度方向的圆角/切角深度）与 bevelSegments（段数=曲面/平面）。
+function frameBevel(b, T) {
+  const kind = b.frameType || 'flat';
+  if (kind === 'arc') return { bt: Math.min(T * 0.42, 3.2), seg: 8 };
+  if (kind === 'chamfer') return { bt: 1.3, seg: 1 };
+  if (kind === 'bevel') return { bt: Math.min(T * 0.28, 1.9), seg: 4 };
+  return { bt: 0.5, seg: 2 };
+}
+
 function lensGlassTextures() {
   if (_lensTex) return _lensTex;
   const S = 256, C = S / 2, R = S / 2;
@@ -277,7 +287,12 @@ export function renderDesigner(container, state, model, hooks = {}) {
       ${sliderRow('长度', 'body.length', body.length, 70, 200, 1, 'mm')}
       ${sliderRow('宽度', 'body.width', body.width, 35, 100, 0.5, 'mm')}
       ${sliderRow('厚度', 'body.thickness', body.thickness, 5, 32, 0.1, 'mm')}
-      ${sliderRow('边角弧度', 'body.corner', body.corner, 0, 20, 0.5, 'mm')}`)
+      ${sliderRow('边角弧度', 'body.corner', body.corner, 0, 20, 0.5, 'mm')}
+      <label class="field"><span>中框轮廓（侧边剖面）</span>
+        <select data-k="body.frameType">
+          ${[['flat', '直角边框（iPhone 4/12 式硬朗）'], ['arc', '圆弧边框（圆润手感，多数安卓）'], ['chamfer', '45° 切角（iPhone 5 式棱线）'], ['bevel', '2.5D 缓弧（微弧过渡）']].map(([v, n]) => `<option value="${v}" ${(body.frameType || 'flat') === v ? 'selected' : ''}>${n}</option>`).join('')}
+        </select>
+      </label>`)
       + section('screen', '屏幕', `
       <span class="tiny dim" style="display:block;margin-bottom:6px">调机身时屏幕自动贴合</span>
       ${sliderRow('屏幕尺寸', 'screen.inch', d.screen.inch, 1, TPL.screen.maxInch, 0.1, '″')}
@@ -910,7 +925,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
 
   // ---------- 右侧评估 ----------
   function assessment() {
-    const v = validate(model.design, year);
+    const v = validate(model.design, year, sandboxAll ? { ignoreEra: true, unlocked } : { unlocked });
     const d = v.derived;
     const cost = bomCost(model.design, year);
     const price = suggestedPrice(state, { design: model.design }, 'cn');
@@ -1183,8 +1198,13 @@ export function renderDesigner(container, state, model, hooks = {}) {
       layers.push([x, y, W, H]);
     }
     for (const [lx, ly, lw, lh] of layers) {
-      const rLm = isSide || isTop ? Math.min(b.corner, lw / scale / 2, lh / scale / 2) : b.corner;
-      const rLp = Math.max(2, rLm * scale);
+      // 中框轮廓影响侧视剖面的边缘过渡：圆弧/切角把侧边角做圆/切平
+      const fr = b.frameType || 'flat';
+      const frameRoundMm = fr === 'arc' ? Math.min(b.thickness * 0.42, 3.2) : fr === 'chamfer' ? 1.3 : fr === 'bevel' ? Math.min(b.thickness * 0.28, 1.9) : 0.5;
+      const rLm = isSide
+        ? Math.min(frameRoundMm + b.corner * 0.15, lw / scale / 2, lh / scale / 2)
+        : isTop ? Math.min(b.corner, lw / scale / 2, lh / scale / 2) : b.corner;
+      const rLp = Math.max(1.5, rLm * scale);
       ctx.save();
       ctx.shadowColor = 'rgba(0,0,0,.5)';
       ctx.shadowBlur = 14;
@@ -1202,6 +1222,13 @@ export function renderDesigner(container, state, model, hooks = {}) {
       ctx.lineWidth = 1;
       roundRect(ctx, lx + 0.5, ly + 0.5, lw - 1, lh - 1, rLp);
       ctx.stroke();
+      // 圆弧/切角：沿剖面内侧再描一道弧线，表现中框转折（直角边框不画）
+      if (isSide && fr !== 'flat') {
+        const insetPx = Math.max(1.2, frameRoundMm * scale * 0.45);
+        ctx.strokeStyle = 'rgba(255,255,255,.10)';
+        roundRect(ctx, lx + insetPx, ly + 1, lw - insetPx * 2, lh - 2, Math.max(1, rLp - insetPx));
+        ctx.stroke();
+      }
     }
     // 折叠态双层：铰链端金属标记（画在缝隙端部）
     if (twoLayer) {
@@ -2236,12 +2263,13 @@ export function renderDesigner(container, state, model, hooks = {}) {
 
     // 机身
     const shape = roundedShape(W, L, b.corner);
+    const fbv = frameBevel(b, T);
     const geo = new THREE.ExtrudeGeometry(shape, {
-      depth: T, bevelEnabled: true, bevelThickness: 0.5, bevelSize: 0.5,
-      bevelSegments: 3, curveSegments: 8, steps: 1,
+      depth: T, bevelEnabled: true, bevelThickness: fbv.bt, bevelSize: 0.5,
+      bevelSegments: fbv.seg, curveSegments: 8, steps: 1,
     });
     geo.translate(0, 0, -T / 2);
-    const FACE = T / 2 + 0.58; // 挤出倒角后的真实前后面
+    const FACE = T / 2 + fbv.bt + 0.08; // 挤出倒角后的真实前后面（随中框轮廓变化）
     const tplKp = (PHONE_TPL_MAP[d.template] || PHONE_TPL_MAP.full_screen).keypad[0] !== 'none'
       && (d.keypad?.kind || 't9') !== 'none';
     const frameMat = new THREE.MeshStandardMaterial({
@@ -2922,7 +2950,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
         side: THREE.DoubleSide,
       }));
       backMesh.userData.part = 'back';
-      backMesh.position.set(isFlip ? 0 : sign * halfW / 2, isFlip ? sign * halfL / 2 : 0, -(T / 2 + 0.58));
+      backMesh.position.set(isFlip ? 0 : sign * halfW / 2, isFlip ? sign * halfL / 2 : 0, -(T / 2 + frameBevel(b, T).bt + 0.08));
       grp.add(backMesh);
       return grp;
     }
@@ -2958,7 +2986,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
         emissive: 0xffffff, emissiveMap: wallTex, emissiveIntensity: 1.0, map: wallTex,
       }));
       screen.userData.part = 'screen';
-      screen.position.z = T / 2 + 0.58;
+      screen.position.z = T / 2 + frameBevel(b, T).bt + 0.08;
       g.add(screen);
     }
 
@@ -3026,7 +3054,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
         : decoM === 'plastic'
           ? { color: decoColor.clone().offsetHSL(0, 0, 0.03), metalness: 0.03, roughness: 0.62 }
           : { color: decoColor, metalness: 0.88, roughness: 0.26 });
-      const halfFace = T / 2 + 0.58;
+      const halfFace = T / 2 + frameBevel(b, T).bt + 0.08;
       let modTopZ;
       if (d.camera.step) {
         const modGeo = new THREE.ExtrudeGeometry(modShape, { depth: bump, bevelEnabled: true, bevelThickness: 0.3, bevelSize: 0.3, bevelSegments: 2, curveSegments: 10 });
@@ -3822,7 +3850,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
     }
     if (e.target.closest('#dz-close')) { hooks.onClose?.(); return; }
     if (e.target.closest('#dz-save')) {
-      const v = validate(model.design, year);
+      const v = validate(model.design, year, sandboxAll ? { ignoreEra: true, unlocked } : { unlocked });
       if (!v.ok) hooks.onToast?.('设计仍有装配问题，已保存但无法量产', 'warn');
       else hooks.onSaved?.(`${model.name} 设计已保存`);
       hooks.onClose?.();

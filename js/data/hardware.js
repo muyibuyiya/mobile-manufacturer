@@ -4,6 +4,7 @@
 // 摄像头传感器：roles 决定可用于哪类镜头；format 决定镜头物理尺寸与厚度；
 // score 为 0-100 成像基准分；tech 用于解锁门槛（复用 parts 摄像头科技线）。
 export const IMAGE_SENSORS = [
+  { id: 'sn_none', name: '无摄像头', vendor: '—', year: 1980, mp: 0, format: '1/4″', pixel: 1.75, roles: ['主摄'], tech: 'cpu8', score: 0, price: 0 },
   { id: 'sn_vga', name: 'VGA CIS', vendor: '公版', year: 2000, mp: 0.1, format: '1/4″', pixel: 1.75, roles: ['主摄', '前置', '景深'], tech: 'vga_cam', score: 10, price: 30 },
   { id: 'sn_1p3', name: '130万 CIS', vendor: '公版', year: 2003, mp: 1.3, format: '1/3″', pixel: 1.6, roles: ['主摄', '前置'], tech: 'cmos', score: 24, price: 60 },
   { id: 'sn_5mp', name: '5MP CIS', vendor: '公版', year: 2008, mp: 5, format: '1/3.2″', pixel: 1.4, roles: ['主摄', '前置'], tech: 'mp_cam', score: 38, price: 90 },

@@ -22,7 +22,7 @@ import { migrateV1, normalizeLayout } from './floorplan.js';
 
 export { DEPT_DEFS, ROLE_BY_DEPT };
 
-export const GAME_VERSION = '1.4.2'; // 全局唯一版本号（启动页/关于/存档兼容判断）
+export const GAME_VERSION = '1.5.0'; // 全局唯一版本号（启动页/关于/存档兼容判断）
 
 // 室内布局（v2）：房间可拖放/调尺寸 + 家具/隔墙单数据源。
 // 旧档（v1：仅 items/edges，房间位置硬编码）经 migrateV1 迁移：rooms 取默认双排布局，items/edges 原样保留
@@ -275,6 +275,9 @@ export function makeCompetitors(year) {
       p.age = i === 0 ? 4 : 0;
       comp.lineup.push(p);
     }
+    // 产能与库存（v1.5.0）：竞品不再无限供货，需求超过库存会出现缺货
+    comp.capacity = Math.round(180000 * (0.7 + comp.brand / 80) * (0.6 + comp.techLevel));
+    comp.inventory = Math.round(comp.capacity * 0.6);
     return comp;
   });
 }
@@ -405,10 +408,44 @@ export function sanitizeState(s) {
       for (const v of m.design.variants) v.priceMul = Math.max(0.5, Math.min(2.5, Number(v.priceMul) || 1));
     }
   }
-  for (const e of s.employees || []) {
-    if (typeof e.training === 'undefined') e.training = null;
+  if (!Array.isArray(s.employees)) s.employees = [];
+  for (const e of s.employees) {
+    if (!e || typeof e !== 'object') continue;
+    for (const k of ['skill', 'salary', 'expectSalary', 'satisfaction', 'loyalty', 'stress', 'eff', 'comm', 'age', 'exp', 'potential', 'creativity', 'attitude']) {
+      if (!Number.isFinite(Number(e[k]))) {
+        e[k] = k === 'skill' ? 50 : k === 'salary' ? 8000 : k === 'expectSalary' ? 8000
+          : k === 'satisfaction' ? 60 : k === 'loyalty' ? 50 : k === 'stress' ? 30
+            : k === 'eff' ? 60 : k === 'comm' ? 55 : k === 'age' ? 30
+              : k === 'exp' ? 5 : k === 'potential' ? 50 : k === 'creativity' ? 50 : 60;
+      }
+    }
     if (!Number.isFinite(Number(e.quality))) e.quality = 55;
     if (!Number.isFinite(Number(e.trained))) e.trained = 0;
+    if (!Number.isFinite(Number(e.grew))) e.grew = 0;
+    if (!Number.isFinite(Number(e.leaveRisk))) e.leaveRisk = 0;
+    if (typeof e.star !== 'boolean') e.star = !!e.star;
+    if (!Array.isArray(e.traits)) e.traits = [];
+    if (e.deptId === undefined) e.deptId = null;
+    if (typeof e.training === 'undefined') e.training = null;
+  }
+  // 竞品产能/库存与联盟（v1.5.0）
+  for (const c of s.competitors || []) {
+    if (!Array.isArray(c.lineup)) c.lineup = [];
+    if (!Number.isFinite(Number(c.capacity))) {
+      c.capacity = Math.round(180000 * (0.7 + (Number(c.brand) || 30) / 80) * (0.6 + (Number(c.techLevel) || 1)));
+    }
+    if (!Number.isFinite(Number(c.inventory))) c.inventory = Math.round(c.capacity * 0.6);
+  }
+  if (!Array.isArray(s.rivalAlliances)) s.rivalAlliances = [];
+  else s.rivalAlliances = s.rivalAlliances.filter((a) => a && a.a && a.b && Number(a.months) > 0);
+  // 谈判状态：旧档可能残留缺字段的 negotiation，读档时统一补齐/清理
+  if (s.negotiation) {
+    if (s.negotiation.status !== 'open') s.negotiation = null;
+    else {
+      s.negotiation.payMode = ['cash', 'installment', 'equity'].includes(s.negotiation.payMode) ? s.negotiation.payMode : 'cash';
+      s.negotiation.charmUsed = Number(s.negotiation.charmUsed) || 0;
+      s.negotiation.defense = Number.isFinite(Number(s.negotiation.defense)) ? Number(s.negotiation.defense) : 0.3;
+    }
   }
   s.version = 5;
   return s;

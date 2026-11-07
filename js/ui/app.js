@@ -2,7 +2,7 @@
 import {
   tick, marketShare, suggestedPrice, unitCost, capacityOf, FOUNDRIES, factoryCapacity,
   startResearch, researchBudget, avgShare, bomUnit, assemblyUnit, ownFactoryCount,
-  suggestTargets, techOffers, buyTech,
+  suggestTargets, techOffers, buyTech, poachFromRival,
 } from '../core/sim.js';
 import {
   saveGame, loadGame, saveSlots, deleteSave, staffPower, deptCost, generateEmployee,
@@ -45,6 +45,7 @@ import {
   listIPO, marketCap, acquisitionCost, acquire, annualRevenue, annualProfit,
   openNegotiation, negotiateOffer, walkAway, foundSubsidiary, sellSubsidiary, SUB_POSITIONS,
   acceptSubTech, declineSubTech, acceptSubEmployee, declineSubEmployee,
+  PAY_MODES, dealPrice, setPayMode, charmTarget, compDefense, subRelease,
 } from '../core/capital.js';
 import { computeReview, defectRate } from '../core/reviews.js';
 import { channelTotal, channelSummary, setChannel, SALES_CHANNELS, ensureSalesChannels, channelInvest, channelSalesMul } from '../core/marketing.js';
@@ -435,8 +436,9 @@ export function renderGame(root, state, opts = {}) {
         render(); break;
       case 'launch': {
         const m = state.models.find((x) => x.id === id);
+        const sandboxAll = state.mode === 'sandbox' && state.tech.all;
         const v = validate(m.design, state.date.year,
-          (state.mode === 'sandbox' && state.tech.all) ? { ignoreEra: true } : {});
+          sandboxAll ? { ignoreEra: true, unlocked: state.tech.unlocked } : { unlocked: state.tech.unlocked });
         if (!v.ok) { opts.onToast?.('设计未通过合理性检查，无法量产', 'bad'); break; }
         const planned = Number(m.productionTarget) > 0 ? Number(m.productionTarget) : 20000;
         const launchCost = 500000 + planned * 2;
@@ -629,6 +631,16 @@ export function renderGame(root, state, opts = {}) {
         rivalRank = ds.v;
         render();
         break;
+      case 'comp-detail': openCompDetail(id); break;
+      case 'open-emp': openEmpModal(id); break;
+      case 'poach': {
+        const r = poachFromRival(state, ds.comp);
+        opts.onToast?.(r.msg, r.ok ? 'good' : 'bad');
+        if (r.ok) sfx('good');
+        closeModal();
+        render();
+        break;
+      }
       case 'div-build': {
         const r = buildDivision(state, ds.id);
         opts.onToast?.(r.msg, r.ok ? 'good' : 'bad');
@@ -882,8 +894,8 @@ export function renderGame(root, state, opts = {}) {
         render(); break;
       }
       case 'acquire': {
-        // 发起收购谈判（弹窗多轮）
-        const r = openNegotiation(state, ds.comp);
+        // 发起收购谈判（弹窗多轮）；data-hostile=1 为敌意收购
+        const r = openNegotiation(state, ds.comp, { hostile: ds.hostile === '1' });
         if (!r.ok) { opts.onToast?.(r.msg, 'bad'); break; }
         render();
         openNegotiationModal(r.n);
@@ -892,6 +904,13 @@ export function renderGame(root, state, opts = {}) {
       case 'sell-sub': {
         const r = sellSubsidiary(state, ds.id);
         opts.onToast?.(r.msg, r.ok ? 'good' : 'bad');
+        render();
+        break;
+      }
+      case 'sub-release': {
+        const r = subRelease(state, ds.id);
+        opts.onToast?.(r.msg, r.ok ? 'good' : 'bad');
+        if (r.ok) sfx('launch');
         render();
         break;
       }
@@ -1338,8 +1357,9 @@ export function renderGame(root, state, opts = {}) {
           return models.map((m, gi) => {
             const ser = serOf(m);
           const d = derive(m.design, state.date.year);
+          const sandboxAll = state.mode === 'sandbox' && state.tech.all;
           const v = validate(m.design, state.date.year,
-            (state.mode === 'sandbox' && state.tech.all) ? { ignoreEra: true } : {});
+            sandboxAll ? { ignoreEra: true, unlocked: state.tech.unlocked } : { unlocked: state.tech.unlocked });
           const statusMap = { draft: ['设计中', 'warn'], production: ['在售', 'good'], discontinued: ['已下市', ''] };
           const st = statusMap[m.status] || ['未知', ''];
           const bw = 58, bh = Math.round(clamp(58 * (m.design.body.length / m.design.body.width), 96, 150));
@@ -1850,6 +1870,7 @@ export function renderGame(root, state, opts = {}) {
           <div><div class="tiny dim">当前版本</div><b class="mono">${hasOs ? esc(String(os.versionName)) : '—'}</b></div>
           <div><div class="tiny dim">授权状态</div><b>${os.licensed ? '<span class="chip good">开放授权</span>' : '<span class="chip">未开放</span>'}</b></div>
           ${os.licensed ? `<div><div class="tiny dim">上月授权收入</div><b class="mono">+${fmtMoney(os.licIncome || 0)}</b></div>` : ''}
+          <div><div class="tiny dim">上月商店分成</div><b class="mono">+${fmtMoney(os.storeRevenue || 0)}</b></div>
           <div style="margin-left:auto" class="row">
             ${!hasOs ? '<span class="tiny dim">成立系统开发部后可用</span>'
               : !hasOsDesign ? '<span class="tiny dim">尚无自研系统：先在下方部门卡「＋ 设计新产品」完成一款自研系统</span>'
@@ -1858,7 +1879,11 @@ export function renderGame(root, state, opts = {}) {
           </div>
         </div>
         <div class="bar" style="height:8px;margin-top:8px"><div style="width:${Math.min(100, os.pop)}%;height:100%;background:linear-gradient(90deg,#4aa3ff,#8fd0ff)"></div></div>
-        <div class="tiny dim" style="margin-top:5px">流行度 ≥ 12 才有厂商愿意签约授权；授权收入 ≈ 流行度 × 部门等级系数。搭载自研系统的机型销量会持续推高流行度。</div>
+        <div class="section-label">授权厂商（${(os.licensees || []).length}/5）</div>
+        <div class="row" style="gap:5px;flex-wrap:wrap">
+          ${(os.licensees || []).map((l) => `<span class="chip good">${esc(l.name)} · ${Math.round((l.rate || 0) * 100)}%</span>`).join('') || '<span class="tiny dim">开放授权后每月自动签约（需流行度 ≥ 8）</span>'}
+        </div>
+        <div class="tiny dim" style="margin-top:5px">流行度 ≥ 8 才有厂商愿意签约授权；授权收入 = 基础授权费 + 逐厂商合约；自研 OS 机型的销量同时带来应用商店 15% 分成。</div>
       </div>`;
     const techCard = `<div class="card" style="margin-bottom:12px">
         <div class="card-title">系统科技树 <span class="right">系统开发部专属技术路线 · 软件部人力驱动研发</span></div>
@@ -2071,9 +2096,10 @@ export function renderGame(root, state, opts = {}) {
                         : traitNames(e).length ? `<div class="dim">${traitNames(e).join('·')}</div>` : ''}
                     </td>
                     <td class="num">${Math.round(e.skill)}</td>
-                    <td class="num ${e.satisfaction > 60 ? 'good' : e.satisfaction > 40 ? 'warn' : 'bad'}">${Math.round(e.satisfaction)}</td>
+                    <td class="num ${e.satisfaction > 60 ? 'good' : e.satisfaction > 40 ? 'warn' : 'bad'}" title="月流失风险 ${(e.leaveRisk || 0).toFixed(1)}%">${Math.round(e.satisfaction)}<div class="tiny dim">风险 ${(e.leaveRisk || 0).toFixed(1)}%</div></td>
                     <td class="num">¥${fmtNum(e.salary)}</td>
                     <td class="num" style="white-space:nowrap">
+                      <button class="btn small ghost" data-act="open-emp" data-id="${e.id}">详情</button>
                       <button class="btn small ghost" data-act="raise" data-id="${e.id}">加薪</button>
                       ${e.training
                         ? `<button class="btn small ghost danger" data-act="cancel-train" data-id="${e.id}">停训</button>`
@@ -2291,11 +2317,14 @@ export function renderGame(root, state, opts = {}) {
 
         <div class="cap-card">
           <div class="between"><b>收购竞争对手</b><span class="chip">${targets.length} 个目标</span></div>
-          <div class="tiny dim" style="margin:7px 0 8px">通过谈判收购：对方会多轮还价，出价太低会激怒对方终止谈判。收购成功后对方成为子公司，利润六成上缴。</div>
+          <div class="tiny dim" style="margin:7px 0 8px">通过谈判收购：对方会多轮还价，出价太低会激怒对方终止谈判。品牌越强防御越高；可选现金/分期/换股支付，也可直接溢价 35% 发起敌意收购。</div>
           ${targets.length ? targets.map((c) => `
             <div class="between" style="margin-top:6px;gap:8px">
-              <span class="tiny">${c.name} <span class="dim">品牌 ${c.brand.toFixed(0)} · 在售 ${(c.lineup || []).length} 款</span></span>
-              <button class="btn small ghost" data-act="acquire" data-comp="${c.id}">发起收购谈判</button>
+              <span class="tiny">${c.name} <span class="dim">品牌 ${c.brand.toFixed(0)} · 防御 ${Math.round(compDefense(c) * 100)}% · 在售 ${(c.lineup || []).length} 款</span></span>
+              <span class="row" style="gap:4px">
+                <button class="btn small ghost" data-act="acquire" data-comp="${c.id}">谈判</button>
+                <button class="btn small ghost danger" data-act="acquire" data-comp="${c.id}" data-hostile="1" title="溢价 35%、不还价，品牌 ≥ 55 且现金充足">敌意</button>
+              </span>
             </div>`).join('') : '<div class="tiny dim">暂时没有可收购标的。</div>'}
           <div class="section-label">成立子品牌</div>
           <div class="row" style="gap:6px;flex-wrap:wrap;margin-bottom:6px">
@@ -2319,6 +2348,9 @@ export function renderGame(root, state, opts = {}) {
                 <span class="chip">${sub.source === 'acquired' ? '收购' : '自创'}</span></div>
               <div class="tiny dim" style="margin:4px 0">${sub.nameEn || ''} · 品牌力 ${sub.brand.toFixed(0)} · 在售 ${(sub.lineup || []).length} 款</div>
               <div class="between tiny"><span class="dim">上月利润上缴</span><b class="mono good">+${fmtMoney(sub.lastProfit || 0)}</b></div>
+              ${sub.payment ? `<div class="between tiny"><span class="dim">分期收购款（剩 ${sub.payment.monthsLeft} 期）</span><b class="mono warn">-${fmtMoney(sub.payment.perMonth)}/月</b></div>` : ''}
+              <div class="tiny dim" style="margin-top:2px">支付方式：${sub.payMode === 'installment' ? '分期' : sub.payMode === 'equity' ? '换股' : '现金'}${sub.techShare > 0 ? ` · 技术共享 +${Math.round(sub.techShare * 100)}%` : ''}</div>
+              ${(sub.lineup || []).length ? `<div class="section-label">产品线</div>${sub.lineup.map((p) => `<div class="between tiny"><span>${esc(p.name)}</span><b class="mono">¥${fmtNum(p.price)}</b></div>`).join('')}` : ''}
               ${state.subTechOffer && state.subTechOffer.subId === sub.id ? `<div class="tiny" style="margin-top:6px;padding:6px 8px;background:rgba(74,163,255,.08);border-radius:6px">
                 <b>技术转让要约</b>：「${esc(state.subTechOffer.techName)}」· ${fmtMoney(state.subTechOffer.price)}（剩 ${state.subTechOffer.months} 月）
                 <div class="row" style="gap:6px;margin-top:4px"><button class="btn tiny primary" data-act="sub-tech-yes">接受</button><button class="btn tiny ghost" data-act="sub-tech-no">婉拒</button></div>
@@ -2328,6 +2360,7 @@ export function renderGame(root, state, opts = {}) {
                 <div class="row" style="gap:6px;margin-top:4px"><button class="btn tiny primary" data-act="sub-emp-yes">接受</button><button class="btn tiny ghost" data-act="sub-emp-no">婉拒</button></div>
               </div>` : ''}
               <div class="row" style="gap:6px;margin-top:7px">
+                <button class="btn small primary" data-act="sub-release" data-id="${sub.id}">发布新品（${fmtMoney(Math.round(6e5 * (1 + (sub.techShare || 0) * 2.5))) }）</button>
                 <button class="btn small ghost" data-act="sell-sub" data-id="${sub.id}">出售（约 ${(0.5 + Math.pow(Math.max(sub.brand, 8), 1.6) * 1e-5).toFixed(1)} 亿）</button>
               </div>
             </div>`).join('')}
@@ -2469,15 +2502,19 @@ export function renderGame(root, state, opts = {}) {
       <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(340px,1fr))">
         ${[...state.competitors].sort((a, b) => (b.lastSold || 0) - (a.lastSold || 0)).map((c) => {
           const line = c.lineup.slice(-2);
+          const ally = (state.rivalAlliances || []).find((a) => a.a === c.id || a.b === c.id);
           return `<div class="card">
             <div class="between" style="margin-bottom:8px">
               <div class="row" style="gap:8px">
                 <div style="width:26px;height:26px;border-radius:7px;background:${c.color};display:grid;place-items:center;font-size:12px;font-weight:700;color:#fff">${c.name[0]}</div>
                 <div><b>${c.name}</b><span class="tiny dim"> ${c.nameEn || ''}</span><div class="tiny dim">${c.country} · ${c.style === 'value' ? '性价比' : c.style === 'ecosystem' ? '生态高端' : c.style === 'camera' ? '影像' : c.style === 'tech' ? '技术驱动' : c.style === 'supply' ? '供应链' : c.style === 'rugged' ? '耐用功能' : c.style === 'business' ? '商务安全' : c.style === 'design' ? '设计' : '品质'} · 上月销量 ${fmtUnit(c.lastSold || 0)}</div></div>
               </div>
-              <div class="tiny" style="text-align:right"><div class="dim">品牌力</div><b class="mono">${c.brand.toFixed(0)}</b></div>
+              <div class="tiny" style="text-align:right"><div class="dim">品牌力</div><b class="mono">${c.brand.toFixed(0)}</b>
+                <div style="margin-top:4px"><button class="btn tiny ghost" data-act="comp-detail" data-id="${c.id}">财报</button></div></div>
             </div>
+            ${ally ? `<div class="tiny" style="margin-bottom:6px"><span class="chip good">联盟 ${esc(ally.name)}</span></div>` : ''}
             <div class="tiny dim" style="margin-bottom:8px">${c.desc}</div>
+            <div class="tiny dim" style="margin-bottom:6px">产能 ${fmtUnit(c.capacity || 0)}/月 · 库存 ${fmtUnit(Math.round(c.inventory || 0))}${(c.inventory || 0) < (c.capacity || 0) * 0.15 ? ' <span class="warn">· 缺货</span>' : ''}</div>
             ${line.map((p) => `<div class="list-item" style="padding:7px 9px;margin-bottom:5px">
               <div style="flex:1">
                 <div class="tiny"><b>${p.name}</b> <span class="dim">· ${p.age} 月前发布</span></div>
@@ -2488,6 +2525,54 @@ export function renderGame(root, state, opts = {}) {
           </div>`;
         }).join('')}
       </div>`;
+  }
+
+  // 竞品财报：现金 / 品牌 / 产能库存 / 产品线 / 近 12 月销量与结盟情况
+  function openCompDetail(compId) {
+    const c = state.competitors.find((x) => x.id === compId);
+    if (!c) { opts.onToast?.('该公司已不在市场中', 'warn'); return; }
+    const rows = (state.compHistory || []).slice(-12).map((h) => {
+      const r = (h.rows || []).find((x) => x.id === c.id) || {};
+      return { y: h.y, m: h.m, units: r.units || 0, rev: r.rev || 0 };
+    });
+    const maxU = Math.max(1, ...rows.map((r) => r.units));
+    const allies = (state.rivalAlliances || [])
+      .filter((a) => a.a === c.id || a.b === c.id)
+      .map((a) => (state.competitors.find((x) => x.id === (a.a === c.id ? a.b : a.a)) || {}).name || '未知');
+    const body = `<div class="kpi-row" style="margin-bottom:12px">
+        <div class="kpi"><div class="k">现金</div><div class="v">${fmtMoney(c.cash || 0)}</div><div class="d dim">月营收 ${fmtMoney(c.revenueEst || 0)}</div></div>
+        <div class="kpi"><div class="k">品牌力</div><div class="v">${(c.brand || 0).toFixed(0)}</div><div class="d dim">份额 ${((c.share || 0) * 100).toFixed(1)}%</div></div>
+        <div class="kpi"><div class="k">产能</div><div class="v">${fmtUnit(c.capacity || 0)}</div><div class="d dim">库存 ${fmtUnit(Math.round(c.inventory || 0))}</div></div>
+        <div class="kpi"><div class="k">在售机型</div><div class="v">${(c.lineup || []).length}</div><div class="d dim">上月 ${fmtUnit(c.lastSold || 0)} 台</div></div>
+      </div>
+      <div class="two-col">
+        <div class="card">
+          <div class="card-title">近 12 月销量 <span class="right">估算值</span></div>
+          <div style="max-height:300px;overflow:auto">
+            ${rows.map((r) => `<div style="margin-bottom:6px">
+              <div class="between tiny"><span class="dim mono">${r.y}/${r.m + 1}</span><span><b>${fmtUnit(r.units)}</b> 台 · <span class="dim">${fmtMoney(r.rev)}</span></span></div>
+              <div class="bar" style="height:4px"><i style="width:${Math.max(2, Math.round(r.units / maxU * 100))}%;background:#4aa3ff"></i></div>
+            </div>`).join('') || '<div class="empty">尚无历史快照</div>'}
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-title">产品线</div>
+          ${(c.lineup || []).map((p) => `<div class="list-item" style="padding:7px 9px">
+            <div style="flex:1">
+              <div class="tiny"><b>${esc(p.name)}</b> <span class="dim">· ${p.age} 月</span></div>
+              <div class="tiny dim">性能 ${Math.round(p.scores?.perf || 0)} · 影像 ${Math.round(p.scores?.camera || 0)} · 续航 ${Math.round(p.scores?.battery || 0)} · 设计 ${Math.round(p.scores?.design || 0)}</div>
+            </div>
+            <b class="mono tiny">¥${fmtNum(p.price)}</b>
+          </div>`).join('') || '<div class="empty">无在售机型</div>'}
+          <div class="section-label">战略联盟</div>
+          <div class="tiny">${allies.length ? allies.map((n) => `<span class="chip good" style="margin:2px">${esc(n)}</span>`).join('') : '<span class="dim">暂无盟友</span>'}</div>
+          <div class="tiny dim" style="margin-top:8px">联盟成员在份额计算中获得 6% 曝光加成，联盟到期后自动解除。</div>
+          <div class="section-label">猎头行动</div>
+          <button class="btn small primary" data-act="poach" data-comp="${c.id}">挖角核心工程师（约 3 个月薪资）</button>
+          <div class="tiny dim" style="margin-top:5px">成功率随对方品牌下降、随我方品牌上升；失败仍支付猎头费。</div>
+        </div>
+      </div>`;
+    modalShell(`${c.name} · 财报与产品线`, `${c.nameEn || ''} · ${c.country || ''} · ${c.style}`, body, 'modal-wide');
   }
 
   function pageHQ() {
@@ -2810,13 +2895,29 @@ export function renderGame(root, state, opts = {}) {
     if (!m) { opts.onToast?.('先量产一款机型，才能在发布会上展示', 'warn'); return; }
     const cost = 5000000;
     const hasProducts = state.models.some((x) => x.status === 'production');
+    const suggested = Math.max(1, Math.round(suggestedPrice(state, m, 'cn')));
+    const d = derive(m.design, state.date.year);
+    // 定价猜谜：三个候选价位中恰好一个是市场心理价位（随机打乱顺序）
+    const candidates = (() => {
+      const list = [
+        { v: Math.round(suggested * (0.84 + Math.random() * 0.05)), correct: false },
+        { v: suggested, correct: true },
+        { v: Math.round(suggested * (1.12 + Math.random() * 0.06)), correct: false },
+      ];
+      for (let i = list.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [list[i], list[j]] = [list[j], list[i]];
+      }
+      return list;
+    })();
     const body = `<div class="stage-3d" id="stage-scene"></div>
-      <div class="row" style="justify-content:space-between;align-items:center;margin-top:12px;gap:12px">
-        <div class="tiny dim" style="line-height:1.7">
+      <div id="stage-panel" class="stage-panel">
+        <div class="stage-copy">
           发布会将带来 3 个月的全市场需求提升与品牌加成。<br/>
+          先猜中市场心理价位，再根据现场口碑结算最终加成。<br/>
           展示机型：<b>${esc(m.name)}</b> · 现金 ${fmtMoney(state.company.cash)}
         </div>
-        <button class="btn primary" id="do-launch" ${state.company.cash < cost ? 'disabled' : ''}>开始发布会（${fmtMoney(cost)}）</button>
+        <button class="btn primary" id="stage-start" ${state.company.cash < cost ? 'disabled' : ''}>开始发布会（${fmtMoney(cost)}）</button>
       </div>`;
     const { mask, close } = modalShell('全球新品发布会', `${esc(m.name)} · 舞台演示`, body, 'modal-wide');
 
@@ -2828,22 +2929,63 @@ export function renderGame(root, state, opts = {}) {
       if (el) el.innerHTML = `<div class="empty">3D 舞台初始化失败：${esc(e.message)}</div>`;
     }
     const done = () => { stage?.destroy(); close(); };
+    const panel = mask.querySelector('#stage-panel');
 
-    mask.querySelector('#do-launch').onclick = () => {
-      if (state.company.cash < cost) { opts.onToast?.('资金不足，无法举办发布会', 'bad'); return; }
-      state.company.cash -= cost;
-      const effect = hasProducts ? 1.16 : 1.08;
-      state.hype = { months: 3, mul: effect };
-      state.company.brand = clamp(state.company.brand + (hasProducts ? 3.2 : 1.5), 0, 100);
-      addLog(state, 'mkt', `举办全球新品发布会，主推 ${m.name}，投入 ${fmtMoney(cost)}，品牌与热度显著提升。`);
-      opts.onToast?.('发布会圆满结束，品牌热度上升', 'good');
-      done();
-      render();
+    const renderGuess = () => {
+      panel.innerHTML = `<div class="stage-question">市场心理价位是多少？选一个最接近消费者预期的定价</div>
+        <div class="stage-choices">${candidates.map((c, i) => `<button class="btn stage-choice" data-guess="${i}">¥${fmtNum(c.v)}</button>`).join('')}</div>
+        <div class="tiny dim">猜中可得额外热度与品牌加成；猜错会让现场反响打折。</div>`;
     };
+
+    const finish = (idx) => {
+      const pick = candidates[idx] || candidates[0];
+      const hit = !!pick.correct;
+      const avg = (d.designScore + d.perf + d.camera + d.battery) / 4;
+      const base = hasProducts ? 1.16 : 1.08;
+      const priceBonus = hit ? 0.09 : -0.02;
+      const scoreBonus = clamp((avg - 55) / 100 * 0.12, -0.04, 0.08);
+      const mul = +(base + priceBonus + scoreBonus).toFixed(2);
+      state.hype = { months: 3, mul };
+      const brandGain = (hasProducts ? 3.2 : 1.5) + (hit ? 1.2 : 0) + clamp((avg - 60) / 20, 0, 1.2);
+      state.company.brand = clamp(state.company.brand + brandGain, 0, 100);
+      m.heat = clamp((m.heat === undefined ? 100 : m.heat) + (hit ? 12 : 4), 0, 100);
+      addLog(state, 'mkt', `举办全球新品发布会，主推 ${m.name}，定价 ${fmtMoney(pick.v)}（${hit ? '精准命中' : '偏离预期'}），需求系数 ×${mul}，品牌 +${brandGain.toFixed(1)}。`);
+      state.news = state.news || [];
+      state.news.unshift({
+        time: `${state.date.year}/${state.date.month + 1}`, type: 'group',
+        title: `${m.name} 发布会${hit ? '定价精准' : '反响平淡'}`,
+        text: `现场评分 ${Math.round(avg)} · 3 个月需求系数 ×${mul} · 品牌 +${brandGain.toFixed(1)}。`, read: false,
+      });
+      if (state.news.length > 100) state.news.length = 100;
+      const reaction = avg >= 78 ? '全场沸腾，媒体给出极高评价'
+        : avg >= 66 ? '现场反响热烈'
+          : avg >= 55 ? '反响平稳，亮点有限' : '现场略显冷淡';
+      panel.innerHTML = `<div class="stage-result ${hit ? '' : 'warn'}">
+          <b>${hit ? '精准命中！' : '定价偏离市场预期'}</b>
+          <div>你的选择 <b>¥${fmtNum(pick.v)}</b> · 市场心理价位 <b>¥${fmtNum(suggested)}</b></div>
+          <div>现场评分 <b>${Math.round(avg)}</b> 分 — ${reaction}</div>
+          <div>需求系数 <b>×${mul}</b>（3 个月） · 品牌 <b>+${brandGain.toFixed(1)}</b> · 热度 <b>+${hit ? 12 : 4}</b></div>
+        </div>
+        <div class="row" style="justify-content:flex-end;margin-top:12px"><button class="btn primary" id="stage-done">结束发布会</button></div>`;
+      sfx('launch');
+    };
+
+    panel.addEventListener('click', (e) => {
+      if (e.target.closest('#stage-start')) {
+        if (state.company.cash < cost) { opts.onToast?.('资金不足，无法举办发布会', 'bad'); return; }
+        state.company.cash -= cost;
+        renderGuess();
+        return;
+      }
+      const g = e.target.closest('[data-guess]');
+      if (g) { finish(Number(g.dataset.guess)); return; }
+      if (e.target.closest('#stage-done')) { done(); render(); }
+    });
     // 舞台场景随弹窗关闭一并释放
     const observer = new MutationObserver(() => {
       if (!document.body.contains(mask)) { stage?.destroy(); observer.disconnect(); }
-    });    observer.observe(document.body, { childList: true });
+    });
+    observer.observe(document.body, { childList: true });
   }
 
   // 收购谈判弹窗：多轮出价，显示对方要价/情绪/回合
@@ -3273,38 +3415,130 @@ export function renderGame(root, state, opts = {}) {
     };
   }
 
+  // 员工档案：能力画像 / 状态与流失风险 / 特质 / 快捷操作（v1.5.0）
+  function openEmpModal(empId) {
+    const e = state.employees.find((x) => x.id === empId);
+    if (!e) { opts.onToast?.('该员工已离职', 'warn'); return; }
+    const rk = rankOf(e.skill);
+    const dept = DEPT_DEFS.find((d) => d.id === e.deptId);
+    const bar = (label, v, color = '#4aa3ff') => {
+      const val = clamp(Number(v) || 0, 0, 100);
+      return `<div class="between tiny" style="margin-top:6px"><span class="dim">${label}</span><b class="mono">${Math.round(val)}</b></div>
+        <div class="bar" style="height:4px"><i style="width:${val}%;background:${color}"></i></div>`;
+    };
+    const body = `<div class="row" style="gap:12px;align-items:flex-start;margin-bottom:12px">
+        <div style="width:54px;height:54px;border-radius:14px;background:#4aa3ff22;display:grid;place-items:center;font-size:20px;font-weight:700;color:#8fd0ff">${esc(String(e.name).slice(0, 1))}</div>
+        <div style="flex:1;min-width:0">
+          <div class="row" style="gap:8px;flex-wrap:wrap"><b style="font-size:16px">${esc(e.name)}${e.star ? ' ⭐' : ''}</b>
+            <span class="rank-badge" style="background:${rk.color}22;color:${rk.color};border-color:${rk.color}66">${rk.name}</span></div>
+          <div class="tiny dim" style="margin-top:4px">${e.gender || ''} · ${e.age} 岁 · ${e.edu || ''} · ${e.exp} 年经验 · ${e.field || ''}</div>
+          <div class="tiny dim">${dept ? dept.name : '待分配'} · ${e.role} · 月薪 ¥${fmtNum(e.salary)}（期望 ¥${fmtNum(e.expectSalary)}）</div>
+        </div>
+      </div>
+      <div class="two-col">
+        <div class="card">
+          <div class="card-title">能力画像</div>
+          ${bar('能力', e.skill)}
+          ${bar('效率', e.eff, '#37c9a5')}
+          ${bar('创造力', e.creativity, '#c47cf0')}
+          ${bar('沟通', e.comm, '#f5a542')}
+          ${bar('质量意识', e.quality, '#8fd0ff')}
+          ${bar('潜力', e.potential, '#ff9d5c')}
+        </div>
+        <div class="card">
+          <div class="card-title">状态与风险</div>
+          ${bar('满意度', e.satisfaction, e.satisfaction > 60 ? '#37c9a5' : '#f5a542')}
+          ${bar('忠诚度', e.loyalty, '#4aa3ff')}
+          ${bar('压力', e.stress, e.stress > 70 ? '#f56b6b' : '#8fd0ff')}
+          <div class="between tiny" style="margin-top:10px"><span class="dim">月流失风险</span><b class="${(e.leaveRisk || 0) > 3 ? 'bad' : 'good'}">${(e.leaveRisk || 0).toFixed(1)}%</b></div>
+          <div class="between tiny"><span class="dim">累计成长</span><b>+${(e.grew || 0).toFixed(1)}</b></div>
+          <div class="between tiny"><span class="dim">培训</span><b>${e.training ? `${TRAINING_MAP[e.training.id]?.name || ''}（剩 ${e.training.monthsLeft} 月）` : '无'}</b></div>
+        </div>
+      </div>
+      <div class="section-label">特质</div>
+      <div class="row" style="gap:5px;flex-wrap:wrap">${traitNames(e).length ? traitNames(e).map((n) => `<span class="chip">${esc(n)}</span>`).join('') : '<span class="tiny dim">无</span>'}</div>
+      <div class="row" style="gap:6px;margin-top:12px;justify-content:flex-end">
+        <button class="btn small" id="emp-raise">加薪 10%</button>
+        <button class="btn small" id="emp-train">安排培训</button>
+        <button class="btn small ghost danger" id="emp-fire">解雇</button>
+      </div>`;
+    const { mask, close } = modalShell(`${e.name} · 员工档案`, `${e.role} · ${rk.name}`, body, 'modal-wide');
+    mask.querySelector('#emp-raise').onclick = () => {
+      e.salary = Math.round(e.salary * 1.1 / 100) * 100;
+      e.expectSalary = Math.max(e.expectSalary, e.salary);
+      e.satisfaction = clamp(e.satisfaction + 8, 0, 100);
+      addLog(state, 'hr', `${e.name} 加薪至 ${fmtMoney(e.salary)}/月。`);
+      close(); render();
+    };
+    mask.querySelector('#emp-train').onclick = () => { close(); openTrainingModal(e.id); };
+    mask.querySelector('#emp-fire').onclick = () => {
+      state.employees = state.employees.filter((x) => x.id !== e.id);
+      state.company.cash -= e.salary * 2;
+      addLog(state, 'hr', `解雇 ${e.name}，支付补偿 ${fmtMoney(e.salary * 2)}。`);
+      close(); render();
+    };
+  }
+
   function openNegotiationModal(n0) {
     const comp = state.competitors.find((x) => x.id === n0.compId);
     if (!comp) { opts.onToast?.('对方公司已不存在', 'bad'); return; }
-    let log = [`首轮：${comp.name} 开价 ${(n0.ask / 1e8).toFixed(2)} 亿。`];
+    let log = [`${n0.hostile ? '敌意收购' : '首轮'}：${comp.name} 开价 ${(n0.ask / 1e8).toFixed(2)} 亿${n0.hostile ? '（不还价）' : ''}。`];
+    const totalOf = (n) => dealPrice(n, n.payMode || 'cash');
+    const firstOf = (n) => {
+      const total = totalOf(n);
+      return (n.payMode || 'cash') === 'installment' ? Math.round(total * 0.35)
+        : (n.payMode === 'equity' ? 0 : total);
+    };
+    const payButtons = () => PAY_MODES.map((p) => {
+      const on = (state.negotiation?.payMode || 'cash') === p.id;
+      return `<button class="btn tiny ${on ? 'primary' : ''}" data-pay="${p.id}" title="${esc(p.desc)}">${p.name}</button>`;
+    }).join('');
     const body = () => {
       const n = state.negotiation || {};
+      const mode = n.payMode || 'cash';
+      const total = totalOf(n);
+      const first = firstOf(n);
       return `<div class="tiny" style="line-height:2.1">
-          <div class="between"><span class="dim">谈判对象</span><b>${esc(comp.name)}（品牌 ${comp.brand.toFixed(0)}）</b></div>
+          <div class="between"><span class="dim">谈判对象</span><b>${esc(comp.name)}（品牌 ${comp.brand.toFixed(0)} · 防御 ${Math.round((n.defense || 0) * 100)}%）</b></div>
           <div class="between"><span class="dim">当前要价</span><b class="mono" id="neg-ask">${n.ask ? fmtMoney(n.ask) : '—'}</b></div>
           <div class="between"><span class="dim">谈判回合</span><b>${n.rounds || 0}</b></div>
           <div class="between"><span class="dim">对方情绪</span><b id="neg-mood">${'●'.repeat(Math.max(1, Math.round((n.mood || 50) / 20)))} ${(n.mood || 50).toFixed(0)}</b></div>
           <div class="between"><span class="dim">我方现金</span><b class="mono">${fmtMoney(state.company.cash)}</b></div>
+          <div class="between"><span class="dim">${mode === 'installment' ? '首付 / 总对价' : mode === 'equity' ? '换股对价' : '应付对价'}</span><b class="mono" id="neg-total">${fmtMoney(first)}${mode === 'installment' ? ` <span class="dim">/ ${fmtMoney(total)}</span>` : ''}</b></div>
         </div>
+        <div class="row" style="gap:5px;flex-wrap:wrap;margin-top:8px" id="neg-pay">${payButtons()}</div>
+        <div class="tiny dim" style="margin:4px 0 8px">${esc((PAY_MODES.find((p) => p.id === mode) || PAY_MODES[0]).desc)}</div>
         <div class="tiny dim" style="margin:8px 0;line-height:1.8;max-height:110px;overflow:auto;background:rgba(255,255,255,.03);padding:8px;border-radius:8px">
           ${log.map((l) => `· ${esc(l)}`).join('<br/>')}
         </div>
         <div class="row" style="gap:6px;flex-wrap:wrap">
-          <input id="neg-offer" type="number" min="0" step="1000000" placeholder="我方出价（元）" style="flex:1;min-width:150px" />
+          <input id="neg-offer" type="number" min="0" step="1000000" placeholder="我方出价（总价，未含支付溢价）" style="flex:1;min-width:150px" />
           <button class="btn small primary" id="neg-bid">出价</button>
           <button class="btn small" id="neg-accept">接受要价</button>
+          <button class="btn small ghost" id="neg-charm" ${(n.charmUsed || 0) >= 3 ? 'disabled' : ''}>公关游说（${n.charmUsed || 0}/3）</button>
           <button class="btn small ghost" id="neg-walk">放弃谈判</button>
         </div>
-        <div class="tiny dim" style="margin-top:6px">提示：出价达到要价即刻成交；低于要价 80% 会被拒绝，多次低球报价会让对方离席。</div>`;
+        <div class="tiny dim" style="margin-top:6px">提示：出价达到要价即刻成交；低于要价 80% 会被拒绝，多次低球报价会让对方离席。分期首付 35%，换股会稀释母公司股东。</div>
+        ${n.hostile
+          ? '<div class="tiny bad" style="margin-top:5px">敌意收购：不接受还价，防御越高越可能被董事会直接拒绝。</div>'
+          : '<div class="tiny" style="margin-top:8px"><button class="btn tiny ghost danger" id="neg-hostile">转为敌意收购（溢价 35%）</button><span class="tiny dim"> 需品牌 ≥ 55</span></div>'}`;
     };
     const { mask, close } = modalShell(`收购谈判 · ${comp.name}`, '谈判桌', body(), 'modal-wide');
-    const bind = () => {
-      mask.querySelector('#neg-bid').onclick = () => {
-        const v = Number(mask.querySelector('#neg-offer').value);
-        step(v);
-      };
-      mask.querySelector('#neg-accept').onclick = () => step('accept');
-      mask.querySelector('#neg-walk').onclick = () => { walkAway(state); close(); render(); };
+    const refresh = () => {
+      const n = state.negotiation;
+      if (!n) return;
+      mask.querySelector('#neg-ask') && (mask.querySelector('#neg-ask').textContent = fmtMoney(n.ask));
+      const moodEl = mask.querySelector('#neg-mood');
+      if (moodEl) moodEl.textContent = '●'.repeat(Math.max(1, Math.round(n.mood / 20))) + ' ' + n.mood.toFixed(0);
+      const total = dealPrice(n, n.payMode || 'cash');
+      const first = (n.payMode || 'cash') === 'installment' ? Math.round(total * 0.35)
+        : (n.payMode === 'equity' ? 0 : total);
+      const totEl = mask.querySelector('#neg-total');
+      if (totEl) totEl.innerHTML = fmtMoney(first) + ((n.payMode || 'cash') === 'installment' ? ` <span class="dim">/ ${fmtMoney(total)}</span>` : '');
+      const payEl = mask.querySelector('#neg-pay');
+      if (payEl) payEl.innerHTML = payButtons();
+      const logEl = mask.querySelector('div.tiny.dim[style*="max-height"]');
+      if (logEl) logEl.innerHTML = log.map((l) => `· ${esc(l)}`).join('<br/>');
     };
     const step = (offer) => {
       const r = negotiateOffer(state, offer);
@@ -3316,15 +3550,33 @@ export function renderGame(root, state, opts = {}) {
       }
       if (r.status === 'walked') { opts.onToast?.(r.msg, 'warn'); close(); render(); return; }
       log.push(offer === 'accept' ? '— 直接接受对方要价。' : `— 我方出价 ${fmtMoney(offer)}。${r.msg}`);
-      // 刷新弹窗内容
-      const old = mask.querySelector('.modal-body, [class*=modal]');
-      mask.querySelector('#neg-ask') && (mask.querySelector('#neg-ask').textContent = fmtMoney(state.negotiation.ask));
-      mask.querySelector('#neg-mood').textContent = '●'.repeat(Math.max(1, Math.round(state.negotiation.mood / 20))) + ' ' + state.negotiation.mood.toFixed(0);
-      const logEl = mask.querySelector('div.tiny.dim[style*="max-height"]');
-      if (logEl) logEl.innerHTML = log.map((l) => `· ${esc(l)}`).join('<br/>');
+      refresh();
       opts.onToast?.(r.msg, r.status === 'counter' ? 'warn' : 'info');
     };
-    bind();
+    mask.addEventListener('click', (e) => {
+      const pay = e.target.closest('[data-pay]');
+      if (pay) {
+        const r = setPayMode(state, pay.dataset.pay);
+        if (!r.ok) { opts.onToast?.(r.msg, 'bad'); return; }
+        log.push(`— ${r.msg}`);
+        refresh();
+        return;
+      }
+      if (e.target.closest('#neg-bid')) { step(Number(mask.querySelector('#neg-offer').value)); return; }
+      if (e.target.closest('#neg-accept')) { step('accept'); return; }
+      if (e.target.closest('#neg-walk')) { walkAway(state); close(); render(); return; }
+      if (e.target.closest('#neg-charm')) {
+        const r = charmTarget(state);
+        opts.onToast?.(r.msg, r.ok ? 'good' : 'bad');
+        if (r.ok) { log.push(`— ${r.msg}`); refresh(); }
+        return;
+      }
+      if (e.target.closest('#neg-hostile')) {
+        const r = openNegotiation(state, comp.id, { hostile: true });
+        if (!r.ok) { opts.onToast?.(r.msg, 'bad'); return; }
+        close(); render(); openNegotiationModal(r.n);
+      }
+    });
   }
 
   function openDesigner(modelId) {

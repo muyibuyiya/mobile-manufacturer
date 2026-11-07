@@ -3,7 +3,7 @@ import { clamp, rand, randInt, pick, chance, fmtMoney, fmtNum, fmtUnit, sum } fr
 import { MARKETS, MARKET_MAP, eraFactor, EVENTS, COUNTRIES, expectedPrice, makeCompetitorPhone, LINEUP_MAP, COMPETITORS } from '../data/world.js';
 import { derive, validate, eraBaseline, eraRel } from './design.js';
 import { TECHS, TECH_MAP } from '../data/tech.js';
-import { addLog, staffPower, deptById, DIFFICULTY, makeCompetitors } from './state.js';
+import { addLog, staffPower, deptById, DIFFICULTY, makeCompetitors, generateEmployee } from './state.js';
 import { checkMilestones } from './milestones.js';
 import { campusBonus, stepConstruction, buildingCount } from './campus.js';
 import { stepSupply, consumeComponents, stockCoverage, SPOT_PREMIUM, supplyCostMul, addDisruption } from './supply.js';
@@ -397,11 +397,19 @@ function stepSales(state, report) {
     const shareInfo = marketShare(state, market.id);
     const potential = marketPotential(state, market, demandMul);
     let mUnits = 0, mRev = 0;
-    // 竞品月销量：市场容量 × 份额（竞品没有库存约束，按需求全量出货）
+    // 竞品月销量：市场容量 × 份额，但受产能/库存约束（v1.5.0——缺货不再无脑成交）
     for (const rv of shareInfo.comp || []) {
-      const units = potential * (rv.ratio || 0);
-      rv.competitor.lastSold = (rv.competitor.lastSold || 0) + units;
-      rv.competitor.revenueEst = (rv.competitor.revenueEst || 0) + units * (rv.phone.price || 0);
+      const c = rv.competitor;
+      const demand = potential * (rv.ratio || 0);
+      const stock = Number.isFinite(Number(c.inventory)) ? Number(c.inventory) : Infinity;
+      const units = Math.min(demand, stock);
+      if (Number.isFinite(stock)) c.inventory = Math.max(0, stock - units);
+      c.lastSold = (c.lastSold || 0) + units;
+      c.revenueEst = (c.revenueEst || 0) + units * (rv.phone.price || 0);
+      if (demand > units * 1.15 + 1 && !c._shortNoted) {
+        c._shortNoted = true;
+        report.notes.push(`${c.name} 产能不足，${rv.phone.name} 出现缺货，部分需求外溢。`);
+      }
       // 竞品旗舰发布会：推送新闻 + 同价位自家产品热度 -8（每家每月至多一次）
       if (rv.phone.price > expectedPrice(year) * 1.1 && !rv.competitor._launchedNoted) {
         rv.competitor._launchedNoted = true;
@@ -527,6 +535,10 @@ const LIFE_EVENTS = [
   { text: '{n} 最近家庭事务缠身，压力 +8。', fx: (e) => { e.stress = clamp(e.stress + 8, 0, 100); } },
   { text: '{n} 与同事发生争执，效率暂降 1 点。', fx: (e) => { e.eff = clamp(e.eff - 1, 10, 100); } },
   { text: '{n} 自费参加了行业研讨会，能力 +0.4。', fx: (e) => { e.skill = clamp(e.skill + 0.4, 1, 99); } },
+  // v1.5.0：更多个人事件，让名册更有"人味"
+  { text: '{n} 拿到了行业认证，能力小幅提升。', fx: (e) => { e.skill = +clamp(e.skill + 0.8, 1, 99).toFixed(2); e.grew = (e.grew || 0) + 0.8; } },
+  { text: '{n} 的家人突发疾病，请了两周事假，压力略降。', fx: (e) => { e.stress = clamp(e.stress - 4, 0, 100); e.satisfaction = clamp(e.satisfaction - 3, 0, 100); } },
+  { text: '{n} 主动带新人，团队协作氛围变好。', fx: (e) => { e.comm = clamp(e.comm + 2, 5, 100); e.satisfaction = clamp(e.satisfaction + 2, 0, 100); } },
 ];
 
 function stepEmployees(state, report) {
@@ -548,6 +560,8 @@ function stepEmployees(state, report) {
       e.grew += grow;
     }
     const leaveChance = clamp((38 - e.satisfaction) / 1400 + (payRatio < 0.85 ? 0.008 : 0), 0, 0.03);
+    // 流失风险（月度 %）：名册与详情页展示，低满意/低薪会明显升高
+    e.leaveRisk = +clamp(leaveChance * 100 + (e.star && payRatio < 1.15 ? 1.2 : 0), 0, 9).toFixed(1);
     if (chance(leaveChance)) leaving.push(e);
     // 加薪诉求
     if (payRatio < 0.88 && chance(0.04)) {
@@ -735,6 +749,10 @@ function stepCompetitors(state, report) {
     }
     // 资产演化：需求与成本宏观联动（政策/事件也影响它们），断供月成本恶化
     const drain = 2.2e6 * (1 + c.lineup.length) * costMul;
+    // 产能与库存（v1.5.0）：月末补货，上月缺货不会永远延续
+    c.capacity = Math.round(180000 * (0.7 + c.brand / 80) * (0.6 + c.techLevel));
+    c.inventory = clamp((c.inventory || 0) + c.capacity * 0.9, 0, c.capacity * 1.5);
+    c._shortNoted = false;
     c.cash = clamp((c.cash || 2e8) + (c.revenueEst || 0) * 0.16 * demandMul / Math.max(costMul, 0.5) - drain, -5e7, 2e10);
     // 经营恶化 → 破产退出市场：现金见底且无在售机型
     if (c.cash <= 0 && (c.lineup.length === 0 || c.brand < 22)) {
@@ -744,6 +762,58 @@ function stepCompetitors(state, report) {
       continue;
     }
     c.share = c.lastSold || 0;
+  }
+  // 对手之间也会互相吞并与结盟（v1.5.0），让 16 家品牌更像活体市场
+  stepRivalRelations(state, report);
+}
+
+// 竞品关系演化：强弱并购 + 联盟
+function stepRivalRelations(state, report) {
+  const list = state.competitors.filter((c) => !c.sub && (c.lineup || []).length > 0);
+  const newsPush = (title, text) => {
+    state.news = state.news || [];
+    state.news.unshift({ time: `${state.date.year}/${state.date.month + 1}`, type: 'competitor', title, text, read: false });
+    if (state.news.length > 100) state.news.length = 100;
+  };
+  state.rivalAlliances = Array.isArray(state.rivalAlliances) ? state.rivalAlliances : [];
+  // 联盟到期/成员消失
+  for (const a of state.rivalAlliances) a.months = (a.months || 0) - 1;
+  state.rivalAlliances = state.rivalAlliances.filter((a) => a.months > 0
+    && list.some((c) => c.id === a.a) && list.some((c) => c.id === a.b));
+
+  // 并购：强势大厂吞并濒临边缘的小厂
+  if (list.length >= 5 && chance(0.007)) {
+    const buyer = [...list].sort((a, b) => b.brand - a.brand)[0];
+    const target = [...list].filter((c) => c.id !== buyer.id).sort((a, b) => a.brand - b.brand)[0];
+    if (buyer && target && buyer.brand > 55 && target.brand < 42 && (buyer.cash || 0) > 8e8) {
+      buyer.lineup = [...buyer.lineup, ...target.lineup].slice(-4);
+      buyer.brand = clamp(buyer.brand + clamp(target.brand * 0.12, 1, 6), 10, 99);
+      buyer.cash -= 2e8;
+      state.competitors = state.competitors.filter((c) => c.id !== target.id);
+      state.rivalAlliances = state.rivalAlliances.filter((a) => a.a !== target.id && a.b !== target.id);
+      const title = `${buyer.name} 收购 ${target.name}`;
+      report.notes.push(`${title}，行业集中度上升。`);
+      addLog(state, 'rival', `${title}，${target.name} 退出独立经营。`);
+      newsPush(title, `${buyer.name} 宣布收购 ${target.name}，后者产品线并入前者。`);
+    }
+  }
+
+  // 结盟：两家强势厂商共享渠道（份额计算 +6%）
+  if (list.length >= 4 && state.rivalAlliances.length < 2 && chance(0.01)) {
+    const top = [...list].sort((a, b) => b.brand - a.brand).slice(0, 4);
+    const a = top[0];
+    const b = top[1 + Math.floor(Math.random() * 3)];
+    const allied = state.rivalAlliances.some((x) => (x.a === a?.id && x.b === b?.id) || (x.a === b?.id && x.b === a?.id));
+    if (a && b && a.id !== b.id && !allied) {
+      const months = randInt(12, 30);
+      state.rivalAlliances.push({ a: a.id, b: b.id, months, name: `${a.name} × ${b.name}` });
+      a.brand = clamp(a.brand + 0.5, 10, 99);
+      b.brand = clamp(b.brand + 0.5, 10, 99);
+      const title = `${a.name} 与 ${b.name} 达成战略联盟`;
+      report.notes.push(`${title}（${months} 个月），渠道与曝光共享。`);
+      addLog(state, 'rival', title);
+      newsPush(title, '双方将在渠道、供应链与专利上合作，联盟成员的市场曝光提升。');
+    }
   }
 }
 
@@ -844,13 +914,49 @@ export function avgShare(state) {
 
 export function evaluateModel(state, model) {
   // 沙盒全解锁：跳过年代合理性门槛（如 2020 前的折叠结构）
+  const all = state.mode === 'sandbox' && state.tech.all;
   const v = validate(model.design, state.date.year,
-    (state.mode === 'sandbox' && state.tech.all) ? { ignoreEra: true } : {});
+    all ? { ignoreEra: true, unlocked: state.tech.unlocked } : { unlocked: state.tech.unlocked });
   const d = v.derived;
   return { ...v, derived: d };
 }
 
 export { derive };
+
+// 猎头挖角：从竞争对手处挖一名核心工程师（v1.5.0）
+// 成功率随对方品牌下降、随我方品牌上升；失败也会照付猎头费并让对方加强留人
+export function poachFromRival(state, compId) {
+  const c = state.competitors.find((x) => x.id === compId);
+  if (!c) return { ok: false, msg: '该公司已不在市场中' };
+  const emp = generateEmployee(state.date.year, {
+    skillMean: clamp(60 + (c.brand || 40) * 0.28, 55, 92),
+    deptId: 'rnd',
+    role: '高级工程师',
+    field: '手机研发',
+  });
+  const fee = Math.round(emp.salary * 3 / 100) * 100;
+  if (state.company.cash < fee) return { ok: false, msg: `挖角费用不足（需 ${fmtMoney(fee)}）` };
+  const successRate = clamp(0.82 - (c.brand || 40) / 180 + state.company.brand / 320, 0.18, 0.92);
+  state.company.cash -= fee;
+  if (Math.random() > successRate) {
+    c.brand = clamp(c.brand + 0.8, 10, 99);
+    addLog(state, 'hr', `猎头接触 ${c.name} 的工程师失败，对方提高了留人待遇。`);
+    return { ok: false, msg: `对方拒绝了邀约（成功率 ${Math.round(successRate * 100)}%），猎头费已支付` };
+  }
+  emp.salary = Math.round(emp.salary * 1.12 / 100) * 100;
+  emp.expectSalary = Math.max(emp.expectSalary, emp.salary);
+  state.employees.push(emp);
+  c.brand = clamp(c.brand - 0.6, 10, 99);
+  addLog(state, 'hr', `从 ${c.name} 挖来工程师 ${emp.name}（能力 ${emp.skill}），猎头费 ${fmtMoney(fee)}。`);
+  state.news = state.news || [];
+  state.news.unshift({
+    time: `${state.date.year}/${state.date.month + 1}`, type: 'star',
+    title: `${emp.name} 从 ${c.name} 跳槽加入`,
+    text: `核心工程师 · 能力 ${emp.skill}。猎头费 ${fmtMoney(fee)}。`, read: false,
+  });
+  if (state.news.length > 100) state.news.length = 100;
+  return { ok: true, msg: `${emp.name}（能力 ${emp.skill}）已入职`, emp, fee };
+}
 
 // ---------- 智能排产：按上月销量 × 热度 × 增长缓冲，扣除一半库存 ----------
 export function suggestTargets(state) {

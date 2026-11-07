@@ -40,6 +40,9 @@ export const DIVISION_DEFS = {
 };
 export const DIVISION_IDS = Object.keys(DIVISION_DEFS);
 
+// 第三方授权厂商名单（v1.5.0）
+const OS_LICENSEE_NAMES = ['星曜科技', '极光通信', '蓝海电子', '北辰设备', '云栖智联', '曙光终端'];
+
 export function ensureDivisions(state) {
   if (!state.divisions) state.divisions = {};
   for (const id of DIVISION_IDS) {
@@ -52,8 +55,10 @@ export function ensureDivisions(state) {
   }
   // 自研 OS 流行度体系
   if (!state.osPop) {
-    state.osPop = { pop: 0, level: 0, version: 0, versionName: '1.0', licensed: false, licIncome: 0, totalInstall: 0 };
+    state.osPop = { pop: 0, level: 0, version: 0, versionName: '1.0', licensed: false, licIncome: 0, totalInstall: 0, licensees: [], storeRevenue: 0 };
   }
+  if (!Array.isArray(state.osPop.licensees)) state.osPop.licensees = [];
+  if (!Number.isFinite(Number(state.osPop.storeRevenue))) state.osPop.storeRevenue = 0;
   // 系统科技树（独立于通用科技树）
   if (!state.osTech) state.osTech = { unlocked: [], proj: null };
   return state.divisions;
@@ -519,15 +524,30 @@ export function stepDivisions(state, report) {
     }
     os.totalInstall += install;
     const tb = osTechBonuses(state);
+    // 第三方厂商授权（v1.5.0）：开放授权后逐步签约，最多 5 家；停止授权则全部解约
+    os.licensees = Array.isArray(os.licensees) ? os.licensees : [];
+    if (!os.licensed) os.licensees = [];
+    else if (os.pop > 8 && os.licensees.length < 5 && Math.random() < 0.07) {
+      const name = OS_LICENSEE_NAMES.find((n) => !os.licensees.some((l) => l.name === n));
+      if (name) {
+        os.licensees.push({ name, rate: +(0.1 + Math.random() * 0.08).toFixed(2), since: state.date.year });
+        addLog(state, 'tech', `${name} 与自研 OS 签约，成为第 ${os.licensees.length} 家授权厂商。`);
+        if (report) report.notes.push(`${name} 签约授权自研 OS。`);
+      }
+    }
+    // 应用商店分成（v1.5.0）：装机量 × 应用生态加成，按 15% 抽成
+    os.storeRevenue = Math.round((install * 30 + os.totalInstall * 0.01) * (1 + tb.appsBonus / 100) * 0.15 * era);
+    if (os.storeRevenue > 0) supply += os.storeRevenue;
     const growth = (install / 40000 + (osdLv - 1) * 0.05 + (os.licensed ? 0.25 : 0)) * (1 + tb.popGrowth / 100);
     const decay = os.pop * 0.012;
     os.pop = clamp(os.pop + growth - decay, 0, 100);
     // 流行度封顶受 OS 版本 / 部门等级 / 系统科技影响
     const cap = 12 + os.version * 14 + osdLv * 6 + tb.popCap;
     if (os.pop > cap) os.pop = clamp(os.pop - (os.pop - cap) * 0.3, 0, 100);
-    // 授权收入：流行度越高，越多家厂商付费
+    // 授权收入：流行度越高，越多家厂商付费（基础授权 + 逐厂商合约）
     if (os.licensed && os.pop > 8) {
-      const lic = Math.round(os.pop * 1e6 * (0.55 + osdLv * 0.14) * (1 + osTechBonuses(state).licRate / 100) * era);
+      const vendorIncome = os.licensees.reduce((s2, l) => s2 + os.pop * 0.12e6 * (l.rate || 0.1) * (1 + osTechBonuses(state).licRate / 100) * era, 0);
+      const lic = Math.round(os.pop * 1e6 * (0.55 + osdLv * 0.14) * (1 + osTechBonuses(state).licRate / 100) * era + vendorIncome);
       supply += lic;
       os.licIncome = lic;
     } else {

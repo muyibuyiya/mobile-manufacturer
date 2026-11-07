@@ -3,6 +3,8 @@
 // vendor 用于下拉品牌二级选择
 // self:true 标记为自研核设计（不与公版核混排）
 export const CPU_DB = [
+  // ---- 1980 功能机起点：年代硬锁需要真正 1980 年可用的基础处理器 ----
+  { id: 'mcu8_1980', name: '8 位单片机', vendor: '公版', tech: 'cpu8', year: 1980, perf: 2, price: 18, power: 0.08, size: 5, weight: 8, desc: '8-bit, 1-4MHz' },
   // ---- 功能机时代（1987–2007）----
   { id: 'mcu8', name: '8 位 MCU', vendor: '公版', tech: 'cpu16', year: 1987, perf: 3, price: 20, power: 0.1, size: 5, weight: 8, desc: '8-bit, 4-8MHz' },
   { id: 'mcu16', name: '16 位处理器', vendor: '公版', tech: 'cpu16', year: 1992, perf: 8, price: 30, power: 0.15, size: 6, weight: 8, desc: '16-bit, 8-16MHz' },

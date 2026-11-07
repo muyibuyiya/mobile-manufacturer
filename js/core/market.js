@@ -63,6 +63,13 @@ export function rivalReach(brand) {
   return 0.55 + brand / 160;
 }
 
+// 竞品结盟：联盟成员共享渠道与曝光，份额计算给 6% 加成
+export function rivalAllianceBonus(state, compId) {
+  const list = state.rivalAlliances || [];
+  const hit = list.some((a) => a && a.months > 0 && (a.a === compId || a.b === compId));
+  return hit ? 1.06 : 1;
+}
+
 export function marketPotential(state, market, demandMul = 1) {
   // 关税抬高终端价压制需求：市场自带关税 + 出口管制类政策的加成；海外分公司本地化生产可减免
   const effTariff = effectiveTariff(state, market);
@@ -115,7 +122,7 @@ export function marketShare(state, marketId, opts = {}) {
     for (const r of rivalAgg) {
       const u = utilityFor(r.phone.scores, r.phone.price, r.competitor.brand, prefs, year, m.wealth, seg);
       // 竞品也按自己的定位吃本命人群，但只给一点偏好，避免它们完全统治某个细分
-      const val = Math.exp(u) * rivalReach(r.competitor.brand);
+      const val = Math.exp(u) * rivalReach(r.competitor.brand) * rivalAllianceBonus(state, r.competitor.id);
       r.val += val * item.share;
       r.u = (r.u || 0) + u * item.share;
       sumComp += val;

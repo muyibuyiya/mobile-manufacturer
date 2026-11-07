@@ -10,6 +10,7 @@ export const CPUS = [
 ];
 
 export const RAMS = [
+  { id: 'r_1980', name: '16 KB SRAM', vendor: '—', tech: 'cpu8', year: 1980, gb: 0.000016, price: 24, weight: 1, power: 0.04 },
   { id: 'r0', name: '64 KB SRAM', vendor: '尔必达', tech: 'cpu16', year: 1988, gb: 0.00006, price: 30, weight: 1, power: 0.05 },
   { id: 'r1', name: '2 MB SDRAM', vendor: '三星', tech: 'arm', year: 1998, gb: 0.002, price: 60, weight: 1, power: 0.08 },
   { id: 'r2', name: '32 MB SDRAM', vendor: '三星', tech: 'color_lcd', year: 2002, gb: 0.032, price: 90, weight: 2, power: 0.12 },
@@ -115,21 +116,21 @@ export const SYSTEMS = [
 ];
 
 export const EXTRAS = [
-  { id: 'x_fp', name: '指纹识别', tech: 'fingerprint', price: 45, weight: 2, thick: 0.2 },
-  { id: 'x_face', name: '3D 人脸识别', tech: 'faceid', price: 110, weight: 4, thick: 0.6 },
-  { id: 'x_wp', name: '防水防尘', tech: 'waterproof', price: 60, weight: 3, thick: 0.3 },
-  { id: 'x_wl', name: '无线充电', tech: 'wireless_charge', price: 55, weight: 6, thick: 0.8 },
-  { id: 'x_fc', name: '快充模块', tech: 'fastcharge', price: 40, weight: 4, thick: 0.3 },
+  { id: 'x_fp', name: '指纹识别', tech: 'fingerprint', year: 2014, price: 45, weight: 2, thick: 0.2 },
+  { id: 'x_face', name: '3D 人脸识别', tech: 'faceid', year: 2017, price: 110, weight: 4, thick: 0.6 },
+  { id: 'x_wp', name: '防水防尘', tech: 'waterproof', year: 2013, price: 60, weight: 3, thick: 0.3 },
+  { id: 'x_wl', name: '无线充电', tech: 'wireless_charge', year: 2012, price: 55, weight: 6, thick: 0.8 },
+  { id: 'x_fc', name: '快充模块', tech: 'fastcharge', year: 2014, price: 40, weight: 4, thick: 0.3 },
   { id: 'x_udc', name: '屏下摄像头', tech: 'udc', year: 2021, price: 90, weight: 1, thick: 0.2 },
-  { id: 'x_vc', name: '均热板散热', tech: 'cooling_vc', price: 50, weight: 8, thick: 0.5 },
-  { id: 'x_sat', name: '卫星通信', tech: 'satellite', price: 130, weight: 5, thick: 0.4 },
-  { id: 'x_sec', name: '安全芯片', tech: 'security_chip', price: 35, weight: 1, thick: 0.1 },
+  { id: 'x_vc', name: '均热板散热', tech: 'cooling_vc', year: 2016, price: 50, weight: 8, thick: 0.5 },
+  { id: 'x_sat', name: '卫星通信', tech: 'satellite', year: 2022, price: 130, weight: 5, thick: 0.4 },
+  { id: 'x_sec', name: '安全芯片', tech: 'security_chip', year: 2018, price: 35, weight: 1, thick: 0.1 },
 ];
 
 // 充电：有线功率档 / 无线功率档 / 协议
 export const CHARGERS = {
   wired: [
-    { id: 'w5', name: '5W 标准充电', tech: 'liion', year: 1980, watt: 5, price: 5 },
+    { id: 'w5', name: '5W 标准充电', tech: 'nicd', year: 1980, watt: 5, price: 5 },
     { id: 'w18', name: '18W 快充', tech: 'fastcharge', year: 2016, watt: 18, price: 18 },
     { id: 'w33', name: '33W 快充', tech: 'fastcharge', year: 2018, watt: 33, price: 28 },
     { id: 'w66', name: '66W 超级快充', tech: 'fastcharge2', year: 2020, watt: 66, price: 42 },
@@ -137,13 +138,13 @@ export const CHARGERS = {
     { id: 'w240', name: '240W 满级秒充', tech: 'fastcharge3', year: 2023, watt: 240, price: 98 },
   ],
   wireless: [
-    { id: 'wl0', name: '不支持无线充电', tech: 'liion', year: 1980, watt: 0, price: 0 },
+    { id: 'wl0', name: '不支持无线充电', tech: 'nicd', year: 1980, watt: 0, price: 0 },
     { id: 'wl15', name: '15W 无线充电', tech: 'wireless_charge', year: 2015, watt: 15, price: 40 },
     { id: 'wl50', name: '50W 无线快充', tech: 'wireless_charge', year: 2020, watt: 50, price: 72 },
     { id: 'wl80', name: '80W 无线快充', tech: 'wireless_charge2', year: 2023, watt: 80, price: 112 },
   ],
   proto: [
-    { id: 'p_std', name: '标准协议', tech: 'liion', year: 1980, bonus: 0 },
+    { id: 'p_std', name: '标准协议', tech: 'nicd', year: 1980, bonus: 0 },
     { id: 'p_pd', name: 'USB-PD 通用协议', tech: 'fastcharge', year: 2016, bonus: 2 },
     { id: 'p_qc', name: 'QC 私有快充协议', tech: 'fastcharge', year: 2016, bonus: 3 },
     { id: 'p_ufcs', name: 'UFCS 融合快充', tech: 'fastcharge2', year: 2022, bonus: 4 },

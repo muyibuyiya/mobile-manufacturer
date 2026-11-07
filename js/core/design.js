@@ -162,7 +162,7 @@ export function defaultDesign(year = 2020, unlocked = []) {
 // 按年代/解锁科技选默认传感器（主摄选当时最高档）
 function defaultSensorFor(year, unlocked, role) {
   const ok = IMAGE_SENSORS.filter((s) => s.roles.includes(role) && s.year <= year && unlocked.includes(s.tech));
-  if (!ok.length) return role === '主摄' ? 'sn_vga' : null;
+  if (!ok.length) return role === '主摄' ? IMAGE_SENSORS[0].id : null;
   return [...ok].sort((a, b) => (b.score - a.score) || (b.year - a.year))[0].id;
 }
 
@@ -723,6 +723,57 @@ export function eraRel(value, base) {
   return clamp(value / base, 0.35, 2.6);
 }
 
+// ---------- 年代可用性硬校验（v1.5.0）----------
+// UI 层一直采用「禁用保留」，但核心层从未拦截未来零件：旧档、导入档、沙盒或直接改档
+// 都能把尚未发布/未解锁的零件塞进设计并正常量产。这里把门槛下沉到 validate 的唯一出口。
+// opts.ignoreEra（沙盒全解锁）与 opts.unlocked（当前已解锁科技）由调用方传入。
+export function eraAvailability(design, year, unlocked) {
+  const issues = [];
+  if (!design || !design.parts) return issues;
+  const y = Math.round(Number(year) || 0);
+  const unl = Array.isArray(unlocked) ? new Set(unlocked) : null;
+  const flag = (item, label) => {
+    if (!item) return;
+    const nm = item.name || item.id || '未知部件';
+    if (Number.isFinite(Number(item.year)) && Number(item.year) > y) {
+      issues.push({ level: 'error', text: `${label}「${nm}」要到 ${item.year} 年才可用（当前 ${y} 年）。` });
+      return;
+    }
+    if (unl && item.tech && !unl.has(item.tech)) {
+      issues.push({ level: 'error', text: `${label}「${nm}」依赖的技术尚未解锁。` });
+    }
+  };
+  const find = (list, id) => (list || []).find((x) => x.id === id) || null;
+  const p = design.parts;
+  if (!p.ownCpu) flag(find(CPUS, p.cpu), '处理器');
+  flag(find(RAMS, p.ram), '内存');
+  flag(find(STORAGES, p.storage), '存储');
+  flag(find(BATTERIES, p.battery), '电池');
+  if (!p.ownOs) flag(find(SYSTEMS, p.os), '系统');
+  flag(find(SCREENS, design.screen?.panel), '屏幕面板');
+  const pv = find(PANEL_VENDORS, design.screen?.panelVendor);
+  if (pv) {
+    flag(pv, '面板供应商');
+    const gen = (pv.gens || []).find((g) => g.id === design.screen?.panelGen);
+    if (gen) flag(gen, `${pv.name} 发光材料`);
+  }
+  flag(find(RES_TIERS, design.screen?.res), '分辨率');
+  const charge = p.charge || {};
+  flag(find(CHARGERS.wired, charge.wired), '有线充电');
+  flag(find(CHARGERS.wireless, charge.wireless), '无线充电');
+  flag(find(CHARGERS.proto, charge.proto), '充电协议');
+  for (const eid of p.extras || []) flag(find(EXTRAS, eid), '附加功能');
+  ensureLenses(design);
+  if (!p.ownCmr) {
+    for (let i = 0; i < design.camera.lenses.length; i++) {
+      const l = design.camera.lenses[i];
+      if (l.sensor !== 'sn_own') flag(find(IMAGE_SENSORS, l.sensor), `镜头 ${i + 1} 传感器`);
+      flag(find(LENS_TYPES, l.type), `镜头 ${i + 1}`);
+    }
+  }
+  return issues;
+}
+
 export function validate(design, year, opts = {}) {
   const issues = [];
   const b = design.body;
@@ -733,6 +784,9 @@ export function validate(design, year, opts = {}) {
   const effH = b.fold === 'flip' ? b.length * 2 : b.length;
   const scr = screenSize(design);
   const d = derive(design, year, opts);
+
+  // 年代硬锁：零件/传感器/面板/充电/附加功能必须在该年已发布且科技已解锁
+  if (!opts.ignoreEra) issues.push(...eraAvailability(design, year, opts.unlocked));
 
   if (scr.w + design.screen.bezel * 2 > effW + 0.6) {
     issues.push({ level: 'error', text: `屏幕宽度 ${scr.w}mm 超出机身 ${effW}mm，无法装配。` });
@@ -911,6 +965,10 @@ export function ensureTemplate(d, year = 2020) {
   else d.homeStyle = '';
   if (!T.notch.includes(d.screen.notch)) d.screen.notch = T.notch[0] || 'none';
   if (!T.screen.aspects.includes(d.screen.aspect)) d.screen.aspect = T.screen.aspects.includes(d.screen.aspect) ? d.screen.aspect : T.screen.aspects[0];
+  // 中框轮廓：flat 直角 / arc 圆弧 / chamfer 45°切角 / bevel 2.5D 缓弧
+  if (!['flat', 'arc', 'chamfer', 'bevel'].includes(d.body.frameType)) d.body.frameType = 'flat';
+  // 中框轮廓：flat 直角 / arc 圆弧 / chamfer 45°切角 / bevel 2.5D 缓弧
+  if (!['flat', 'arc', 'chamfer', 'bevel'].includes(d.body.frameType)) d.body.frameType = 'flat';
   // 背部智窗：字段幂等补齐（否则 setPath 写入会崩）
   d.backWindow = d.backWindow || {};
   if (typeof d.backWindow.on !== 'boolean') d.backWindow.on = false;
