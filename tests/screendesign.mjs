@@ -190,6 +190,28 @@ async function main() {
   const splitB = await ev(`document.querySelector('[data-sd=cv]').toDataURL()`);
   check('平板分屏可切换渲染', !!splitA && !!splitB && splitA !== splitB, `${splitA?.length}/${splitB?.length}`);
 
+  // 左栏分 Tab / 顶部预览 / 缩放 / 画布外框 / 画布点选
+  check('左栏三个 Tab', await ev(`document.querySelectorAll('[data-sd="tab"]').length === 3`));
+  const lookTab = await ev(`(() => {
+    document.querySelector('[data-sd="tab"][data-v="look"]').click();
+    const on = document.querySelector('[data-sdt="look"]')?.classList.contains('on');
+    const off = !document.querySelector('[data-sdt="canvas"]')?.classList.contains('on');
+    return on && off;
+  })()`);
+  check('外观 Tab 可切换', lookTab === true);
+  await ev(`document.querySelector('[data-sd="tab"][data-v="controls"]').click()`);
+  const zoom50 = await ev(`(() => { const before = document.querySelector('[data-sd=cv]').style.width; document.querySelector('[data-sd="zoom"][data-v="50"]').click(); return { before, after: document.querySelector('[data-sd=cv]').style.width }; })()`);
+  check('画布缩放可切换', !!zoom50.after && zoom50.before !== zoom50.after, JSON.stringify(zoom50));
+  check('画布有设备外框', await ev(`/solid/.test(document.querySelector('[data-sd=cv]').style.border)`));
+  const clickSec = await ev(`(() => {
+    const cv = document.querySelector('[data-sd=cv]');
+    const r = cv.getBoundingClientRect();
+    cv.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: r.left + r.width / 2, clientY: r.top + 4 }));
+    return document.querySelector('[data-sdsec="status"]')?.classList.contains('on');
+  })()`);
+  check('画布点选跳转控件', clickSec === true, String(clickSec));
+  await ev(`document.querySelector('[data-sd="tab"][data-v="controls"]').click()`);
+
   // 不保存退出：草稿不应写回；重新进入仍是默认手势 28%
   await ev(`document.querySelector('[data-sd=discard]').click()`);
   await sleep(300);

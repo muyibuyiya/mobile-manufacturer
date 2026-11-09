@@ -42,9 +42,9 @@ export const PHONE_TEMPLATES = [
   },
   {
     id: 'tablet', name: '平板', from: 2010,
-    desc: '大屏触控平板：4:3/16:10 屏幕、无键盘、窄边框；摄像头与电池按平板尺寸适配。',
-    screen: { maxInch: 13.5, presetInch: 11, presetBezel: 4, aspects: ['4:3', '16:10', '3:2', '16:9'], frac: 0.9, cornerMax: 10 },
-    body: { length: 250, width: 176, thickness: 7.6, corner: 8 },
+    desc: '大屏触控平板：4:3 / 3:2 / 16:9 屏幕、无键盘、窄边框；摄像头与电池按平板尺寸适配。',
+    screen: { maxInch: 15, presetInch: 11, presetBezel: 4, aspects: ['4:3', '3:2', '16:9'], frac: 0.9, cornerMax: 10 },
+    body: { length: 250, width: 188, thickness: 7.6, corner: 8 },
     keypad: ['none'], home: null, notch: ['none', 'punch'], fold: false,
     extras: ['x_fp', 'x_face', 'x_wp', 'x_wl', 'x_fc', 'x_vc', 'x_sec'],
   },
@@ -67,6 +67,27 @@ export const PHONE_TEMPLATES = [
 ];
 
 export const PHONE_TPL_MAP = Object.fromEntries(PHONE_TEMPLATES.map((t) => [t.id, t]));
+
+export const DEVICE_CATEGORIES = [
+  { id: 'phone', name: '手机', desc: '从按键机到折叠全面屏，完整手机产品线。' },
+  { id: 'tablet', name: '平板', desc: '只设计平板形态：4:3 / 3:2 / 16:9 大屏，无键盘与折叠。' },
+  { id: 'watch', name: '智能手表', desc: '只设计表体：圆表或方表，不做表带与后置摄像头。' },
+];
+
+export function categoryOfTemplate(id) {
+  const t = String(id || '');
+  return t === 'tablet' ? 'tablet' : t.startsWith('watch') ? 'watch' : 'phone';
+}
+
+export function templatesForCategory(cat) {
+  return PHONE_TEMPLATES.filter((t) => categoryOfTemplate(t.id) === cat);
+}
+
+export function defaultTemplateForCategory(cat, year, current) {
+  if (cat === 'tablet') return 'tablet';
+  if (cat === 'watch') return current === 'watch_square' ? 'watch_square' : 'watch_round';
+  return templateForYear(year);
+}
 
 // 按年份取默认形态
 export function templateForYear(year) {

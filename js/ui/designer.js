@@ -2,7 +2,7 @@
 import * as THREE from '../../vendor/three.module.js';
 import { derive, validate, bomCost, screenSize, SCREEN_ASPECTS, defaultDesign, maxScreenInch, cameraModuleRect, lensSpecs, ensureLenses, ensureBranding, ensurePackaging, ensureDeviceExtras, packageScore, PACKAGE_MATERIALS, speakerRowSpec, PORT_OPENINGS, layoutPos, makeLens, arrangeLenses } from '../core/design.js';
 import { CPUS, RAMS, STORAGES, SCREENS, CAMERAS, BATTERIES, SYSTEMS, EXTRAS, MATERIALS, FINISHES, CHARGERS, BODY_COLORS } from '../data/parts.js';
-import { PHONE_TEMPLATES, PHONE_TPL_MAP, tplCaps } from '../data/templates.js';
+import { PHONE_TEMPLATES, PHONE_TPL_MAP, tplCaps, DEVICE_CATEGORIES, templatesForCategory, defaultTemplateForCategory } from '../data/templates.js';
 import { IMAGE_SENSORS, LENS_TYPES, DECO_SHAPES, PANEL_VENDORS, RES_TIERS, lensTypeById, sensorById, lensRadiusMm } from '../data/hardware.js';
 import { TECHS } from '../data/tech.js';
 import { ownCpuSpec, ownCmrSpec, ownOsSpec, ownPanelSpec } from '../core/divisions.js';
@@ -209,6 +209,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
   container.innerHTML = `
     <div class="designer">
       <div class="dz-panel" id="dz-left"></div>
+      <div class="dz-resizer" id="dz-resizer" title="拖动调整左栏宽度"></div>
       <div class="dz-stage">
         <div class="dz-toolbar">
           <div class="speed-group" style="background:#0d1219">
@@ -228,6 +229,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
             <button class="btn small ${autoRotate ? 'primary' : ''}" id="btn-rotate">自动旋转</button>
             <button class="btn small" id="btn-explode">拆解视图</button>
           </div>
+          <button class="btn small ghost" id="dz-assess-toggle">收起评估</button>
           <button class="btn small ghost" id="dz-reset">重置</button>
           <button class="btn small" id="dz-close">返回</button>
           <button class="btn small primary" id="dz-save">保存设计</button>
@@ -249,6 +251,48 @@ export function renderDesigner(container, state, model, hooks = {}) {
 
   const left = container.querySelector('#dz-left');
   const right = container.querySelector('#dz-right');
+  const dzRoot = container.querySelector('.designer');
+  const resizer = container.querySelector('#dz-resizer');
+  const assessToggle = container.querySelector('#dz-assess-toggle');
+  const DZ_LEFT_KEY = 'dz_left_w';
+  const DZ_ASSESS_KEY = 'dz_assess_collapsed';
+  const savedLeftW = Number(localStorage.getItem(DZ_LEFT_KEY));
+  if (savedLeftW >= 220 && savedLeftW <= 460) dzRoot.style.setProperty('--dz-left-w', savedLeftW + 'px');
+  let assessCollapsed = localStorage.getItem(DZ_ASSESS_KEY) === '1';
+  function applyAssessCollapsed() {
+    dzRoot.classList.toggle('assess-collapsed', assessCollapsed);
+    assessToggle.textContent = assessCollapsed ? '展开评估' : '收起评估';
+    assessToggle.classList.toggle('primary', assessCollapsed);
+  }
+  applyAssessCollapsed();
+  assessToggle.addEventListener('click', () => {
+    assessCollapsed = !assessCollapsed;
+    try { localStorage.setItem(DZ_ASSESS_KEY, assessCollapsed ? '1' : '0'); } catch (e) { /* 忽略 */ }
+    applyAssessCollapsed();
+    if (!assessCollapsed && viewMode === '3d') setTimeout(() => buildPhone(), 30);
+  });
+  // 左栏宽度拖拽（记忆到 localStorage，范围 220–460px）
+  resizer.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    resizer.setPointerCapture(e.pointerId);
+    resizer.classList.add('dragging');
+    const startX = e.clientX;
+    const startW = parseInt(getComputedStyle(dzRoot).getPropertyValue('--dz-left-w'), 10) || left.clientWidth;
+    const move = (ev) => {
+      const w = Math.min(460, Math.max(220, startW + ev.clientX - startX));
+      dzRoot.style.setProperty('--dz-left-w', w + 'px');
+    };
+    const up = () => {
+      resizer.classList.remove('dragging');
+      resizer.removeEventListener('pointermove', move);
+      resizer.removeEventListener('pointerup', up);
+      const w = dzRoot.style.getPropertyValue('--dz-left-w');
+      try { localStorage.setItem(DZ_LEFT_KEY, String(parseInt(w, 10))); } catch (err) { /* 忽略 */ }
+      if (viewMode === '2d') draw2D(); else buildPhone();
+    };
+    resizer.addEventListener('pointermove', move);
+    resizer.addEventListener('pointerup', up);
+  });
   const stageBody = container.querySelector('#dz-stage-body');
   const canvas2d = container.querySelector('#dz-2d');
 
@@ -275,16 +319,23 @@ export function renderDesigner(container, state, model, hooks = {}) {
     const freeAspect = d.screen.aspect === '自由';
     const isTablet = TPL.id === 'tablet';
     const isWatch = String(TPL.id).startsWith('watch');
-    const bodyLMin = isWatch ? 30 : 70, bodyLMax = isTablet ? 300 : 200;
-    const bodyWMin = isWatch ? 30 : 35, bodyWMax = isTablet ? 240 : 100;
+    const isPhone = !isTablet && !isWatch;
+    const category = isTablet ? 'tablet' : isWatch ? 'watch' : 'phone';
+    const catTemplates = templatesForCategory(category);
+    const bodyLMin = isWatch ? 30 : isTablet ? 120 : 70, bodyLMax = isTablet ? 360 : 200;
+    const bodyWMin = isWatch ? 30 : isTablet ? 80 : 35, bodyWMax = isTablet ? 260 : 100;
     const ports = body.ports || {};
     const sp = speakerRowSpec(ports.speakerStyle);
     const micSpan = ports.micStyle && ports.micStyle !== 'hole' ? speakerRowSpec(ports.micStyle).span : 2.8;
-    return section('tpl', '设备形态', `
-      <span class="tiny dim" style="display:block;margin-bottom:6px">手机 / 平板 / 智能手表共用同一套设计器；手表只设计表体与圆形/方形屏幕，不做表带。</span>
-      <label class="field"><span>形态世代</span>
+    return section('category', '产品品类', `
+      <div class="row" style="gap:5px;flex-wrap:wrap">
+        ${DEVICE_CATEGORIES.map((c) => `<button type="button" class="btn small ${category === c.id ? 'primary' : ''}" data-cat="${c.id}">${c.name}</button>`).join('')}
+      </div>
+      <div class="tiny dim" style="margin-top:6px">${DEVICE_CATEGORIES.find((c) => c.id === category)?.desc || ''}</div>`)
+      + section('tpl', category === 'phone' ? '手机形态' : category === 'tablet' ? '平板形态' : '手表形态', `
+      <label class="field"><span>形态 / 世代</span>
         <select data-k="template">
-          ${PHONE_TEMPLATES.map((t) => `<option value="${t.id}" ${d.template === t.id ? 'selected' : ''} ${t.from > availYear ? 'disabled' : ''}>${t.name}${t.from > availYear ? `（${t.from} 年解锁）` : ''}</option>`).join('')}
+          ${catTemplates.map((t) => `<option value="${t.id}" ${d.template === t.id ? 'selected' : ''} ${t.from > availYear ? 'disabled' : ''}>${t.name}${t.from > availYear ? `（${t.from} 年解锁）` : ''}</option>`).join('')}
         </select>
       </label>
       <div class="tiny dim" style="margin-top:4px">${TPL.desc}</div>`)
@@ -297,7 +348,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
         <select data-k="body.frameType">
           ${[['flat', '直角边框（iPhone 4/12 式硬朗）'], ['arc', '圆弧边框（圆润手感，多数安卓）'], ['chamfer', '45° 切角（iPhone 5 式棱线）'], ['bevel', '2.5D 缓弧（微弧过渡）']].map(([v, n]) => `<option value="${v}" ${(body.frameType || 'flat') === v ? 'selected' : ''}>${n}</option>`).join('')}
         </select>
-      </label>`)
+      </label>`, `${body.length}×${body.width}×${body.thickness}mm`)
       + section('screen', '屏幕', `
       <span class="tiny dim" style="display:block;margin-bottom:6px">调机身时屏幕自动贴合</span>
       ${sliderRow('屏幕尺寸', 'screen.inch', d.screen.inch, 1, TPL.screen.maxInch, 0.1, '″')}
@@ -318,7 +369,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
         </select>
       </label>
       ${d.screen.notch === 'punch' && !d.parts.extras.includes('x_udc') ? sliderRow('挖孔位置（0=居中，折叠机默认右半屏）', 'screen.holeX', d.screen.holeX ?? (d.body.fold !== 'none' ? 25 : 0), -45, 45, 1, '%') : ''}
-      ${d.screen.notch === 'none' || d.screen.notch === 'punch' ? `
+      ${isPhone && (d.screen.notch === 'none' || d.screen.notch === 'punch') ? `
       ${sliderRow('听筒宽度（0=隐藏）', 'earpiece.w', d.earpiece?.w ?? 8, 0, 16, 0.5, 'mm')}
       ${sliderRow('听筒粗细', 'earpiece.h', d.earpiece?.h ?? 1.1, 0.6, 3.2, 0.1, 'mm')}
       ${sliderRow('听筒位置（屏幕上方偏移）', 'earpiece.y', d.earpiece?.y ?? 0, -4, 24, 0.5, 'mm')}
@@ -488,7 +539,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
         </div>
       </div>
       <div class="tiny dim" style="margin-top:4px">包装评分 ${packageScore(d)}/6 · 影响开箱评价与单机包装成本</div>`)
-      + section('buttons', '按键与接口', `
+      + (isWatch ? '' : section('buttons', '按键与接口', `
       <label class="field"><span>侧键样式</span>
         <select data-k="body.buttons">
           ${[['none', '无侧键'], ['classic', '经典双键'], ['strip', '细长条'], ['split', '分离式音量键'], ['opposite', '电源键异侧'], ['hidden', '隐藏式（压感）']].map(([v, n]) => {
@@ -546,7 +597,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
         <input type="checkbox" data-k="body.ports.topMic" data-bool="1" ${ports.topMic ? 'checked' : ''} style="width:auto" />
         <span>顶部麦克风孔</span>
       </label>
-      ${ports.topMic ? sliderRow('顶部麦克风 · 横', 'body.ports.topMicX', ports.topMicX ?? Math.round(-body.width * 0.2 * 10) / 10, -(body.width / 2 - 2), body.width / 2 - 2, 0.5, 'mm') : ''}`)
+      ${ports.topMic ? sliderRow('顶部麦克风 · 横', 'body.ports.topMicX', ports.topMicX ?? Math.round(-body.width * 0.2 * 10) / 10, -(body.width / 2 - 2), body.width / 2 - 2, 0.5, 'mm') : ''}`))
       + (TPL.keypad.length > 1 || TPL.keypad[0] !== 'none' ? section('keypad', '键盘布局', `
       <label class="field"><span>键盘类型</span>
         <select data-k="keypad.kind">
@@ -574,7 +625,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
         </select>
       </label>
       <div class="tiny dim" style="margin-top:4px">屏幕下方留出 Home 键区，屏占比相应收窄</div>`) : '')
-      + (isWatch || isTablet ? '' : section('fold', '折叠形态', `
+      + (isWatch || isTablet || !TPL.fold ? '' : section('fold', '折叠形态', `
       <label class="field"><span>结构</span>
         <select data-k="body.fold">
           <option value="none" ${body.fold === 'none' ? 'selected' : ''}>直板</option>
@@ -674,7 +725,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
           <option value="glass" ${d.watch.bezel === 'glass' ? 'selected' : ''}>玻璃（2.5D）</option>
         </select>
       </label>`) : '')
-      + section('backwin', '背部智窗', (() => {
+      + (isWatch || isTablet ? '' : section('backwin', '背部智窗', (() => {
         const bw = d.backWindow || { on: false, inch: 1.8, cx: 0, cy: -18 };
         return `
         ${sliderRow('智窗尺寸', 'backWindow.inch', bw.inch, 0.8, 4.0, 0.1, '″')}
@@ -684,7 +735,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
           <input type="checkbox" data-k="backWindow.on" data-bool="1" ${bw.on ? 'checked' : ''} style="width:auto" />
           <span>启用背部智窗（2023 年+，装饰与息屏显示，需与摄像头模组避让）</span>
         </label>`;
-      })())
+      })())) 
       + section('hw', '硬件配置', `
       ${selectRow('处理器', 'parts.cpu', CPUS, (x) => `${x.name} · 性能 ${Math.round(x.perf)}`, 'tech', divs)}
       ${selectRow('内存', 'parts.ram', RAMS, (x) => `${x.name}${x.gb >= 0.1 ? ` · ${x.gb}GB` : ''}`, 'tech', divs)}
@@ -722,7 +773,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
       </label>`)
       + section('extras', '附加功能', `
       <div class="grid" style="grid-template-columns:1fr 1fr;gap:5px">
-        ${EXTRAS.map((x) => {
+        ${EXTRAS.filter((x) => TPL.extras.includes(x.id)).map((x) => {
           const tplOk = TPL.extras.includes(x.id);
           const ok = tplOk && unlocked.includes(x.tech) && (x.year || 0) <= availYear;
           const on = model.design.parts.extras.includes(x.id);
@@ -995,6 +1046,19 @@ export function renderDesigner(container, state, model, hooks = {}) {
   }
 
   // ---------- 右侧评估 ----------
+  function issueTarget(text) {
+    const t = String(text || '');
+    if (/镜头|摄像头|闪光灯|影像/.test(t)) return 'camera';
+    if (/Logo|文字|装饰/.test(t)) return 'branding';
+    if (/智窗/.test(t)) return 'backwin';
+    if (/折叠/.test(t)) return 'fold';
+    if (/包装/.test(t)) return 'package';
+    if (/侧键|接口|扬声器|麦克风|充电口/.test(t)) return 'buttons';
+    if (/屏幕|边框|挖孔|开孔|听筒|分辨率/.test(t)) return 'screen';
+    if (/电池|内部空间|主板|散热|处理器|内存|存储/.test(t)) return 'hw';
+    return 'body';
+  }
+
   function assessment() {
     const v = validate(model.design, year, sandboxAll ? { ignoreEra: true, unlocked } : { unlocked });
     const d = v.derived;
@@ -1043,7 +1107,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
       <div class="tiny dim">电池、摄像头模组、主板与散热都要塞进这个体积里。</div>
 
       <div class="section-label">装配检查</div>
-      ${v.issues.length ? v.issues.map((i) => `<div class="issue ${i.level}">${i.level === 'error' ? '✕' : '!'} ${esc(i.text)}</div>`).join('')
+      ${v.issues.length ? v.issues.map((i) => `<div class="issue ${i.level}" data-issue-target="${issueTarget(i.text)}" title="点击定位到对应选项">${i.level === 'error' ? '✕' : '!'} ${esc(i.text)}</div>`).join('')
         : '<div class="issue" style="background:rgba(55,201,165,.08);color:var(--good)">✓ 所有检查通过，可以量产</div>'}
 
       <div class="section-label">尺寸摘要</div>
@@ -3455,6 +3519,21 @@ export function renderDesigner(container, state, model, hooks = {}) {
     right.innerHTML = assessment();
     right.scrollTop = st;
   }
+  // 点击装配检查项：展开对应分区并定位高亮
+  right.addEventListener('click', (e) => {
+    const it = e.target.closest('[data-issue-target]');
+    if (!it) return;
+    const key = it.dataset.issueTarget;
+    if (!key) return;
+    const sec = left.querySelector(`[data-sec="${key}"]`);
+    if (!sec) return;
+    collapsedSecs.delete(key);
+    try { localStorage.setItem(DZ_SEC_KEY, JSON.stringify([...collapsedSecs])); } catch (err) { /* 忽略 */ }
+    sec.classList.remove('collapsed');
+    sec.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    sec.classList.add('dz-flash');
+    setTimeout(() => sec.classList.remove('dz-flash'), 1200);
+  });
 
   function refresh(rebuildAll = true) {
     if (rebuildAll) {
@@ -3768,6 +3847,27 @@ export function renderDesigner(container, state, model, hooks = {}) {
   });
 
   left.addEventListener('click', (e) => {
+    const catBtn = e.target.closest('[data-cat]');
+    if (catBtn) {
+      e.preventDefault();
+      const cat = catBtn.dataset.cat;
+      const cur = model.design.deviceType || (String(model.design.template).startsWith('watch') ? 'watch' : model.design.template === 'tablet' ? 'tablet' : 'phone');
+      if (cat === cur) return;
+      if (cur === 'phone') model.design._lastPhoneTpl = model.design.template;
+      const lastPhone = model.design._lastPhoneTpl;
+      const tpl = cat === 'phone' && lastPhone && !String(lastPhone).startsWith('watch') && lastPhone !== 'tablet'
+        ? lastPhone
+        : defaultTemplateForCategory(cat, year, model.design.template);
+      applyValue('template', tpl);
+      model.design.deviceType = cat;
+      if (cat === 'tablet') {
+        model.design.screen.aspect = '4:3';
+        model.design.body.length = 250; model.design.body.width = 188;
+      }
+      renderControls(); renderAssessment();
+      if (viewMode === '2d') draw2D(); else buildPhone();
+      return;
+    }
     // 分区折叠：只切 class，不重渲染（保留滚动位置与输入焦点）
     const secBtn = e.target.closest('[data-sec-toggle]');
     if (secBtn) {

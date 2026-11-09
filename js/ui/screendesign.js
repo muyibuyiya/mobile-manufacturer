@@ -59,6 +59,8 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
   let active = draft[0] || null;
   let dirty = false;
   let previewMode = 'home';
+  let sdTab = 'controls';
+  let zoomMode = 'fit';
   let onChangedCb = null;
   let dead = false;
 
@@ -71,6 +73,16 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
       <b style="font-size:15px">屏幕设计</b>
       <span class="tiny dim">桌面 + 锁屏 · 保存后在设计器屏幕区选用</span>
       <span class="tiny" data-sd="status" style="color:#f2b134">未保存</span>
+      <div class="speed-group" style="background:#0d1219">
+        <button class="btn small on" data-sd="preview" data-v="home">桌面</button>
+        <button class="btn small" data-sd="preview" data-v="lock">锁屏</button>
+      </div>
+      <div class="speed-group" style="background:#0d1219">
+        <button class="btn small on" data-sd="zoom" data-v="fit">适应</button>
+        <button class="btn small" data-sd="zoom" data-v="50">50%</button>
+        <button class="btn small" data-sd="zoom" data-v="75">75%</button>
+        <button class="btn small" data-sd="zoom" data-v="100">100%</button>
+      </div>
       <div style="flex:1"></div>
       <button class="btn small ghost" data-sd="discard">不保存退出</button>
       <button class="btn small" data-sd="save">保存</button>
@@ -78,7 +90,7 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
     </div>
     <div style="flex:1;display:flex;min-height:0">
       <div style="width:340px;flex-shrink:0;padding:10px 14px;border-right:1px solid #232e3d;overflow-y:auto" data-sd="controls"></div>
-      <div style="flex:1;display:flex;align-items:center;justify-content:center;min-width:0" data-sd="preview-wrap">
+      <div style="flex:1;display:flex;align-items:center;justify-content:center;min-width:0" id="sd-preview-wrap" data-sd="preview-wrap">
         <canvas data-sd="cv" style="border-radius:18px;box-shadow:0 8px 40px rgba(0,0,0,.5)"></canvas>
       </div>
     </div>`;
@@ -154,6 +166,10 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
           ${[['phone', '手机'], ['tablet', '平板'], ['watch', '手表']].map(([v, n]) => `<button class="btn tiny ${active.deviceType === v ? 'primary' : ''}" data-sd="type" data-v="${v}">${n}</button>`).join('')}
         </div>
       </div>
+      <div class="sd-tabs">
+        ${[['look', '外观'], ['controls', '控件'], ['canvas', '画布']].map(([v, n]) => `<button class="btn tiny ${sdTab === v ? 'primary' : ''}" data-sd="tab" data-v="${v}">${n}</button>`).join('')}
+      </div>
+      <div data-sdt="controls" data-sdsec="watch" class="${sdTab === 'controls' ? 'on' : ''}">
       ${active.deviceType === 'watch' ? `
       <div class="section-label">手表表盘</div>
       <div class="row" style="gap:5px;flex-wrap:wrap">
@@ -170,12 +186,8 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
       <div class="section-label">平板布局</div>
       <label class="form-check" style="margin:0 0 6px"><input type="checkbox" class="form-check-input" data-sd="tabletSplit" ${active.tabletSplit ? 'checked' : ''} /><span class="form-check-label tiny">分屏桌面（双应用面板）</span></label>
         <label class="form-check" style="margin:0 0 6px"><input type="checkbox" class="form-check-input" data-sd="tabletDock" ${active.tabletDock !== false ? 'checked' : ''} /><span class="form-check-label tiny">底部任务栏（Dock）</span></label>` : ''}
-      <div class="field"><span>预览画面</span>
-        <div class="row" style="gap:5px">
-          <button class="btn tiny ${previewMode === 'home' ? 'primary' : ''}" data-sd="preview" data-v="home">桌面</button>
-          <button class="btn tiny ${previewMode === 'lock' ? 'primary' : ''}" data-sd="preview" data-v="lock">锁屏</button>
-        </div>
       </div>
+      <div data-sdt="look" data-sdsec="wallpaper" class="${sdTab === 'look' ? 'on' : ''}">
       <div class="section-label">桌面壁纸</div>
       ${wallpaperButton('home')}
       <label class="field"><span>底色（无壁纸时）</span>
@@ -191,6 +203,8 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
         <label class="form-check" style="margin:0"><input type="checkbox" class="form-check-input" data-sd="lockShowDate" ${active.lockShowDate ? 'checked' : ''} /><span class="form-check-label tiny">日期</span></label>
         <label class="form-check" style="margin:0"><input type="checkbox" class="form-check-input" data-sd="lockShowNotif" ${active.lockShowNotif ? 'checked' : ''} /><span class="form-check-label tiny">通知</span></label>
       </div>
+      </div>
+      <div data-sdt="controls" data-sdsec="status" class="${sdTab === 'controls' ? 'on' : ''}">
       <div class="section-label">状态栏</div>
       <div class="row" style="gap:5px;flex-wrap:wrap">
         <label class="form-check" style="margin:0"><input type="checkbox" class="form-check-input" data-sd="showTime" ${active.showTime ? 'checked' : ''} /><span class="form-check-label tiny">时间</span></label>
@@ -206,6 +220,8 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
           <span class="tiny dim" data-sd="batteryDY-v" style="width:36px;text-align:right">${num(active.batteryDY, 0.9).toFixed(1)}u</span>
         </div>
       </label>
+      </div>
+      <div data-sdt="controls" data-sdsec="nav" class="${sdTab === 'controls' ? 'on' : ''}">
       <div class="section-label">导航键</div>
       <div class="row" style="gap:5px;flex-wrap:wrap">
         ${[['gesture', '手势横条'], ['buttons', '三大键'], ['none', '无']].map(([v, n]) => `<button class="btn tiny ${active.navStyle === v ? 'primary' : ''}" data-sd="nav" data-v="${v}">${n}</button>`).join('')}
@@ -229,13 +245,17 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
             <span class="tiny dim" data-sd="gestureH-v" style="width:36px;text-align:right">${clamp(num(active.gestureH, 2.4), 1, 6).toFixed(1)}u</span>
           </div>
         </label>` : ''}
+      </div>
       ${active.deviceType === 'phone' ? `
+      <div data-sdt="controls" data-sdsec="dock" class="${sdTab === 'controls' ? 'on' : ''}">
       <div class="section-label">Dock 栏</div>
       <div class="row" style="gap:5px;align-items:center">
         <span class="tiny dim">应用数</span>
         ${[0, 3, 4, 5].map((n) => `<button class="btn tiny ${active.dockCount === n ? 'primary' : ''}" data-sd="dock" data-v="${n}">${n || '无'}</button>`).join('')}
       </div>
       <div class="tiny dim" style="margin:4px 0 6px">有导航键/手势条时 Dock 会自动上抬避让</div>` : ''}
+      </div>
+      <div data-sdt="canvas" data-sdsec="canvas" class="${sdTab === 'canvas' ? 'on' : ''}">
       <div class="section-label">画布</div>
       <div class="row" style="gap:5px;flex-wrap:wrap;margin-bottom:6px">
         ${ratios.map(([n, r]) => {
@@ -251,13 +271,20 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
         <input type="number" data-sd="canvas-h" value="${active.canvasH}" min="240" max="4680" step="10" style="width:80px" />
       </div>
       <div class="tiny dim" style="margin:4px 0 6px">设计分辨率（预览按窗口缩放显示）；壁纸导入按此比例裁切</div>
+      </div>
+      <div data-sdt="controls" data-sdsec="grid" class="${sdTab === 'controls' ? 'on' : ''}">
       <div class="section-label">桌面网格</div>
       <div class="row" style="gap:8px;align-items:center">
         <span class="tiny dim">列</span>${[3, 4, 5].map((n) => `<button class="btn tiny ${active.cols === n ? 'primary' : ''}" data-sd="cols" data-v="${n}">${n}</button>`).join('')}
         <span class="tiny dim" style="margin-left:8px">行</span>${[4, 5, 6].map((n) => `<button class="btn tiny ${active.rows === n ? 'primary' : ''}" data-sd="rows" data-v="${n}">${n}</button>`).join('')}
       </div>
+      </div>
       <input type="file" accept="image/*" data-sd="file" style="display:none" />
       <input type="file" accept="image/*" data-sd="lock-file" style="display:none" />`;
+    overlay.querySelectorAll('[data-sd="preview"]').forEach((b) => b.classList.toggle('on', b.dataset.v === previewMode));
+    overlay.querySelectorAll('[data-sd="preview"]').forEach((b) => b.classList.toggle('primary', b.dataset.v === previewMode));
+    overlay.querySelectorAll('[data-sd="zoom"]').forEach((b) => b.classList.toggle('on', b.dataset.v === zoomMode));
+    overlay.querySelectorAll('[data-sd="zoom"]').forEach((b) => b.classList.toggle('primary', b.dataset.v === zoomMode));
     updateStatus();
   }
 
@@ -302,11 +329,21 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
     const ratio = H / W;
     const maxH = wrap.clientHeight - 20;
     const maxW = wrap.clientWidth - 20;
-    let pw = maxW, ph = pw * ratio;
-    if (ph > maxH) { ph = maxH; pw = ph / ratio; }
+    let pw, ph;
+    if (zoomMode === 'fit') {
+      pw = maxW; ph = pw * ratio;
+      if (ph > maxH) { ph = maxH; pw = ph / ratio; }
+    } else {
+      const z = Number(zoomMode) / 100;
+      pw = W * z; ph = H * z;
+    }
     cv.style.width = pw + 'px'; cv.style.height = ph + 'px';
-    cv.style.borderRadius = active.deviceType === 'watch' ? (active.watchShape === 'round' ? '50%' : '38px') : '18px';
-    cv.style.border = active.deviceType === 'watch' ? '7px solid #1a1f28' : 'none';
+    const watchRound = active.deviceType === 'watch' && active.watchShape === 'round';
+    cv.style.borderRadius = active.deviceType === 'watch' ? (watchRound ? '50%' : '38px') : active.deviceType === 'tablet' ? '16px' : '26px';
+    cv.style.border = active.deviceType === 'watch'
+      ? '7px solid #1a1f28'
+      : active.deviceType === 'tablet' ? '10px solid #121820' : '8px solid #121820';
+    cv.style.boxShadow = '0 10px 44px rgba(0,0,0,.55), inset 0 0 0 1px rgba(255,255,255,.06)';
     cv.width = W; cv.height = H;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     compose(ctx);
@@ -388,9 +425,16 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
     else if (k === 'lock-import') { controlsEl.querySelector('[data-sd=lock-file]').click(); return; }
     else if (k === 'clear-wp') { active.wallpaper = ''; markDirty(); }
     else if (k === 'lock-clear') { active.lockWallpaper = ''; markDirty(); }
-    else if (k === 'type') {
+    else if (k === 'tab') {
+      sdTab = act.dataset.v;
+      controlsEl.querySelectorAll('[data-sdt]').forEach((el) => el.classList.toggle('on', el.dataset.sdt === sdTab));
+      controlsEl.querySelectorAll('[data-sd="tab"]').forEach((el) => el.classList.toggle('primary', el.dataset.v === sdTab));
+      return;
+    }
+    if (k === 'type') {
       const t = act.dataset.v;
       active.deviceType = t;
+      sdTab = 'controls';
       if (t === 'tablet') {
         active.canvasW = 2560; active.canvasH = 1600; active.lockAspect = false;
         active.dockCount = 6; active.cols = 6; active.rows = 4; active.navStyle = 'gesture';
@@ -487,6 +531,39 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
     }
     if (k === 'file') importWallpaper(e.target.files[0], 'wallpaper');
     if (k === 'lock-file') importWallpaper(e.target.files[0], 'lockWallpaper');
+  });
+
+  // 顶部预览/缩放切换（画布工具栏，不在左栏内）
+  overlay.addEventListener('click', (e) => {
+    const p = e.target.closest('[data-sd="preview"]');
+    if (p && !controlsEl.contains(p)) {
+      previewMode = p.dataset.v === 'lock' ? 'lock' : 'home';
+      overlay.querySelectorAll('[data-sd="preview"]').forEach((b) => b.classList.toggle('primary', b.dataset.v === previewMode));
+      draw(); return;
+    }
+    const z = e.target.closest('[data-sd="zoom"]');
+    if (z) {
+      zoomMode = z.dataset.v;
+      overlay.querySelectorAll('[data-sd="zoom"]').forEach((b) => b.classList.toggle('primary', b.dataset.v === zoomMode));
+      draw(); return;
+    }
+  });
+  // 画布点选：上/中/下区域跳到对应控件组
+  cv.addEventListener('click', (e) => {
+    const r = cv.getBoundingClientRect();
+    const y = (e.clientY - r.top) / Math.max(1, r.height);
+    let sec = y < 0.14 ? 'status' : y > 0.86 ? 'nav' : 'wallpaper';
+    if (active.deviceType === 'watch') sec = y > 0.8 ? 'nav' : 'watch';
+    else if (active.deviceType === 'tablet') sec = y > 0.88 ? 'dock' : y < 0.12 ? 'status' : 'wallpaper';
+    sdTab = sec === 'wallpaper' ? 'look' : 'controls';
+    controlsEl.querySelectorAll('[data-sdt]').forEach((el) => el.classList.toggle('on', el.dataset.sdt === sdTab));
+    controlsEl.querySelectorAll('[data-sd="tab"]').forEach((el) => el.classList.toggle('primary', el.dataset.v === sdTab));
+    const node = controlsEl.querySelector(`[data-sdsec="${sec}"]`);
+    if (node) {
+      node.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      node.classList.add('sd-flash');
+      setTimeout(() => node.classList.remove('sd-flash'), 1200);
+    }
   });
 
   // ---------- 键盘 ----------
