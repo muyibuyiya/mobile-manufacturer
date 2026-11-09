@@ -90,8 +90,10 @@ async function main() {
   console.log('stage canvas:', stageOk);
   // 完成发布会（量产机型必须发布后才能销售）
   await ev("document.querySelector('#stage-start').click()"); await sleep(300);
+  await ev("document.querySelector('[data-style]').click()"); await sleep(250);
   await ev("document.querySelector('[data-guess]').click()"); await sleep(250);
-  await ev("document.querySelector('[data-pitch]').click()"); await sleep(400);
+  await ev("document.querySelector('[data-pitch]').click()"); await sleep(250);
+  await ev("document.querySelector('[data-press]').click()"); await sleep(400);
   await ev("document.querySelector('#stage-done').click()"); await sleep(400);
   await shot('06-market');
 

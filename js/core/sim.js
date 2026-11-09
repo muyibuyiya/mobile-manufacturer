@@ -13,6 +13,8 @@ import { stepPolicies, policyMul, policyAdd, ensurePolicies, triggerPolicy } fro
 import { stepDivisions } from './divisions.js';
 import { overseasUpkeep, ensureOverseas } from './overseas.js';
 import { stepMarketing, channelTotal, ensureMarketing, stepChannels, channelSalesMul } from './marketing.js';
+import { stepStores, storeSalesMul } from './stores.js';
+import { stepCampaigns } from './campaigns.js';
 import { warrantyCost, warrantyRatingAdd, returnsCutOf, ensureWarranty } from './aftermarket.js';
 import { stepSubsidiaries, ensureSubsidiaries } from './capital.js';
 import { marketShare as layeredShare, utilityFor, marketPotential, salesScores } from './market.js';
@@ -180,6 +182,9 @@ export function tick(state) {
   const rent = state.offices.reduce((s, o) => s + o.rent, 0) + headcount(state) * 260 * country.labor * (0.5 + year / 2600);
   // 营销费 = 各媒体渠道投放之和（渠道细分版）
   const marketing = channelTotal(state);
+  // 门店维护费与区域营销活动（v1.9.0）
+  stepStores(state, report);
+  const campRes = stepCampaigns(state, report);
   // 子公司利润上缴
   stepChannels(state, report);
   const subIncome = stepSubsidiaries(state, report);
@@ -196,7 +201,7 @@ export function tick(state) {
   report.salaries = Math.round(salaries);
   report.overseas = Math.round(overseasCost);
   report.rent = Math.round(rent);
-  report.marketing = Math.round(marketing);
+  report.marketing = Math.round(marketing + (report.campaignSpend || 0));
   report.interest = Math.round(interest);
   report.channel = Math.round(channel);
   report.warranty = Math.round(warranty);
@@ -208,14 +213,14 @@ export function tick(state) {
   report.cogs = Math.round(report.cogs);
 
   const ebit = report.revenue + divSupply + subIncome - report.cogs - report.salaries - report.rent - report.marketing
-    - report.rnd - report.interest - report.channel - report.warranty - report.training - refunds - report.upkeep - report.overseas;
+    - report.rnd - report.interest - report.channel - report.warranty - report.training - refunds - report.upkeep - report.overseas - report.stores;
   report.tax = ebit > 0 ? Math.round(ebit * clamp(country.tax + policyAdd(state, 'taxAdd'), 0, 0.45)) : 0;
   report.ebit = Math.round(ebit);
   report.net = Math.round(ebit - report.tax);
   // 生产成本已在投产时扣除，现金流不再重复扣 COGS
   const cashNet = report.revenue + divSupply + subIncome - report.salaries - report.rent - report.marketing
     - report.rnd - report.interest - report.channel - report.warranty - report.tax - report.training - refunds
-    - report.upkeep - report.overseas;
+    - report.upkeep - report.overseas - report.stores;
   state.company.cash += cashNet;
   report.cashNet = Math.round(cashNet);
   report.subIncome = subIncome;
@@ -224,9 +229,9 @@ export function tick(state) {
 
   // 5. 品牌 / 口碑（媒体渠道细分投放）
   const mktRes = stepMarketing(state, report);
-  stepBrand(state, report, mktRes.brandGain);
-  if (mktRes.awareGain > 0) {
-    for (const m of state.markets) m.awareness = clamp(m.awareness + mktRes.awareGain * 0.12, 0, 100);
+  stepBrand(state, report, mktRes.brandGain + (campRes.brandGain || 0));
+  if (mktRes.awareGain > 0 || campRes.awareGain > 0) {
+    for (const m of state.markets) m.awareness = clamp(m.awareness + (mktRes.awareGain * 0.12) + (campRes.awareGain * 0.08), 0, 100);
   }
 
   // 6. 员工
@@ -397,6 +402,7 @@ function stepSales(state, report) {
   for (const market of state.markets) {
     const shareInfo = marketShare(state, market.id);
     const potential = marketPotential(state, market, demandMul);
+    const storeMul = storeSalesMul(state, market.id);
     let mUnits = 0, mRev = 0;
     // 竞品月销量：市场容量 × 份额，但受产能/库存约束（v1.5.0——缺货不再无脑成交）
     for (const rv of shareInfo.comp || []) {
@@ -433,7 +439,7 @@ function stepSales(state, report) {
     for (const op of shareInfo.own) {
       const model = op.model;
       const ratio = op.ratio || 0;
-      let demand = potential * ratio;
+      let demand = potential * ratio * storeMul;
       // 热度影响有效需求（heat 100 = 全额需求，heat 0 = 30% 基础需求）
       const heatMul = 0.3 + ((model.heat === undefined ? 100 : model.heat) / 100) * 0.7;
       demand *= heatMul;

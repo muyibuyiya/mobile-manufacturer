@@ -50,12 +50,16 @@ import {
 } from '../core/capital.js';
 import { computeReview, defectRate } from '../core/reviews.js';
 import { channelTotal, channelSummary, setChannel, SALES_CHANNELS, ensureSalesChannels, channelInvest, channelSalesMul } from '../core/marketing.js';
+import { MAX_STORES_PER_MARKET, storeSummary, openStore, upgradeStore, closeStore } from '../core/stores.js';
+import { CAMPAIGN_TYPES, startCampaign, cancelCampaign, campaignSummary, bestCampaignTip } from '../core/campaigns.js';
+import { themeSummary, selectTheme, themeBonus, themeScore } from '../core/themes.js';
 import { WARRANTY_POLICIES, warrantyOf, setWarrantyPolicy } from '../core/aftermarket.js';
 import { advanceGuide, skipGuide, restartGuide, GUIDE_STEPS, advanceHints, markHint } from '../core/guide.js';
 import { industryRating } from '../core/rating.js';
 import { fmtMoney, fmtNum, fmtUnit, fmtDate, clamp, esc, sum } from '../core/util.js';
 import { sfx, audioEnabled, setAudioEnabled, setAudioVolume, audioVolume, unlockAudio } from '../core/audio.js';
 import { renderDesigner } from './designer.js';
+import { composeScreenUI } from './screendesign.js';
 import { createOfficeScene, readQualityPref, writeQualityPref } from '../three/office.js';
 import { exportSave, importSave } from '../core/state.js';
 import { createStageScene } from '../three/stage.js';
@@ -719,6 +723,43 @@ export function renderGame(root, state, opts = {}) {
         render();
         break;
       }
+      case 'store-open': {
+        const r = openStore(state, ds.market);
+        opts.onToast?.(r.ok ? `已在${r.store ? '当地' : ''}开店` : r.msg, r.ok ? 'good' : 'bad');
+        if (r.ok) sfx('good');
+        render();
+        break;
+      }
+      case 'store-upgrade': {
+        const r = upgradeStore(state, ds.market, ds.store);
+        opts.onToast?.(r.ok ? '门店升级完成' : r.msg, r.ok ? 'good' : 'bad');
+        if (r.ok) sfx('good');
+        render();
+        break;
+      }
+      case 'store-close': {
+        const r = closeStore(state, ds.market, ds.store);
+        opts.onToast?.(r.ok ? `门店已关闭，回收 ${fmtMoney(r.refund)}` : r.msg, r.ok ? 'good' : 'bad');
+        render();
+        break;
+      }
+      case 'campaign-start': {
+        const read = (k) => document.querySelector(`[data-camp="${k}"]`)?.value;
+        const r = startCampaign(state, {
+          modelId: read('model'), marketId: read('market'), type: read('type'),
+          monthly: Number(read('budget')), months: Number(read('months')),
+        });
+        opts.onToast?.(r.ok ? '区域营销活动已启动' : r.msg, r.ok ? 'good' : 'bad');
+        if (r.ok) sfx('good');
+        render();
+        break;
+      }
+      case 'campaign-cancel': {
+        const r = cancelCampaign(state, ds.id);
+        opts.onToast?.(r.ok ? '活动已提前结束' : r.msg, r.ok ? 'warn' : 'bad');
+        render();
+        break;
+      }
       case 'auto-production': {
         const sug = suggestTargets(state);
         let changed = 0;
@@ -760,6 +801,14 @@ export function renderGame(root, state, opts = {}) {
         render();
         break;
       }
+      case 'theme-select': {
+        const r = selectTheme(state, ds.id);
+        opts.onToast?.(r.ok ? `主题已切换：${r.design.name || '未命名'}（评分 ${r.score}）` : r.msg, r.ok ? 'good' : 'bad');
+        if (r.ok) sfx('good');
+        render();
+        break;
+      }
+      case 'theme-preview': openThemePreview(ds.id); break;
       case 'ch-set': {
         const cur = state.marketing?.channels?.[ds.id] || 0;
         const nv = Math.max(0, cur + (ds.v === '+' ? 1 : -1) * 50000);
@@ -1803,6 +1852,63 @@ export function renderGame(root, state, opts = {}) {
         </div>
         <div class="tiny dim" style="margin-top:6px">关系 &lt;22 有下架/曝光下滑风险，&gt;78 渠道会安排推广位（品牌 +）。投入费用随关系升高而变贵。</div>
       </div>
+      ${(() => {
+        const stores = storeSummary(state);
+        const totalStores = stores.reduce((a, s) => a + s.count, 0);
+        const totalUpkeep = stores.reduce((a, s) => a + s.upkeep, 0);
+        return `<div class="card" style="margin-bottom:12px">
+          <div class="card-title">全球门店网络 <span class="right">${totalStores} 家 · 月维护 ${fmtMoney(totalUpkeep)} · 本地曝光/转化加成</span></div>
+          <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(255px,1fr));gap:9px">
+            ${stores.map((s) => `<div class="org-exec filled">
+              <div class="between"><b class="tiny">${s.market.name}</b><span class="chip ${s.count ? 'good' : ''}">${s.count}/${MAX_STORES_PER_MARKET} 家</span></div>
+              <div class="tiny dim" style="margin:4px 0 5px">销量 ×${s.salesMul.toFixed(2)} · 客流 ${s.traffic.toFixed(1)} · 维护 ${fmtMoney(s.upkeep)}/月</div>
+              <div class="row" style="gap:4px;flex-wrap:wrap">
+                ${s.list.map((st) => `<span class="chip" style="gap:4px">${st.levelName} Lv${st.level}
+                  ${st.upgradeCost ? `<button class="btn tiny" data-act="store-upgrade" data-market="${s.market.id}" data-store="${st.id}" ${state.company.cash < st.upgradeCost ? 'disabled' : ''} title="升级 ${fmtMoney(st.upgradeCost)}">↑</button>` : ''}
+                  <button class="btn tiny ghost" data-act="store-close" data-market="${s.market.id}" data-store="${st.id}" title="关闭并回收 30%">✕</button>
+                </span>`).join('')}
+              </div>
+              <button class="btn small" style="margin-top:6px;width:100%" data-act="store-open" data-market="${s.market.id}" ${!s.canOpen ? 'disabled' : ''}>${s.count >= MAX_STORES_PER_MARKET ? '已达上限' : `开店 ${fmtMoney(s.openCost)}`}</button>
+            </div>`).join('')}
+          </div>
+          <div class="tiny dim" style="margin-top:6px">门店提升所在市场的销量与本地曝光；升级会增加客流/转化，但维护费更高。关店回收 30% 累计投入。</div>
+        </div>`;
+      })()}
+      ${(() => {
+        const list = campaignSummary(state);
+        const tip = bestCampaignTip(state, 'cn');
+        const saleModels = state.models.filter((m) => m.status === 'production' && m.released !== false);
+        return `<div class="card" style="margin-bottom:12px">
+          <div class="card-title">区域营销活动 <span class="right">${tip.trendIcon} 当前趋势：${tip.trendName} ×1.28 · 还剩 ${tip.monthsLeft} 月</span></div>
+          <div class="tiny dim" style="margin-bottom:7px">${tip.tip} 活动按机型 × 市场投放，月度扣费；与趋势一致效果更好。</div>
+          <div class="row" style="gap:5px;flex-wrap:wrap;align-items:center">
+            <select data-camp="model" style="min-width:150px">${saleModels.map((m) => `<option value="${m.id}">${esc(m.name)}</option>`).join('') || '<option value="">暂无在售机型</option>'}</select>
+            <select data-camp="market">${state.markets.map((m) => `<option value="${m.id}">${m.name.replace('市场','')}</option>`).join('')}</select>
+            <select data-camp="type">${CAMPAIGN_TYPES.map((t) => `<option value="${t.id}">${t.icon} ${t.name}</option>`).join('')}</select>
+            <select data-camp="budget">${[500000, 1000000, 2000000, 5000000].map((v) => `<option value="${v}">${fmtMoney(v)}/月</option>`).join('')}</select>
+            <select data-camp="months">${[3, 6, 12].map((v) => `<option value="${v}">${v} 个月</option>`).join('')}</select>
+            <button class="btn small primary" data-act="campaign-start" ${saleModels.length ? '' : 'disabled'}>启动活动</button>
+          </div>
+          ${list.length ? `<div class="list" style="margin-top:8px">${list.map((c) => `<div class="list-item">
+            <div style="flex:1;min-width:0"><b class="tiny">${c.typeIcon} ${c.typeName} · ${esc(c.modelName)}</b>
+              <div class="tiny dim">${c.marketName} · ${fmtMoney(c.monthly)}/月 · 剩余 ${c.monthsLeft}/${c.monthsTotal} 月 · 匹配 ${c.fit.toFixed(2)}${c.trend ? ' · 趋势加成' : ''}</div>
+            </div>
+            <button class="btn tiny ghost" data-act="campaign-cancel" data-id="${c.id}">提前结束</button>
+          </div>`).join('')}</div>` : '<div class="tiny dim" style="margin-top:7px">暂无进行中的活动。</div>'}
+        </div>`;
+      })()}
+      ${(state.socialFeed || []).length ? `<div class="card" style="margin-bottom:12px">
+        <div class="card-title">科技圈 <span class="right">发布会/奖项后的舆论</span></div>
+        <div class="list">
+          ${state.socialFeed.slice(0, 6).map((p) => `<div class="list-item">
+            <div style="flex:1;min-width:0">
+              <div class="between"><b class="tiny">${esc(p.author || '科技前线')}</b><span class="tiny dim">${p.time || ''}</span></div>
+              <div class="tiny" style="margin:2px 0">${esc(p.text)}</div>
+              <div class="tiny dim">❤ ${fmtNum(p.likes || 0)} · 💬 ${fmtNum(p.comments || 0)}${p.hot ? ' · <span class="good">热议</span>' : ''}</div>
+            </div>
+          </div>`).join('')}
+        </div>
+      </div>` : ''}
       ${state.hype && state.hype.months > 0 ? `<div class="card" style="margin-bottom:12px;border-color:rgba(74,163,255,.4)">
         <div class="between"><b>新品热度期</b><span class="chip accent">全市场需求 +${Math.round((state.hype.mul - 1) * 100)}%</span></div>
         <div class="tiny dim" style="margin-top:5px">发布会带来的媒体关注还会持续 ${state.hype.months} 个月。</div>
@@ -1946,6 +2052,27 @@ export function renderGame(root, state, opts = {}) {
         </div>
         <div class="tiny dim" style="margin-top:5px">流行度 ≥ 8 才有厂商愿意签约授权；授权收入 = 基础授权费 + 逐厂商合约；自研 OS 机型的销量同时带来应用商店 15% 分成。</div>
       </div>`;
+    const themeCard = (() => {
+      const list = themeSummary(state);
+      const tb2 = themeBonus(state);
+      return `<div class="card" style="margin-bottom:12px">
+        <div class="card-title">OS 主题商店 <span class="right">主题评分影响流行度/授权/主题收入</span></div>
+        ${list.length ? `<div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px">
+          ${list.map((t) => `<div class="org-exec filled" style="border-color:${t.active ? 'rgba(74,163,255,.65)' : 'var(--line-2)'}">
+            <div class="row" style="gap:8px;align-items:flex-start">
+              ${t.design.wallpaper ? `<img src="${t.design.wallpaper}" style="width:48px;height:86px;object-fit:cover;border-radius:5px" />` : `<div style="width:48px;height:86px;border-radius:5px;border:1px dashed var(--line-2);display:flex;align-items:center;justify-content:center" class="tiny dim">无图</div>`}
+              <div style="flex:1;min-width:0">
+                <div class="between"><b class="tiny">${esc(t.name)}</b><span class="chip ${t.score >= 75 ? 'good' : t.score >= 55 ? '' : 'warn'}">${t.score} 分</span></div>
+                <div class="tiny dim" style="margin:3px 0 5px">${t.hasWallpaper ? '桌面壁纸' : '纯色桌面'} · ${t.hasLock ? '锁屏壁纸' : '纯色锁屏'}</div>
+                <button class="btn tiny ${t.active ? 'ghost' : 'primary'}" data-act="theme-select" data-id="${t.uid}" ${t.active ? 'disabled' : ''}>${t.active ? '使用中' : '设为 OS 主题'}</button>
+                <button class="btn tiny" data-act="theme-preview" data-id="${t.uid}">预览</button>
+              </div>
+            </div>
+          </div>`).join('')}
+        </div>` : '<div class="tiny dim">还没有屏幕设计方案。去「屏幕设计」做一套桌面/锁屏，再回来设为 OS 主题。</div>'}
+        <div class="tiny dim" style="margin-top:6px">当前主题评分 ${tb2.score} · 主题收入 +${fmtMoney(os.themeRevenue || 0)}/月 · 流行度增速 +${(tb2.popGrowth * 100).toFixed(1)}%</div>
+      </div>`;
+    })();
     const techCard = `<div class="card" style="margin-bottom:12px">
         <div class="card-title">系统科技树 <span class="right">系统开发部专属技术路线 · 软件部人力驱动研发</span></div>
         <div class="tiny dim" style="margin-bottom:8px">当前加成：评分 +${tb.scoreBonus} · 生态 +${tb.appsBonus} · 流行度上限 +${tb.popCap} · 流行度增速 +${tb.popGrowth}% · 授权收入 +${tb.licRate}%</div>
@@ -2022,6 +2149,7 @@ export function renderGame(root, state, opts = {}) {
         </div>
       </div>
       ${osCard}
+      ${themeCard}
       ${techCard}`;
   }
 
@@ -2239,7 +2367,8 @@ export function renderGame(root, state, opts = {}) {
             <div class="line"><span>渠道与分成</span><b class="mono">-${fmtMoney(r.channel || 0)}</b></div>
             <div class="line"><span>工资</span><b class="mono">-${fmtMoney(r.salaries)}</b></div>
             <div class="line"><span>租金与办公</span><b class="mono">-${fmtMoney(r.rent)}</b></div>
-            <div class="line"><span>市场营销</span><b class="mono">-${fmtMoney(r.marketing)}</b></div>
+            <div class="line"><span>门店维护</span><b class="mono">-${fmtMoney(r.stores || 0)}</b></div>
+            <div class="line"><span>市场营销（含区域活动）</span><b class="mono">-${fmtMoney(r.marketing)}</b></div>
             <div class="line"><span>研发投入</span><b class="mono">-${fmtMoney(r.rnd)}</b></div>
             <div class="line"><span>员工培训</span><b class="mono">-${fmtMoney(r.training || 0)}</b></div>
             <div class="line"><span>售后与物流</span><b class="mono">-${fmtMoney(r.warranty || 0)}</b></div>
@@ -2775,6 +2904,7 @@ export function renderGame(root, state, opts = {}) {
         <div class="line"><span>渠道</span><b>-${fmtMoney(r.channel || 0)}</b></div>
         <div class="line"><span>工资</span><b>-${fmtMoney(r.salaries)}</b></div>
         <div class="line"><span>营销</span><b>-${fmtMoney(r.marketing)}</b></div>
+        <div class="line"><span>门店维护</span><b>-${fmtMoney(r.stores || 0)}</b></div>
         <div class="line"><span>研发</span><b>-${fmtMoney(r.rnd)}</b></div>
         <div class="line"><span>培训</span><b>-${fmtMoney(r.training || 0)}</b></div>
         <div class="line"><span>售后与退货</span><b>-${fmtMoney((r.warranty || 0) + (r.refunds || 0))}</b></div>
@@ -2993,6 +3123,31 @@ export function renderGame(root, state, opts = {}) {
     let phase = 'select';
     let pricePick = null;
     let pitchPick = null;
+    let stylePick = null;
+    let pressPick = null;
+    const styles = [
+      { id: 'spec', name: '参数怪兽', icon: '⚡', desc: '跑分、散热、性能曲线，硬核参数流', fit: ['flagship', 'game', 'tech'] },
+      { id: 'story', name: '情感故事', icon: '✦', desc: '设计理念、生活场景、品牌温度', fit: ['flagship', 'premium', 'photo'] },
+      { id: 'eco', name: '环保极简', icon: '🌿', desc: '材料、续航、可持续，克制表达', fit: ['main', 'budget'] },
+      { id: 'value', name: '性价比', icon: '💰', desc: '价格、配置、同档对比，直接算账', fit: ['main', 'budget'] },
+    ];
+    const pickStyleFit = (style) => {
+      const lineup = lead.lineup || 'main';
+      if (style.fit.includes(lineup)) return true;
+      if (style.id === 'spec') return d.perf >= Math.max(d.camera, d.battery, d.designScore);
+      if (style.id === 'story') return d.designScore >= Math.max(d.perf, d.camera, d.battery);
+      if (style.id === 'eco') return d.battery >= Math.max(d.perf, d.camera, d.designScore);
+      if (style.id === 'value') return lineup === 'main' || lineup === 'budget';
+      return false;
+    };
+    const press = {
+      q: `记者追问：${lead.name} 把${bestDim.name}作为主打，这个提升真的值这个价吗？`,
+      opts: [
+        { id: 'honest', label: '如实讲取舍：提升在哪、哪里做了妥协', brand: 1.2, heat: 0.2 },
+        { id: 'hype', label: '放大卖点：这是同档最强，不接受反驳', brand: -0.4, heat: 1.6 },
+        { id: 'value', label: '强调价格与体验：先体验再评价', brand: 0.5, heat: 0.5 },
+      ],
+    };
     const body = `<div class="stage-3d" id="stage-scene"></div>
       <div id="stage-panel" class="stage-panel"></div>`;
     const { mask, close } = modalShell('全球新品发布会',
@@ -3024,6 +3179,13 @@ export function renderGame(root, state, opts = {}) {
         <button class="btn primary" id="stage-start" ${state.company.cash < cost ? 'disabled' : ''}>开始发布会（${fmtMoney(cost)}）</button>`;
     };
 
+    const renderStyle = () => {
+      phase = 'style';
+      panel.innerHTML = `<div class="stage-question">这次发布会用什么叙事风格？风格与产品定位匹配会放大现场效果</div>
+        <div class="stage-choices">${styles.map((s) => `<button class="btn stage-choice" data-style="${s.id}">${s.icon}<div>${s.name}</div><div class="tiny dim">${s.desc}</div></button>`).join('')}</div>
+        <div class="tiny dim">参数流适合性能/旗舰，故事流适合设计与影像，性价比适合走量机型。</div>`;
+    };
+
     const renderGuess = () => {
       phase = 'guess';
       panel.innerHTML = `<div class="stage-question">市场心理价位是多少？以主推机型 <b>${esc(lead.name)}</b> 为准，选一个最接近消费者预期的定价</div>
@@ -3038,10 +3200,20 @@ export function renderGame(root, state, opts = {}) {
         <div class="tiny dim">与主推机型最强项一致可获得额外现场加成；错位会被媒体追问。</div>`;
     };
 
+    const renderPress = () => {
+      phase = 'press';
+      panel.innerHTML = `<div class="stage-question">${press.q}</div>
+        <div class="stage-choices">${press.opts.map((o) => `<button class="btn stage-choice" data-press="${o.id}">${o.label}</button>`).join('')}</div>
+        <div class="tiny dim">发布会后的第一波舆论，会影响品牌与热度。</div>`;
+    };
+
     const finish = () => {
       const pick = pricePick || candidates[0];
       const priceHit = !!pick.correct;
       const pitchHit = pitchPick === bestDim.id;
+      const style = styles.find((s) => s.id === stylePick) || styles[0];
+      const styleHit = pickStyleFit(style);
+      const pressOpt = press.opts.find((o) => o.id === pressPick) || press.opts[0];
       const cost = costOf();
       if (state.company.cash < cost) { opts.onToast?.('现金不足，无法完成发布会结算', 'bad'); return; }
       phase = 'result';
@@ -3050,46 +3222,63 @@ export function renderGame(root, state, opts = {}) {
       const priceBonus = priceHit ? 0.09 : -0.02;
       const scoreBonus = clamp((avg - 55) / 100 * 0.12, -0.04, 0.08);
       const pitchBonus = pitchHit ? 0.03 : -0.01;
-      const mul = +(1.16 + priceBonus + scoreBonus + pitchBonus).toFixed(2);
+      const styleBonus = styleHit ? 0.03 : -0.015;
+      const pressBonus = clamp(pressOpt.heat * 0.012 + pressOpt.brand * 0.006, -0.02, 0.025);
+      const mul = +(1.16 + priceBonus + scoreBonus + pitchBonus + styleBonus + pressBonus).toFixed(2);
       state.company.cash -= cost;
       state.hype = { months: 3, mul };
       const released = pending.filter((m) => selected.has(m.id));
-      const perHeat = (priceHit ? 18 : 8) + (pitchHit ? 6 : 0);
+      const perHeat = (priceHit ? 18 : 8) + (pitchHit ? 6 : 0) + (styleHit ? 4 : 0) + Math.round(pressOpt.heat * 3);
       for (const m of released) {
         m.released = true;
         m.stageAt = { ...state.date };
         m.heat = clamp((m.heat === undefined ? 55 : m.heat) + perHeat, 0, 120);
       }
-      const brandGain = 3.2 + (priceHit ? 1.2 : 0) + (pitchHit ? 0.8 : 0)
+      const brandGain = 3.2 + (priceHit ? 1.2 : 0) + (pitchHit ? 0.8 : 0) + (styleHit ? 0.5 : 0) + pressOpt.brand
         + clamp((avg - 60) / 20, 0, 1.2) + Math.max(0, released.length - 1) * 0.4;
       state.company.brand = clamp(state.company.brand + brandGain, 0, 100);
       const names = released.map((m) => m.name).join('、');
-      addLog(state, 'mkt', `举办全球新品发布会，发布 ${names}；主推 ${lead.name}，定价 ${fmtMoney(pick.v)}（${priceHit ? '精准命中' : '偏离预期'}），需求系数 ×${mul}，品牌 +${brandGain.toFixed(1)}。`);
+      addLog(state, 'mkt', `举办全球新品发布会，发布 ${names}；主推 ${lead.name}，定价 ${fmtMoney(pick.v)}（${priceHit ? '精准命中' : '偏离预期'}），${style.name}${styleHit ? '（风格匹配）' : '（风格错位）'}，问答「${pressOpt.label}」，需求系数 ×${mul}，品牌 +${brandGain.toFixed(1)}。`);
       state.news = state.news || [];
       state.news.unshift({
         time: `${state.date.year}/${state.date.month + 1}`, type: 'group',
         title: `${names} 发布会${priceHit ? '定价精准' : '反响平淡'}`,
-        text: `发布 ${released.length} 款 · 现场评分 ${Math.round(avg)} · 3 个月需求系数 ×${mul} · 品牌 +${brandGain.toFixed(1)}。`, read: false,
+        text: `发布 ${released.length} 款 · ${style.name} · 现场评分 ${Math.round(avg)} · 3 个月需求系数 ×${mul} · 品牌 +${brandGain.toFixed(1)}。`, read: false,
       });
       if (state.news.length > 100) state.news.length = 100;
+      // 科技圈动态：发布会后的第一波舆论
+      state.socialFeed = state.socialFeed || [];
+      state.socialFeed.unshift({
+        id: 'sp_' + Date.now().toString(36),
+        time: `${state.date.year}/${state.date.month + 1}`,
+        author: '科技前线',
+        text: `${names} 正式发布：${style.name}，主打${bestDim.name}。${priceHit ? '定价被认为是精准卡位。' : '定价引发讨论。'}${pressOpt.id === 'hype' ? '现场火药味十足。' : ''}`,
+        likes: Math.round(120 + Math.random() * 500 + avg * 6),
+        comments: Math.round(18 + Math.random() * 90),
+        hot: priceHit && pitchHit,
+      });
+      if (state.socialFeed.length > 20) state.socialFeed.length = 20;
       const reaction = avg >= 78 ? '全场沸腾，媒体给出极高评价'
         : avg >= 66 ? '现场反响热烈'
           : avg >= 55 ? '反响平稳，亮点有限' : '现场略显冷淡';
-      panel.innerHTML = `<div class="stage-result ${priceHit && pitchHit ? '' : 'warn'}">
+      panel.innerHTML = `<div class="stage-result ${priceHit && pitchHit && styleHit ? '' : 'warn'}">
           <div class="stage-result-head">
-            <b>${priceHit && pitchHit ? '发布会大获成功' : priceHit || pitchHit ? '发布会中规中矩' : '发布会反响偏冷'}</b>
+            <b>${priceHit && pitchHit && styleHit ? '发布会大获成功' : priceHit || pitchHit ? '发布会中规中矩' : '发布会反响偏冷'}</b>
             <span class="chip ${priceHit ? 'good' : 'bad'}">${priceHit ? '定价精准' : '定价偏离'}</span>
             <span class="chip ${pitchHit ? 'good' : 'bad'}">${pitchHit ? '卖点命中' : '卖点错位'}</span>
+            <span class="chip ${styleHit ? 'good' : 'bad'}">${style.name}${styleHit ? '匹配' : '错位'}</span>
           </div>
           <div class="stage-metrics">
             <div class="stage-metric"><span>现场评分</span><b>${Math.round(avg)}</b><i>${reaction}</i></div>
             <div class="stage-metric"><span>需求系数</span><b>×${mul}</b><i>3 个月</i></div>
-            <div class="stage-metric"><span>品牌加成</span><b>+${brandGain.toFixed(1)}</b><i>${priceHit ? '定价加分' : '定价扣分'}</i></div>
+            <div class="stage-metric"><span>品牌加成</span><b>+${brandGain.toFixed(1)}</b><i>${pressOpt.id === 'honest' ? '坦诚加分' : pressOpt.id === 'hype' ? '争议热度' : '价格沟通'}</i></div>
             <div class="stage-metric"><span>发布会费用</span><b>${fmtMoney(cost)}</b><i>${released.length} 款同发</i></div>
           </div>
           <div class="stage-result-lines">
             <div><span class="dim">主推</span><b>${esc(lead.name)}</b> · 选择 ¥${fmtNum(pick.v)} · 市场心理价 ¥${fmtNum(suggested)}</div>
+            <div><span class="dim">叙事风格</span>${style.icon} ${style.name} · ${styleHit ? '与产品定位匹配' : '与产品定位错位'}</div>
             <div><span class="dim">媒体关注</span>${bestDim.icon} ${bestDim.name}（${Math.round(bestDim.v)} 分）· 你的选择：${dims.find((x) => x.id === pitchPick)?.name || '—'}</div>
+            <div><span class="dim">记者问答</span>${pressOpt.label}</div>
             <div><span class="dim">发布机型</span>${esc(names)}</div>
             <div><span class="dim">每款热度</span>+${perHeat}（上限 120）· 发布前基础热度约 55</div>
           </div>
@@ -3115,7 +3304,12 @@ export function renderGame(root, state, opts = {}) {
       if (e.target.closest('#stage-goto')) { done(); tab = 'product'; render(); return; }
       if (phase === 'select' && e.target.closest('#stage-start')) {
         if (state.company.cash < costOf()) { opts.onToast?.('资金不足，无法举办发布会', 'bad'); return; }
-        renderGuess();
+        renderStyle();
+        return;
+      }
+      if (phase === 'style') {
+        const s = e.target.closest('[data-style]');
+        if (s) { stylePick = s.dataset.style; renderGuess(); }
         return;
       }
       if (phase === 'guess') {
@@ -3125,7 +3319,12 @@ export function renderGame(root, state, opts = {}) {
       }
       if (phase === 'pitch') {
         const p = e.target.closest('[data-pitch]');
-        if (p) { pitchPick = p.dataset.pitch; finish(); }
+        if (p) { pitchPick = p.dataset.pitch; renderPress(); }
+        return;
+      }
+      if (phase === 'press') {
+        const p = e.target.closest('[data-press]');
+        if (p) { pressPick = p.dataset.press; finish(); }
         return;
       }
     });
@@ -3140,6 +3339,39 @@ export function renderGame(root, state, opts = {}) {
   // 收购谈判弹窗：多轮出价，显示对方要价/情绪/回合
   // 研发立项弹窗：命名 + 规格设计（芯片核心构成/GPU、传感器底大小/像素、OS 底层、面板类型/分辨率）
   // ---------- 屏幕设计 / 宣传图 / 通知与新闻 / OS 发版 ----------
+  function openThemePreview(uid) {
+    const d = (state.uiDesigns || []).find((x) => x.uid === uid);
+    if (!d) { opts.onToast?.('找不到该主题', 'bad'); return; }
+    const body = `<div class="row" style="gap:6px;margin-bottom:8px">
+        <button class="btn small primary" data-preview-mode="home">桌面</button>
+        <button class="btn small ghost" data-preview-mode="lock">锁屏</button>
+        <span class="tiny dim" style="margin-left:auto">主题评分 ${themeScore(d)} · 静态预览</span>
+      </div>
+      <div style="display:flex;justify-content:center"><canvas id="theme-preview-cv" style="border-radius:16px;box-shadow:0 8px 30px rgba(0,0,0,.5)"></canvas></div>`;
+    const { mask } = modalShell('OS 主题预览', esc(d.name || '未命名主题'), body, '');
+    const cv = mask.querySelector('#theme-preview-cv');
+    const ctx = cv.getContext('2d');
+    const W = 300, H = 650;
+    cv.width = W; cv.height = H;
+    cv.style.width = '270px'; cv.style.height = '585px';
+    let mode = 'home';
+    let tries = 0;
+    const draw = () => {
+      const ok = composeScreenUI(ctx, W, H, d, mode);
+      if (!ok && tries++ < 5) setTimeout(() => { if (document.body.contains(cv)) draw(); }, 220);
+    };
+    mask.querySelectorAll('[data-preview-mode]').forEach((b) => {
+      b.addEventListener('click', () => {
+        mode = b.dataset.previewMode;
+        mask.querySelectorAll('[data-preview-mode]').forEach((x) => {
+          x.className = `btn small ${x === b ? 'primary' : 'ghost'}`;
+        });
+        draw();
+      });
+    });
+    draw();
+  }
+
   let screenDesignUI = null;
   function openScreenDesignUI() {
     if (screenDesignUI) return;

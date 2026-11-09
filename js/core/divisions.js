@@ -7,6 +7,7 @@ import { CPUS, CAMERAS, SCREENS } from '../data/parts.js';
 import { CPU_CORES, GPU_ARCHS, OS_BASES, PANEL_VENDORS, RES_TIERS, LENS_TYPES, formatFactor, lensThicknessMm } from '../data/hardware.js';
 import { staffPower as staffPowerRef, addLog } from './state.js';
 import { OS_TECH_MAP, OS_ROUTE_MAP } from '../data/os-tech.js';
+import { themeBonus, themeRevenue } from './themes.js';
 
 export const DIVISION_DEFS = {
   optics: {
@@ -538,16 +539,21 @@ export function stepDivisions(state, report) {
     // 应用商店分成（v1.5.0）：装机量 × 应用生态加成，按 15% 抽成
     os.storeRevenue = Math.round((install * 30 + os.totalInstall * 0.01) * (1 + tb.appsBonus / 100) * 0.15 * era);
     if (os.storeRevenue > 0) supply += os.storeRevenue;
-    const growth = (install / 40000 + (osdLv - 1) * 0.05 + (os.licensed ? 0.25 : 0)) * (1 + tb.popGrowth / 100);
+    // OS 主题商店：屏幕设计方案的评分影响流行度、授权与主题收入
+    const theme = themeBonus(state);
+    os.themeScore = theme.score;
+    os.themeRevenue = themeRevenue(state, install, era);
+    if (os.themeRevenue > 0) supply += os.themeRevenue;
+    const growth = (install / 40000 + (osdLv - 1) * 0.05 + (os.licensed ? 0.25 : 0) + theme.popGrowth) * (1 + tb.popGrowth / 100);
     const decay = os.pop * 0.012;
     os.pop = clamp(os.pop + growth - decay, 0, 100);
     // 流行度封顶受 OS 版本 / 部门等级 / 系统科技影响
-    const cap = 12 + os.version * 14 + osdLv * 6 + tb.popCap;
+    const cap = 12 + os.version * 14 + osdLv * 6 + tb.popCap + theme.popCap;
     if (os.pop > cap) os.pop = clamp(os.pop - (os.pop - cap) * 0.3, 0, 100);
     // 授权收入：流行度越高，越多家厂商付费（基础授权 + 逐厂商合约）
     if (os.licensed && os.pop > 8) {
-      const vendorIncome = os.licensees.reduce((s2, l) => s2 + os.pop * 0.12e6 * (l.rate || 0.1) * (1 + osTechBonuses(state).licRate / 100) * era, 0);
-      const lic = Math.round(os.pop * 1e6 * (0.55 + osdLv * 0.14) * (1 + osTechBonuses(state).licRate / 100) * era + vendorIncome);
+      const vendorIncome = os.licensees.reduce((s2, l) => s2 + os.pop * 0.12e6 * (l.rate || 0.1) * (1 + osTechBonuses(state).licRate / 100 + theme.licRate) * era, 0);
+      const lic = Math.round(os.pop * 1e6 * (0.55 + osdLv * 0.14) * (1 + osTechBonuses(state).licRate / 100 + theme.licRate) * era + vendorIncome);
       supply += lic;
       os.licIncome = lic;
     } else {
