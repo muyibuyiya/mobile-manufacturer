@@ -1,6 +1,6 @@
 // 手机设计器：参数化 2D 六视图 + three.js 3D 模型 + 合理性校验
 import * as THREE from '../../vendor/three.module.js';
-import { derive, validate, bomCost, screenSize, SCREEN_ASPECTS, defaultDesign, maxScreenInch, cameraModuleRect, lensSpecs, ensureLenses, ensureBranding, ensurePackaging, packageScore, PACKAGE_MATERIALS, speakerRowSpec, PORT_OPENINGS, layoutPos, makeLens, arrangeLenses } from '../core/design.js';
+import { derive, validate, bomCost, screenSize, SCREEN_ASPECTS, defaultDesign, maxScreenInch, cameraModuleRect, lensSpecs, ensureLenses, ensureBranding, ensurePackaging, ensureDeviceExtras, packageScore, PACKAGE_MATERIALS, speakerRowSpec, PORT_OPENINGS, layoutPos, makeLens, arrangeLenses } from '../core/design.js';
 import { CPUS, RAMS, STORAGES, SCREENS, CAMERAS, BATTERIES, SYSTEMS, EXTRAS, MATERIALS, FINISHES, CHARGERS, BODY_COLORS } from '../data/parts.js';
 import { PHONE_TEMPLATES, PHONE_TPL_MAP, tplCaps } from '../data/templates.js';
 import { IMAGE_SENSORS, LENS_TYPES, DECO_SHAPES, PANEL_VENDORS, RES_TIERS, lensTypeById, sensorById, lensRadiusMm } from '../data/hardware.js';
@@ -574,7 +574,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
         </select>
       </label>
       <div class="tiny dim" style="margin-top:4px">屏幕下方留出 Home 键区，屏占比相应收窄</div>`) : '')
-      + section('fold', '折叠形态', `
+      + (isWatch || isTablet ? '' : section('fold', '折叠形态', `
       <label class="field"><span>结构</span>
         <select data-k="body.fold">
           <option value="none" ${body.fold === 'none' ? 'selected' : ''}>直板</option>
@@ -629,7 +629,51 @@ export function renderDesigner(container, state, model, hooks = {}) {
         </select>
       </label>` : ''}`;
       })()})
-      ` : ''}`)
+      ` : ''}`))
+      + (isTablet ? section('tablet', '平板专属', `
+      <div class="tiny dim" style="margin:2px 0 8px">平板机身支持分屏、支架与手写笔；屏幕设计页可选平板分屏 UI。</div>
+      <label class="opt ${d.tablet.stand ? 'on' : ''}" style="display:flex;gap:6px;align-items:center;padding:6px 8px;margin-bottom:6px">
+        <input type="checkbox" data-k="tablet.stand" data-bool="1" ${d.tablet.stand ? 'checked' : ''} style="width:auto" />
+        <span>背部一体式支架（可折叠支撑）</span>
+      </label>
+      <label class="opt ${d.tablet.keyboard ? 'on' : ''}" style="display:flex;gap:6px;align-items:center;padding:6px 8px;margin-bottom:6px">
+        <input type="checkbox" data-k="tablet.keyboard" data-bool="1" ${d.tablet.keyboard ? 'checked' : ''} style="width:auto" />
+        <span>磁吸键盘触点（底部 3 pin）</span>
+      </label>
+      <label class="opt ${d.tablet.stylus ? 'on' : ''}" style="display:flex;gap:6px;align-items:center;padding:6px 8px;margin-bottom:6px">
+        <input type="checkbox" data-k="tablet.stylus" data-bool="1" ${d.tablet.stylus ? 'checked' : ''} style="width:auto" />
+        <span>手写笔磁吸（顶部侧边）</span>
+      </label>
+      <label class="opt ${d.tablet.cellular ? 'on' : ''}" style="display:flex;gap:6px;align-items:center;padding:6px 8px;margin-bottom:6px">
+        <input type="checkbox" data-k="tablet.cellular" data-bool="1" ${d.tablet.cellular ? 'checked' : ''} style="width:auto" />
+        <span>蜂窝版（侧边天线注塑条）</span>
+      </label>`) : '')
+      + (isWatch ? section('watch', '手表专属', `
+      <div class="tiny dim" style="margin:2px 0 8px">仅设计表体（屏幕 + 表壳），表带不在设计范围。</div>
+      <label class="field"><span>表体形状</span>
+        <select data-k="watch.shape">
+          <option value="round" ${d.watch.shape === 'round' ? 'selected' : ''}>圆形表盘</option>
+          <option value="square" ${d.watch.shape === 'square' ? 'selected' : ''}>方形表盘</option>
+        </select>
+      </label>
+      <label class="field"><span>表冠位置</span>
+        <select data-k="watch.crown">
+          <option value="right" ${d.watch.crown === 'right' ? 'selected' : ''}>右侧</option>
+          <option value="left" ${d.watch.crown === 'left' ? 'selected' : ''}>左侧</option>
+          <option value="none" ${d.watch.crown === 'none' ? 'selected' : ''}>无表冠</option>
+        </select>
+      </label>
+      <label class="opt ${d.watch.button ? 'on' : ''}" style="display:flex;gap:6px;align-items:center;padding:6px 8px;margin-bottom:6px">
+        <input type="checkbox" data-k="watch.button" data-bool="1" ${d.watch.button ? 'checked' : ''} style="width:auto" />
+        <span>侧边功能键（表冠下方）</span>
+      </label>
+      <label class="field"><span>表圈材质</span>
+        <select data-k="watch.bezel">
+          <option value="metal" ${d.watch.bezel === 'metal' ? 'selected' : ''}>金属（拉丝）</option>
+          <option value="ceramic" ${d.watch.bezel === 'ceramic' ? 'selected' : ''}>陶瓷（镜面）</option>
+          <option value="glass" ${d.watch.bezel === 'glass' ? 'selected' : ''}>玻璃（2.5D）</option>
+        </select>
+      </label>`) : '')
       + section('backwin', '背部智窗', (() => {
         const bw = d.backWindow || { on: false, inch: 1.8, cx: 0, cy: -18 };
         return `
@@ -2265,6 +2309,79 @@ export function renderDesigner(container, state, model, hooks = {}) {
     return m;
   }
 
+  // 平板/手表专属机身硬件（3D）：表冠、侧键、表圈、支架、键盘触点、手写笔、天线
+  function buildDeviceHardware(g, d, b, W, L, T, FACE) {
+    const dt = d.deviceType || (String(d.template).startsWith('watch') ? 'watch' : d.template === 'tablet' ? 'tablet' : 'phone');
+    const frameColor = new THREE.Color(partColor('frame'));
+    const darkMat = new THREE.MeshStandardMaterial({ color: frameColor.clone().offsetHSL(0, 0, -0.06), metalness: 0.8, roughness: 0.32 });
+    if (dt === 'watch') {
+      const w = d.watch || {};
+      const crownMat = new THREE.MeshStandardMaterial({ color: frameColor, metalness: 0.95, roughness: 0.2 });
+      if (w.crown !== 'none') {
+        const crown = new THREE.Mesh(new THREE.CylinderGeometry(Math.max(0.8, T * 0.3), Math.max(0.8, T * 0.3), 1.4, 24), crownMat);
+        crown.userData.part = 'body';
+        crown.rotation.z = Math.PI / 2;
+        crown.position.set((w.crown === 'left' ? -1 : 1) * (W / 2 + 0.35), L * 0.16, 0);
+        g.add(crown);
+        const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.35, 1.8, 12), crownMat);
+        stem.rotation.z = Math.PI / 2;
+        stem.position.set((w.crown === 'left' ? -1 : 1) * (W / 2 + 0.1), L * 0.16, 0);
+        g.add(stem);
+      }
+      if (w.button) {
+        const btn = new THREE.Mesh(new THREE.BoxGeometry(0.5, Math.max(1.2, L * 0.11), Math.max(0.8, T * 0.34)), darkMat);
+        btn.position.set((w.crown === 'left' ? -1 : 1) * (W / 2 + 0.1), -L * 0.1, 0);
+        btn.userData.part = 'buttons';
+        g.add(btn);
+      }
+      // 表圈：金属/陶瓷/玻璃三种高光质感
+      const bez = w.bezel || 'metal';
+      const ringMat = new THREE.MeshStandardMaterial({
+        color: bez === 'ceramic' ? 0xf3f0ea : bez === 'glass' ? 0x9fd8ff : frameColor,
+        metalness: bez === 'metal' ? 0.95 : 0.1,
+        roughness: bez === 'metal' ? 0.2 : bez === 'ceramic' ? 0.08 : 0.03,
+        transparent: bez === 'glass', opacity: bez === 'glass' ? 0.55 : 1,
+      });
+      const rr = Math.min(W, L) / 2 - 0.9;
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(Math.max(1, rr), 0.32, 10, 64), ringMat);
+      ring.userData.part = 'frame';
+      ring.position.z = FACE + 0.02;
+      g.add(ring);
+      return;
+    }
+    if (dt === 'tablet') {
+      const t = d.tablet || {};
+      if (t.stand) {
+        const standMat = new THREE.MeshStandardMaterial({ color: frameColor.clone().offsetHSL(0, 0, -0.03), metalness: 0.55, roughness: 0.4 });
+        const plate = new THREE.Mesh(new THREE.BoxGeometry(W * 0.5, L * 0.3, 0.7), standMat);
+        plate.userData.part = 'body';
+        plate.position.set(0, 0, -FACE - 1.2);
+        plate.rotation.x = 0.5;
+        g.add(plate);
+      }
+      if (t.keyboard) {
+        for (let i = -1; i <= 1; i++) {
+          const pin = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.28, 0.5, 10), new THREE.MeshStandardMaterial({ color: 0xd8b25a, metalness: 0.95, roughness: 0.25 }));
+          pin.rotation.x = Math.PI / 2;
+          pin.position.set(i * W * 0.06, -L / 2 + 0.4, -FACE - 0.1);
+          g.add(pin);
+        }
+      }
+      if (t.stylus) {
+        const pen = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, L * 0.55, 14), new THREE.MeshStandardMaterial({ color: 0xe8e8e8, metalness: 0.7, roughness: 0.25 }));
+        pen.userData.part = 'body';
+        pen.rotation.z = Math.PI / 2;
+        pen.position.set(0, L / 2 + 0.55, -FACE - 0.2);
+        g.add(pen);
+      }
+      if (t.cellular) {
+        const strip = new THREE.Mesh(new THREE.BoxGeometry(0.8, L * 0.32, 0.25), new THREE.MeshStandardMaterial({ color: 0x2a3139, metalness: 0.1, roughness: 0.7 }));
+        strip.position.set(W / 2 - 0.1, L * 0.18, -FACE - 0.15);
+        g.add(strip);
+      }
+    }
+  }
+
   function buildPhone() {
     if (!three) return;
     const g = three.group;
@@ -2308,6 +2425,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
     bodyMesh.castShadow = true;
     bodyMesh.receiveShadow = true;
     g.add(bodyMesh);
+    buildDeviceHardware(g, d, b, W, L, T, FACE);
 
     // 屏幕
     const scr = screenSize(d);
@@ -3391,6 +3509,11 @@ export function renderDesigner(container, state, model, hooks = {}) {
     }
     if (key === 'template' && v !== prevTpl) {
       d.template = v; // 先落模板，maxScreenInch 的年代上限才能用新模板
+      d.deviceType = String(v).startsWith('watch') ? 'watch' : v === 'tablet' ? 'tablet' : 'phone';
+      if (d.deviceType === 'watch') {
+        ensureDeviceExtras(d);
+        d.watch.shape = String(v).includes('square') ? 'square' : 'round';
+      }
       if (String(v).startsWith('watch')) {
         d.camera.lenses = [];
         d.camera.flash = null;
@@ -3419,18 +3542,24 @@ export function renderDesigner(container, state, model, hooks = {}) {
       d.keypad.style = ['grid', 'full'].includes(d.keypad.style) ? d.keypad.style : 'grid';
       d.homeStyle = T.home ? (T.home.includes(d.homeStyle) ? d.homeStyle : T.home[0]) : '';
       if (!T.fold && d.body.fold !== 'none') d.body.fold = 'none';
-      // 镜头按世代收敛：类型年份锁 + 数量上限 + deco 重排
+      // 镜头按世代收敛：类型年份锁 + 数量上限 + deco 重排；手表不装摄像头
       const lensCap = { bar_keypad: 1, touch_keypad: 1, touch_full: 2, full_screen: 5 }[v] ?? 5;
 
-      d.camera.lenses = (d.camera.lenses || []).filter((l) => (LENS_TYPES.find((t) => t.id === l.type)?.year ?? 1980) <= year);
-      if (d.camera.lenses.length > lensCap) d.camera.lenses = d.camera.lenses.slice(0, lensCap);
-      if (!d.camera.lenses.length) d.camera.lenses = [makeLens('main', year, unlocked)];
-      arrangeLenses(d.camera);
-      const dn = d.camera.lenses.length;
-      d.camera.deco.w = dn >= 3 ? 20 : 16;
-      d.camera.deco.h = Math.max(16, dn * 14 + 4);
-      syncSliderUI('camera.deco.w', d.camera.deco.w);
-      syncSliderUI('camera.deco.h', d.camera.deco.h);
+      if (d.deviceType === 'watch') {
+        d.camera.lenses = [];
+        d.camera.count = 0;
+        d.parts.battery = 'bw1';
+      } else {
+        d.camera.lenses = (d.camera.lenses || []).filter((l) => (LENS_TYPES.find((t) => t.id === l.type)?.year ?? 1980) <= year);
+        if (d.camera.lenses.length > lensCap) d.camera.lenses = d.camera.lenses.slice(0, lensCap);
+        if (!d.camera.lenses.length) d.camera.lenses = [makeLens('main', year, unlocked)];
+        arrangeLenses(d.camera);
+        const dn = d.camera.lenses.length;
+        d.camera.deco.w = dn >= 3 ? 20 : 16;
+        d.camera.deco.h = Math.max(16, dn * 14 + 4);
+        syncSliderUI('camera.deco.w', d.camera.deco.w);
+        syncSliderUI('camera.deco.h', d.camera.deco.h);
+      }
       // Logo/文字坐标收回新机身范围
       ensureBranding(d);
       const bd = d.branding;
@@ -3452,8 +3581,29 @@ export function renderDesigner(container, state, model, hooks = {}) {
       const yr = { classic: 1998, strip: 2002, split: 2008, opposite: 2006, hidden: 2018 }[v] ?? 1980;
       if (year < yr) { setPath(d, 'body.buttons', 'none'); hooks.onToast?.(`侧键 ${yr} 年后才出现`, 'warn'); return; }
     }
+    // 手表表体形状：直接切换圆/方表模板并同步机身与屏幕圆角
+    if (key === 'watch.shape') {
+      d.watch = d.watch || {};
+      d.watch.shape = v;
+      const tpl = v === 'square' ? 'watch_square' : 'watch_round';
+      if (PHONE_TPL_MAP[tpl] && d.template !== tpl) {
+        d.template = tpl;
+        const T = tplCaps(PHONE_TPL_MAP[tpl], availYear);
+        if (T.body) {
+          d.body.length = T.body.length; d.body.width = T.body.width;
+          d.body.thickness = T.body.thickness; d.body.corner = T.body.corner;
+        }
+        d.screen.corner = Math.min(d.screen.corner || 0, T.screen.cornerMax);
+      }
+      d.deviceType = 'watch';
+      const tplSel = document.querySelector('[data-k="template"]');
+      if (tplSel) tplSel.value = tpl;
+      syncSliderUI('body.length', d.body.length); syncSliderUI('body.width', d.body.width);
+      syncSliderUI('body.thickness', d.body.thickness); syncSliderUI('body.corner', d.body.corner);
+      syncSliderUI('screen.corner', d.screen.corner);
+      return;
+    }
     setPath(d, key, v);
-    // 换面板供应商时校验发光材料世代归属，失效则回退标准材料
     if (key === 'screen.panelVendor') {
       const pvObj = PANEL_VENDORS.find((x) => x.id === d.screen.panelVendor);
       if (!pvObj || !pvObj.gens || !pvObj.gens.some((g) => g.id === d.screen.panelGen)) d.screen.panelGen = '';

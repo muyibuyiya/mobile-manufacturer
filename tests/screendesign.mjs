@@ -158,6 +158,38 @@ async function main() {
   check('导入桌面壁纸自动切到桌面', uploadHome.home === true && uploadHome.thumb === true, JSON.stringify(uploadHome));
   await shot('upload');
 
+  // 设备类型独立 UI：手表 / 平板
+  await ev(`document.querySelector('[data-sd=type][data-v=watch]').click()`); await sleep(400);
+  const watchUI = await ev(`(() => {
+    const cv = document.querySelector('[data-sd=cv]');
+    const opts = ['watch-shape','watch-layout','watchShowDate','watchShowComplications','watchBattery','watchSteps'];
+    return { w: cv?.width, h: cv?.height, opts: opts.every(k => !!document.querySelector('[data-sd="'+k+'"]')), phoneDock: !!document.querySelector('[data-sd=dock]') };
+  })()`);
+  check('手表独立 UI 选项', watchUI.opts === true && watchUI.phoneDock === false, JSON.stringify(watchUI));
+  check('手表画布 1:1', watchUI.w === 400 && watchUI.h === 400, `${watchUI.w}x${watchUI.h}`);
+  const watchHome = await ev(`(() => {
+    document.querySelector('[data-sd=preview][data-v=home]').click();
+    const cv = document.querySelector('[data-sd=cv]');
+    return cv.toDataURL().slice(-120);
+  })()`);
+  await sleep(250);
+  const watchHome2 = await ev(`document.querySelector('[data-sd=cv]').toDataURL().slice(-120)`);
+  check('手表桌面可渲染', !!watchHome && !!watchHome2 && watchHome2.length > 40);
+
+  await ev(`document.querySelector('[data-sd=type][data-v=tablet]').click()`); await sleep(400);
+  const tabletUI = await ev(`(() => {
+    const cv = document.querySelector('[data-sd=cv]');
+    return { w: cv?.width, h: cv?.height, split: !!document.querySelector('[data-sd=tabletSplit]'), dock: !!document.querySelector('[data-sd=tabletDock]'), watchOpts: !!document.querySelector('[data-sd=watch-shape]') };
+  })()`);
+  check('平板独立 UI 选项', tabletUI.split && tabletUI.dock && !tabletUI.watchOpts, JSON.stringify(tabletUI));
+  check('平板画布 16:10', tabletUI.w === 2560 && tabletUI.h === 1600, `${tabletUI.w}x${tabletUI.h}`);
+  await ev(`document.querySelector('[data-sd=preview][data-v=home]').click()`); await sleep(200);
+  const splitA = await ev(`document.querySelector('[data-sd=cv]').toDataURL()`);
+  await ev(`(() => { const cb = document.querySelector('[data-sd=tabletSplit]'); cb.checked = true; cb.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  await sleep(250);
+  const splitB = await ev(`document.querySelector('[data-sd=cv]').toDataURL()`);
+  check('平板分屏可切换渲染', !!splitA && !!splitB && splitA !== splitB, `${splitA?.length}/${splitB?.length}`);
+
   // 不保存退出：草稿不应写回；重新进入仍是默认手势 28%
   await ev(`document.querySelector('[data-sd=discard]').click()`);
   await sleep(300);

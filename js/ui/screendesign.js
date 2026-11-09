@@ -19,6 +19,15 @@ function normalizeDesign(d) {
   if (!d || typeof d !== 'object') return d;
   if (d.canvasW === undefined) d.canvasW = 1080;
   if (d.canvasH === undefined) d.canvasH = Math.round(d.canvasW * 19.5 / 9);
+  if (!d.deviceType) d.deviceType = d.canvasH / d.canvasW < 1.05 ? (d.canvasH / d.canvasW < 0.9 ? 'tablet' : 'watch') : 'phone';
+  if (d.watchShape === undefined) d.watchShape = 'round';
+  if (d.watchLayout === undefined) d.watchLayout = 'grid';
+  if (d.watchShowDate === undefined) d.watchShowDate = true;
+  if (d.watchShowComplications === undefined) d.watchShowComplications = true;
+  if (d.watchBattery === undefined) d.watchBattery = true;
+  if (d.watchSteps === undefined) d.watchSteps = true;
+  if (d.tabletSplit === undefined) d.tabletSplit = false;
+  if (d.tabletDock === undefined) d.tabletDock = true;
   if (d.lockAspect === undefined) d.lockAspect = true;
   if (d.navDir === undefined) d.navDir = 'ltr';
   if (d.gestureW === undefined) d.gestureW = 28;
@@ -89,6 +98,8 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
       dockCount: 4, cols: 4, rows: 5,
       canvasW: 1080, canvasH: 2340, lockAspect: true,
       lockWallpaper: '', lockWallColor: '#141c33', lockShowTime: true, lockShowDate: true, lockShowNotif: true,
+      deviceType: 'phone', watchShape: 'round', watchLayout: 'grid', watchShowDate: true,
+      watchShowComplications: true, watchBattery: true, watchSteps: true, tabletSplit: false, tabletDock: true,
     };
   }
   function ensureActive() {
@@ -122,6 +133,11 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
     ensureActive();
     const designs = draft.map((d, i) => `<option value="${i}" ${d === active ? 'selected' : ''}>${escAttr(d.name)}</option>`).join('');
     const isGesture = active.navStyle === 'gesture';
+    const ratios = active.deviceType === 'watch'
+      ? [['1:1', 1]]
+      : active.deviceType === 'tablet'
+        ? [['16:10', 16 / 10], ['4:3', 4 / 3], ['3:2', 3 / 2], ['16:9', 16 / 9]]
+        : [['16:9', 16 / 9], ['19.5:9', 19.5 / 9], ['21:9', 21 / 9], ['4:3', 4 / 3], ['1:1', 1]];
     controlsEl.innerHTML = `
       <div class="field"><span>方案</span>
         <div class="row" style="gap:5px">
@@ -133,6 +149,27 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
       <div class="field"><span>方案名称</span>
         <input type="text" data-sd="name" value="${escAttr(active.name)}" maxlength="14" style="width:100%" />
       </div>
+      <div class="field"><span>设备类型</span>
+        <div class="row" style="gap:5px">
+          ${[['phone', '手机'], ['tablet', '平板'], ['watch', '手表']].map(([v, n]) => `<button class="btn tiny ${active.deviceType === v ? 'primary' : ''}" data-sd="type" data-v="${v}">${n}</button>`).join('')}
+        </div>
+      </div>
+      ${active.deviceType === 'watch' ? `
+      <div class="section-label">手表表盘</div>
+      <div class="row" style="gap:5px;flex-wrap:wrap">
+        ${[['round', '圆形'], ['square', '方形']].map(([v, n]) => `<button class="btn tiny ${active.watchShape === v ? 'primary' : ''}" data-sd="watch-shape" data-v="${v}">${n}</button>`).join('')}
+        ${[['grid', '网格'], ['list', '列表']].map(([v, n]) => `<button class="btn tiny ${active.watchLayout === v ? 'primary' : ''}" data-sd="watch-layout" data-v="${v}">${n}</button>`).join('')}
+      </div>
+      <div class="row" style="gap:5px;flex-wrap:wrap;margin-top:6px">
+        <label class="form-check" style="margin:0"><input type="checkbox" class="form-check-input" data-sd="watchShowDate" ${active.watchShowDate ? 'checked' : ''} /><span class="form-check-label tiny">日期</span></label>
+        <label class="form-check" style="margin:0"><input type="checkbox" class="form-check-input" data-sd="watchShowComplications" ${active.watchShowComplications ? 'checked' : ''} /><span class="form-check-label tiny">复杂功能</span></label>
+        <label class="form-check" style="margin:0"><input type="checkbox" class="form-check-input" data-sd="watchBattery" ${active.watchBattery ? 'checked' : ''} /><span class="form-check-label tiny">电量</span></label>
+        <label class="form-check" style="margin:0"><input type="checkbox" class="form-check-input" data-sd="watchSteps" ${active.watchSteps ? 'checked' : ''} /><span class="form-check-label tiny">步数</span></label>
+      </div>` : ''}
+      ${active.deviceType === 'tablet' ? `
+      <div class="section-label">平板布局</div>
+      <label class="form-check" style="margin:0 0 6px"><input type="checkbox" class="form-check-input" data-sd="tabletSplit" ${active.tabletSplit ? 'checked' : ''} /><span class="form-check-label tiny">分屏桌面（双应用面板）</span></label>
+        <label class="form-check" style="margin:0 0 6px"><input type="checkbox" class="form-check-input" data-sd="tabletDock" ${active.tabletDock !== false ? 'checked' : ''} /><span class="form-check-label tiny">底部任务栏（Dock）</span></label>` : ''}
       <div class="field"><span>预览画面</span>
         <div class="row" style="gap:5px">
           <button class="btn tiny ${previewMode === 'home' ? 'primary' : ''}" data-sd="preview" data-v="home">桌面</button>
@@ -192,15 +229,16 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
             <span class="tiny dim" data-sd="gestureH-v" style="width:36px;text-align:right">${clamp(num(active.gestureH, 2.4), 1, 6).toFixed(1)}u</span>
           </div>
         </label>` : ''}
+      ${active.deviceType === 'phone' ? `
       <div class="section-label">Dock 栏</div>
       <div class="row" style="gap:5px;align-items:center">
         <span class="tiny dim">应用数</span>
         ${[0, 3, 4, 5].map((n) => `<button class="btn tiny ${active.dockCount === n ? 'primary' : ''}" data-sd="dock" data-v="${n}">${n || '无'}</button>`).join('')}
       </div>
-      <div class="tiny dim" style="margin:4px 0 6px">有导航键/手势条时 Dock 会自动上抬避让</div>
+      <div class="tiny dim" style="margin:4px 0 6px">有导航键/手势条时 Dock 会自动上抬避让</div>` : ''}
       <div class="section-label">画布</div>
       <div class="row" style="gap:5px;flex-wrap:wrap;margin-bottom:6px">
-        ${[['16:9', 16 / 9], ['19.5:9', 19.5 / 9], ['21:9', 21 / 9], ['4:3', 4 / 3], ['1:1', 1]].map(([n, r]) => {
+        ${ratios.map(([n, r]) => {
           const cur = Math.abs(active.canvasH / active.canvasW - r) < 0.01;
           return `<button class="btn tiny ${cur ? 'primary' : ''}" data-sd="ratio" data-v="${r}">${n}</button>`;
         }).join('')}
@@ -232,7 +270,12 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
     const wp = isLock ? active.lockWallpaper : active.wallpaper;
     const color = isLock ? (active.lockWallColor || '#141c33') : (active.wallColor || '#0a1020');
     const finish = () => {
-      if (isLock) drawLockOverlays(c, W, H, active);
+      if (active.deviceType === 'watch') {
+        if (isLock) drawWatchLock(c, W, H, active);
+        else drawWatchHome(c, W, H, active);
+      } else if (active.deviceType === 'tablet' && !isLock) {
+        drawTabletHome(c, W, H, active);
+      } else if (isLock) drawLockOverlays(c, W, H, active);
       else drawHomeOverlays(c, W, H, active);
     };
     if (wp) {
@@ -262,6 +305,8 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
     let pw = maxW, ph = pw * ratio;
     if (ph > maxH) { ph = maxH; pw = ph / ratio; }
     cv.style.width = pw + 'px'; cv.style.height = ph + 'px';
+    cv.style.borderRadius = active.deviceType === 'watch' ? (active.watchShape === 'round' ? '50%' : '38px') : '18px';
+    cv.style.border = active.deviceType === 'watch' ? '7px solid #1a1f28' : 'none';
     cv.width = W; cv.height = H;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     compose(ctx);
@@ -343,6 +388,25 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
     else if (k === 'lock-import') { controlsEl.querySelector('[data-sd=lock-file]').click(); return; }
     else if (k === 'clear-wp') { active.wallpaper = ''; markDirty(); }
     else if (k === 'lock-clear') { active.lockWallpaper = ''; markDirty(); }
+    else if (k === 'type') {
+      const t = act.dataset.v;
+      active.deviceType = t;
+      if (t === 'tablet') {
+        active.canvasW = 2560; active.canvasH = 1600; active.lockAspect = false;
+        active.dockCount = 6; active.cols = 6; active.rows = 4; active.navStyle = 'gesture';
+      } else if (t === 'watch') {
+        active.canvasW = 400; active.canvasH = 400; active.lockAspect = false;
+        active.dockCount = 0; active.cols = 3; active.rows = 3; active.navStyle = 'none';
+        active.watchShape = active.watchShape || 'round';
+        previewMode = 'lock';
+      } else {
+        active.canvasW = 1080; active.canvasH = 2340; active.lockAspect = true;
+        active.dockCount = 4; active.cols = 4; active.rows = 5; active.navStyle = 'gesture';
+      }
+      markDirty(); renderControls(); draw(); return;
+    }
+    else if (k === 'watch-shape') active.watchShape = act.dataset.v;
+    else if (k === 'watch-layout') active.watchLayout = act.dataset.v;
     else if (k === 'preview') { previewMode = act.dataset.v === 'lock' ? 'lock' : 'home'; renderControls(); draw(); return; }
     else if (k === 'ratio') {
       const r = Number(act.dataset.v);
@@ -377,6 +441,12 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
     else if (k === 'lockShowTime') active.lockShowTime = e.target.checked;
     else if (k === 'lockShowDate') active.lockShowDate = e.target.checked;
     else if (k === 'lockShowNotif') active.lockShowNotif = e.target.checked;
+    else if (k === 'watchShowDate') active.watchShowDate = e.target.checked;
+    else if (k === 'watchShowComplications') active.watchShowComplications = e.target.checked;
+    else if (k === 'watchBattery') active.watchBattery = e.target.checked;
+    else if (k === 'watchSteps') active.watchSteps = e.target.checked;
+    else if (k === 'tabletSplit') active.tabletSplit = e.target.checked;
+    else if (k === 'tabletDock') active.tabletDock = e.target.checked;
     else if (k === 'batteryDY') active.batteryDY = Number(e.target.value);
     else if (k === 'gestureW') active.gestureW = Number(e.target.value);
     else if (k === 'gestureH') active.gestureH = Number(e.target.value);
@@ -466,7 +536,11 @@ export function composeScreenUI(ctx, W, H, ui, mode = 'home') {
     try { g.addColorStop(0, color); g.addColorStop(1, '#05070c'); } catch (e) { /* 忽略 */ }
     ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
   }
-  if (isLock) drawLockOverlays(ctx, W, H, ui);
+  if (ui.deviceType === 'watch') {
+    if (mode === 'lock') drawWatchLock(ctx, W, H, ui);
+    else drawWatchHome(ctx, W, H, ui);
+  } else if (ui.deviceType === 'tablet' && mode !== 'lock') drawTabletHome(ctx, W, H, ui);
+  else if (mode === 'lock') drawLockOverlays(ctx, W, H, ui);
   else drawHomeOverlays(ctx, W, H, ui);
   return true;
 }
@@ -574,6 +648,128 @@ function drawHomeOverlays(ctx, W, H, active) {
     ctx.lineWidth = u * 0.7; ctx.strokeStyle = 'rgba(255,255,255,.55)';
     ctx.beginPath(); ctx.arc(W / 2, navY, u * 2.8, 0, Math.PI * 2); ctx.stroke();
     ctx.strokeRect(sqX - u * 2.5, navY - u * 2.5, u * 5, u * 5);
+  }
+}
+
+// ---------- 手表表盘 ----------
+function drawWatchLock(ctx, W, H, d) {
+  const u = W / 100;
+  ctx.textAlign = 'center';
+  ctx.fillStyle = 'rgba(255,255,255,.95)';
+  ctx.font = `700 ${u * 21}px sans-serif`;
+  ctx.fillText('9:41', W / 2, H * 0.34);
+  if (d.watchShowDate) {
+    ctx.font = `500 ${u * 4.6}px sans-serif`;
+    ctx.fillStyle = 'rgba(255,255,255,.72)';
+    ctx.fillText('1月1日 周一', W / 2, H * 0.46);
+  }
+  if (d.watchShowComplications) {
+    const cy = H * 0.66;
+    if (d.watchBattery) {
+      ctx.fillStyle = 'rgba(255,255,255,.16)';
+      ctx.beginPath(); ctx.arc(W * 0.30, cy, u * 10, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#8fd0ff';
+      ctx.font = `600 ${u * 5}px sans-serif`;
+      ctx.fillText('82%', W * 0.30, cy + u * 1.8);
+      ctx.font = `400 ${u * 2.8}px sans-serif`;
+      ctx.fillStyle = 'rgba(255,255,255,.6)';
+      ctx.fillText('电量', W * 0.30, cy + u * 7);
+    }
+    if (d.watchSteps) {
+      ctx.fillStyle = 'rgba(255,255,255,.16)';
+      ctx.beginPath(); ctx.arc(W * 0.70, cy, u * 10, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#37c9a5';
+      ctx.font = `600 ${u * 5}px sans-serif`;
+      ctx.fillText('6,240', W * 0.70, cy + u * 1.8);
+      ctx.font = `400 ${u * 2.8}px sans-serif`;
+      ctx.fillStyle = 'rgba(255,255,255,.6)';
+      ctx.fillText('步数', W * 0.70, cy + u * 7);
+    }
+  }
+  ctx.textAlign = 'center';
+  ctx.fillStyle = 'rgba(255,255,255,.55)';
+  ctx.font = `500 ${u * 3}px sans-serif`;
+  ctx.fillText('上滑解锁', W / 2, H - u * 7);
+  ctx.textAlign = 'left';
+}
+
+function drawWatchHome(ctx, W, H, d) {
+  const u = W / 100;
+  ctx.textAlign = 'center';
+  ctx.fillStyle = 'rgba(255,255,255,.95)';
+  ctx.font = `700 ${u * 13}px sans-serif`;
+  ctx.fillText('9:41', W / 2, H * 0.16);
+  if (d.watchShowDate) {
+    ctx.font = `500 ${u * 3.6}px sans-serif`;
+    ctx.fillStyle = 'rgba(255,255,255,.65)';
+    ctx.fillText('1月1日 周一', W / 2, H * 0.24);
+  }
+  const top = H * 0.34;
+  if (d.watchLayout === 'list') {
+    const rows = ['天气', '日程', '健康', '音乐'];
+    rows.forEach((name, i) => {
+      const y = top + i * u * 11;
+      ctx.fillStyle = 'rgba(255,255,255,.14)';
+      ctx.beginPath(); ctx.roundRect(W * 0.16, y, W * 0.68, u * 8, u * 2); ctx.fill();
+      ctx.textAlign = 'left';
+      ctx.fillStyle = ICON_COLORS[i % ICON_COLORS.length];
+      ctx.beginPath(); ctx.roundRect(W * 0.20, y + u * 1.5, u * 5, u * 5, u * 1.2); ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,.9)';
+      ctx.font = `500 ${u * 3.4}px sans-serif`;
+      ctx.fillText(name, W * 0.30, y + u * 5.2);
+      ctx.textAlign = 'center';
+    });
+  } else {
+    const cols = 3, size = u * 13, gap = u * 4;
+    const x0 = (W - (cols * size + (cols - 1) * gap)) / 2;
+    for (let i = 0; i < 9; i++) {
+      const x = x0 + (i % cols) * (size + gap);
+      const y = top + Math.floor(i / cols) * (size + gap);
+      ctx.fillStyle = ICON_COLORS[i % ICON_COLORS.length];
+      ctx.beginPath(); ctx.roundRect(x, y, size, size, size * 0.28); ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,.2)';
+      ctx.beginPath(); ctx.roundRect(x, y, size, size * 0.42, size * 0.28); ctx.fill();
+    }
+  }
+  ctx.textAlign = 'left';
+}
+
+function drawTabletHome(ctx, W, H, d) {
+  const u = W / 100;
+  const dockH = d.tabletDock !== false ? u * 9 : 0;
+  const bottom = H * 0.90 - dockH;
+  if (!d.tabletSplit) {
+    drawHomeOverlays(ctx, W, H, d);
+    if (dockH) drawTabletDock(ctx, W, H, d, u, dockH);
+    return;
+  }
+  drawStatus(ctx, W, H, d);
+  const top = H * 0.10;
+  ctx.fillStyle = 'rgba(255,255,255,.12)';
+  ctx.beginPath(); ctx.roundRect(u * 3, top, W / 2 - u * 4, bottom - top, u * 3); ctx.fill();
+  ctx.beginPath(); ctx.roundRect(W / 2 + u * 1, top, W / 2 - u * 4, bottom - top, u * 3); ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,.85)';
+  ctx.font = `600 ${u * 3.5}px sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.fillText('应用 A', W * 0.25, top + u * 8);
+  ctx.fillText('应用 B', W * 0.75, top + u * 8);
+  ctx.fillStyle = 'rgba(255,255,255,.18)';
+  ctx.beginPath(); ctx.roundRect(W / 2 - u * 0.3, top, u * 0.6, bottom - top, u * 0.3); ctx.fill();
+  ctx.textAlign = 'left';
+  if (dockH) drawTabletDock(ctx, W, H, d, u, dockH);
+}
+
+// 平板底部任务栏：半透明 Dock + 常用应用图标
+function drawTabletDock(ctx, W, H, d, u, dockH) {
+  const y = H - dockH - u;
+  ctx.fillStyle = 'rgba(255,255,255,.15)';
+  ctx.beginPath(); ctx.roundRect(u * 3, y, W - u * 6, dockH, u * 4); ctx.fill();
+  const n = 6;
+  const gap = (W - u * 12) / n;
+  for (let i = 0; i < n; i++) {
+    const cx = u * 6 + gap * i + gap / 2;
+    ctx.fillStyle = ICON_COLORS[i % ICON_COLORS.length];
+    ctx.beginPath(); ctx.roundRect(cx - u * 3, y + dockH / 2 - u * 3, u * 6, u * 6, u * 1.6); ctx.fill();
   }
 }
 

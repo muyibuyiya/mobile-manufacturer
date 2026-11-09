@@ -2086,7 +2086,7 @@ export function renderGame(root, state, opts = {}) {
             <div class="row" style="gap:8px;align-items:flex-start">
               ${t.design.wallpaper ? `<img src="${t.design.wallpaper}" style="width:48px;height:86px;object-fit:cover;border-radius:5px" />` : `<div style="width:48px;height:86px;border-radius:5px;border:1px dashed var(--line-2);display:flex;align-items:center;justify-content:center" class="tiny dim">无图</div>`}
               <div style="flex:1;min-width:0">
-                <div class="between"><b class="tiny">${esc(t.name)}</b><span class="chip ${t.score >= 75 ? 'good' : t.score >= 55 ? '' : 'warn'}">${t.score} 分</span></div>
+                <div class="between"><b class="tiny">${esc(t.name)}</b><span class="chip ${t.score >= 75 ? 'good' : t.score >= 55 ? '' : 'warn'}">${t.deviceLabel} · ${t.score} 分</span></div>
                 <div class="tiny dim" style="margin:3px 0 5px">${t.hasWallpaper ? '桌面壁纸' : '纯色桌面'} · ${t.hasLock ? '锁屏壁纸' : '纯色锁屏'}</div>
                 <button class="btn tiny ${t.active ? 'ghost' : 'primary'}" data-act="theme-select" data-id="${t.uid}" ${t.active ? 'disabled' : ''}>${t.active ? '使用中' : '设为 OS 主题'}</button>
                 <button class="btn tiny" data-act="theme-preview" data-id="${t.uid}">预览</button>
@@ -3438,8 +3438,8 @@ export function renderGame(root, state, opts = {}) {
     const cv = mask.querySelector('#theme-preview-cv');
     const ctx = cv.getContext('2d');
     let mode = 'home';
-    let device = 'phone';
-    let watchShape = 'round';
+    let device = d.deviceType || 'phone';
+    let watchShape = d.watchShape || 'round';
     let tries = 0;
     const cfg = () => device === 'tablet'
       ? { W: 520, H: 390, cw: 430, ch: 322, r: 18 }

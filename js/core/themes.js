@@ -14,6 +14,7 @@ export function ensureTheme(state) {
 
 export function themeScore(design) {
   if (!design) return 0;
+  const device = design.deviceType || 'phone';
   let s = 30;
   if (design.wallpaper) s += 22;
   else s += 6;
@@ -21,11 +22,20 @@ export function themeScore(design) {
   if (design.lockShowTime !== false) s += 3;
   if (design.lockShowDate !== false) s += 3;
   if (design.lockShowNotif !== false) s += 4;
-  if (design.navStyle === 'gesture') s += 4;
-  else if (design.navStyle === 'buttons') s += 2;
-  if ((design.dockCount || 0) >= 4) s += 6;
-  if ((design.cols || 4) === 4) s += 4;
-  if ((design.rows || 4) >= 5) s += 4;
+  if (device === 'watch') {
+    if (design.watchShowDate !== false) s += 5;
+    if (design.watchShowComplications !== false) s += 6;
+    if (design.watchBattery !== false) s += 3;
+    if (design.watchSteps !== false) s += 3;
+    if (design.watchLayout === 'list' || design.watchLayout === 'grid') s += 4;
+  } else {
+    if (design.navStyle === 'gesture') s += 4;
+    else if (design.navStyle === 'buttons') s += 2;
+    if ((design.dockCount || 0) >= (device === 'tablet' ? 5 : 4)) s += 6;
+    if ((design.cols || 4) >= (device === 'tablet' ? 5 : 3)) s += 4;
+    if ((design.rows || 4) >= (device === 'tablet' ? 4 : 4)) s += 4;
+    if (design.tabletSplit && device === 'tablet') s += 6;
+  }
   if (design.gestureH && design.gestureH > 3) s += 2;
   if (design.carrier) s += 2;
   return Math.round(clamp(s, 0, 100));
@@ -70,6 +80,8 @@ export function themeSummary(state) {
     design: d,
     uid: d.uid,
     name: d.name || '未命名主题',
+    deviceType: d.deviceType || 'phone',
+    deviceLabel: (d.deviceType || 'phone') === 'tablet' ? '平板' : (d.deviceType === 'watch' ? '手表' : '手机'),
     score: themeScore(d),
     active: d.uid === state.osThemeUid,
     hasWallpaper: !!d.wallpaper,

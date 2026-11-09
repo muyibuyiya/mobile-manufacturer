@@ -1,6 +1,6 @@
 {
   "name": "mobile-manufacturer",
-  "version": "1.10.0",
+  "version": "1.11.0",
   "private": true,
   "type": "module",
   "description": "《手机开发商》浏览器原型：3D 手机设计与深度经营模拟",

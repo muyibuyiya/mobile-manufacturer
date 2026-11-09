@@ -35,6 +35,38 @@ export function speakerRowSpec(style) {
 
 // 背面装饰（Logo + 文字）位置与尺寸（mm，原点=机身中心，+y 朝顶部）。
 // text=null/'' 表示跟随公司英文名；logoOnBack / brandText 仍是显隐开关。幂等。
+export function deviceTypeOf(design) {
+  const t = design?.template || '';
+  return t === 'tablet' ? 'tablet' : String(t).startsWith('watch') ? 'watch' : 'phone';
+}
+
+export function ensureDeviceExtras(design) {
+  if (!design) return design;
+  design.deviceType = deviceTypeOf(design);
+  if (!design.tablet || typeof design.tablet !== 'object') design.tablet = {};
+  const t = design.tablet;
+  if (typeof t.stand !== 'boolean') t.stand = false;
+  if (typeof t.keyboard !== 'boolean') t.keyboard = false;
+  if (typeof t.stylus !== 'boolean') t.stylus = false;
+  if (typeof t.cellular !== 'boolean') t.cellular = false;
+  if (!design.watch || typeof design.watch !== 'object') design.watch = {};
+  const w = design.watch;
+  if (!['round', 'square'].includes(w.shape)) w.shape = String(design.template).includes('square') ? 'square' : 'round';
+  if (!['right', 'left', 'none'].includes(w.crown)) w.crown = 'right';
+  if (typeof w.button !== 'boolean') w.button = true;
+  if (!['metal', 'ceramic', 'glass'].includes(w.bezel)) w.bezel = 'metal';
+  if (design.deviceType === 'watch') {
+    // 手表只设计表体：无摄像头，电池按表体规格（旧档迁移）
+    if (Array.isArray(design.camera?.lenses)) { design.camera.lenses = []; design.camera.count = 0; }
+    const bat = BATTERIES.find((x) => x.id === design.parts?.battery);
+    if (!bat || bat.mah > 800) {
+      if (!design.parts) design.parts = {};
+      design.parts.battery = 'bw1';
+    }
+  }
+  return design;
+}
+
 export const PACKAGE_MATERIALS = [
   { id: 'cardboard', name: '环保纸盒', cost: 2, quality: 0, desc: '可回收纸浆，成本低，开箱质感一般' },
   { id: 'plastic', name: '硬质塑料', cost: 5, quality: 1.5, desc: '耐用、防潮，适合中端走量' },
@@ -232,6 +264,8 @@ export function makeLens(role, year, unlocked, x = 0, y = 0, oisByDefault = fals
 export function ensureLenses(design) {
   const c = design?.camera;
   if (!c) return design;
+  // 手表只设计表体：不装配摄像头，空镜头组保持为空（避免按 count 回填）
+  if (design.deviceType === 'watch') { c.lenses = []; c.count = 0; return design; }
   if (!c.deco) c.deco = { shape: 'rounded', w: 26, h: 26, radius: 8, material: 'metal', color: '' };
   // deco 材质（metal/glass/plastic）与颜色（'' = 跟随后盖）：旧档幂等补齐
   if (!['metal', 'glass', 'plastic'].includes(c.deco.material)) c.deco.material = 'metal';
@@ -650,9 +684,10 @@ export function derive(design, year, opts = {}) {
   const volume = bodyVolume(design);
   // 折叠机为双层结构（两半各一层堆叠），内部可用空间 ×2
   const internal = volume * 0.56 * (b.fold !== 'none' ? 2 : 1);
-  const camVol = (camThick * 1.2 * Math.max(1, design.camera.lenses.length)) / 10; // cm3
+  const camVol = (camThick * 1.2 * Math.max(0, design.camera.lenses.length)) / 10; // cm3
+  const overhead = design.deviceType === 'watch' ? 4.5 : 9.5;
   const used = batteryVolume(bat) + camVol
-    + 9.5 + (design.parts.extras.length * 0.9) + (design.body.fold !== 'none' ? 9 : 0);
+    + overhead + (design.parts.extras.length * 0.9) + (design.body.fold !== 'none' ? 9 : 0);
   const spaceUse = clamp((used / internal) * 100, 0, 160);
 
   // 厚度需求：直板=最厚镜头+基板装进机身；折叠机相机模组在闭合叠层外侧（外凸不占对半厚度），
@@ -826,7 +861,9 @@ export function validate(design, year, opts = {}) {
     issues.push({ level: 'error', text: `屏幕高度 ${scr.h}mm 超出机身 ${effH}mm，无法装配。` });
   }
   if (b.thickness < 5) issues.push({ level: 'error', text: '机身厚度低于 5mm，结构强度不足。' });
-  if (b.length < 60 || b.width < 35) issues.push({ level: 'error', text: '机身尺寸过小，无法容纳电池与主板。' });
+  if (b.length < 60 || b.width < 35) {
+    if (design.deviceType !== 'watch') issues.push({ level: 'error', text: '机身尺寸过小，无法容纳电池与主板。' });
+  }
   if (d.spaceUse > 100) issues.push({ level: 'error', text: `内部空间占用 ${d.spaceUse}%，电池与模组装不进去。` });
   if (d.spaceUse > 92) issues.push({ level: 'warn', text: `内部空间占用 ${d.spaceUse}%，散热与装配风险偏高。` });
   if (d.moduleOver > 0) issues.push({ level: 'warn', text: `摄像头模组比机身厚 ${d.moduleOver}mm，会明显凸起。` });
@@ -990,6 +1027,7 @@ export function newModel(year, unlocked, name = '新机型') {
 export function ensureTemplate(d, year = 2020) {
   if (!PHONE_TPL_MAP[d.template]) d.template = templateForYear(year);
   ensurePackaging(d);
+  ensureDeviceExtras(d);
   const T = PHONE_TPL_MAP[d.template];
   d.keypad = d.keypad || { kind: T.keypad.includes('none') ? 'none' : T.keypad[0], style: 'grid', scale: 1 };
   if (!T.keypad.includes(d.keypad.kind)) d.keypad.kind = T.keypad.includes('none') ? 'none' : T.keypad[0];

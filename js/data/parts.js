@@ -92,6 +92,7 @@ export const BATTERIES = [
   { id: 'b3b', name: '锂电 2500mAh', vendor: 'LG 新能源', tech: 'liion', year: 2011, mah: 2500, price: 95, weight: 46, density: 285 },
   { id: 'b4', name: '锂电 3000mAh', vendor: 'LG 新能源', tech: 'liion', year: 2014, mah: 3000, price: 100, weight: 48, density: 320 },
   { id: 'b4b', name: '锂电 3500mAh', vendor: '欣旺达', tech: 'liion', year: 2015, mah: 3500, price: 105, weight: 49, density: 350 },
+  { id: 'bw1', name: '手表电池 420mAh', vendor: 'ATL 新能源', tech: 'liion', year: 2015, mah: 420, price: 22, weight: 8, density: 350 },
   { id: 'b5', name: '高密度 4000mAh', vendor: '珠海冠宇', tech: 'highdensity', year: 2016, mah: 4000, price: 110, weight: 50, density: 400 },
   { id: 'b5b', name: '高密度 4500mAh', vendor: 'ATL 新能源', tech: 'highdensity', year: 2018, mah: 4500, price: 115, weight: 52, density: 430 },
   { id: 'b6', name: '高密度 5000mAh', vendor: '欣旺达', tech: 'highdensity', year: 2019, mah: 5000, price: 120, weight: 55, density: 460 },
