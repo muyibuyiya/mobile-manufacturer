@@ -15,6 +15,8 @@ import { overseasUpkeep, ensureOverseas } from './overseas.js';
 import { stepMarketing, channelTotal, ensureMarketing, stepChannels, channelSalesMul } from './marketing.js';
 import { stepStores, storeSalesMul } from './stores.js';
 import { stepCampaigns } from './campaigns.js';
+import { perkMul, stepPerkXp } from './perks.js';
+import { stepLoans, addEmergencyLoan } from './loans.js';
 import { warrantyCost, warrantyRatingAdd, returnsCutOf, ensureWarranty } from './aftermarket.js';
 import { stepSubsidiaries, ensureSubsidiaries } from './capital.js';
 import { marketShare as layeredShare, utilityFor, marketPotential, salesScores } from './market.js';
@@ -189,8 +191,8 @@ export function tick(state) {
   stepChannels(state, report);
   const subIncome = stepSubsidiaries(state, report);
   const rnd = report.rnd;
-  // 财务部专注度与 CFO 席位影响融资成本
-  const interest = state.company.debt * 0.075 * fInterest(state) / 12;
+  // 财务部专注度与 CFO 席位影响融资成本；贷款按笔计息，逾期会罚息
+  const interest = stepLoans(state, report);
   // 渠道分成、售后与物流：真实手机生意的隐性成本
   const channelCut = clamp(campusBonus(state, 'channelCut'), 0, 0.12);
   const channel = report.revenue * clamp(0.17 - channelCut + (100 - clamp(staffPower(state, 'sales') * 6, 0, 20)) / 900, 0.06, 0.4);
@@ -229,7 +231,7 @@ export function tick(state) {
 
   // 5. 品牌 / 口碑（媒体渠道细分投放）
   const mktRes = stepMarketing(state, report);
-  stepBrand(state, report, mktRes.brandGain + (campRes.brandGain || 0));
+  stepBrand(state, report, (mktRes.brandGain + (campRes.brandGain || 0)) * perkMul(state, 'brandGain'));
   if (mktRes.awareGain > 0 || campRes.awareGain > 0) {
     for (const m of state.markets) m.awareness = clamp(m.awareness + (mktRes.awareGain * 0.12) + (campRes.awareGain * 0.08), 0, 100);
   }
@@ -267,8 +269,7 @@ export function tick(state) {
   } else if (state.company.cash < 0) {
     // 自动短期贷款
     const need = Math.abs(state.company.cash) * 1.2;
-    state.company.debt += need;
-    state.company.cash += need;
+    addEmergencyLoan(state, need);
     report.notes.push(`现金不足，自动借款 ${fmtMoney(need)}，请注意偿还。`);
     addLog(state, 'warn', `现金为负，银行自动放款 ${fmtMoney(need)}。`);
   }
@@ -298,6 +299,7 @@ export function tick(state) {
   compactAll(state);
 
   // 11. 时间推进
+  stepPerkXp(state, report);
   const m = state.date.month + 1;
   state.date = { year: state.date.year + Math.floor(m / 12), month: m % 12 };
   state.lastReport = report;
@@ -323,7 +325,7 @@ function stepResearch(state, report) {
   const budgetFactor = clamp(budget / (t.cost / 24), 0.25, 1.4);
   const campusSpeed = 1 + clamp(campusBonus(state, 'rndSpeed'), 0, 1.5);
   const progress = (Math.pow(Math.max(power, 0.15), 0.9) * 9600 * budgetFactor
-    * country.tech * diff.rnd * campusSpeed * activeMul(state, 'rndMul') * policyMul(state, 'rndMul')) / t.cost * 100;
+    * country.tech * diff.rnd * campusSpeed * activeMul(state, 'rndMul') * policyMul(state, 'rndMul') * perkMul(state, 'rndSpeed')) / t.cost * 100;
   r.progress = clamp(r.progress + progress, 0, 100);
   r.spent += budget;
   state.company.cash -= budget;
@@ -398,7 +400,7 @@ function stepSales(state, report) {
   for (const c of state.competitors) { c.lastSold = 0; c.revenueEst = 0; delete c._launchedNoted; }
   for (const p of state.models) p.lastSold = 0; // 上月销量按月度重置，不能累计
   const hypeMul = state.hype && state.hype.months > 0 ? state.hype.mul : 1;
-  const demandMul = activeMul(state, 'demandMul') * policyMul(state, 'demandMul') * hypeMul * channelSalesMul(state);
+  const demandMul = activeMul(state, 'demandMul') * policyMul(state, 'demandMul') * hypeMul * channelSalesMul(state) * perkMul(state, 'demandMul');
   for (const market of state.markets) {
     const shareInfo = marketShare(state, market.id);
     const potential = marketPotential(state, market, demandMul);

@@ -53,6 +53,8 @@ import { channelTotal, channelSummary, setChannel, SALES_CHANNELS, ensureSalesCh
 import { MAX_STORES_PER_MARKET, storeSummary, openStore, upgradeStore, closeStore } from '../core/stores.js';
 import { CAMPAIGN_TYPES, startCampaign, cancelCampaign, campaignSummary, bestCampaignTip } from '../core/campaigns.js';
 import { themeSummary, selectTheme, themeBonus, themeScore } from '../core/themes.js';
+import { perkSummary, choosePerk } from '../core/perks.js';
+import { loanSummary, loanOffers, takeLoan, repayLoan } from '../core/loans.js';
 import { WARRANTY_POLICIES, warrantyOf, setWarrantyPolicy } from '../core/aftermarket.js';
 import { advanceGuide, skipGuide, restartGuide, GUIDE_STEPS, advanceHints, markHint } from '../core/guide.js';
 import { industryRating } from '../core/rating.js';
@@ -809,6 +811,14 @@ export function renderGame(root, state, opts = {}) {
         break;
       }
       case 'theme-preview': openThemePreview(ds.id); break;
+      case 'perk-open': openPerkModal(ds.track); break;
+      case 'perk-choose': {
+        const r = choosePerk(state, ds.track, ds.id);
+        opts.onToast?.(r.ok ? `已获得「${r.perk.name}」` : r.msg, r.ok ? 'good' : 'bad');
+        if (r.ok) { closeModal(); sfx('good'); }
+        render();
+        break;
+      }
       case 'ch-set': {
         const cur = state.marketing?.channels?.[ds.id] || 0;
         const nv = Math.max(0, cur + (ds.v === '+' ? 1 : -1) * 50000);
@@ -940,6 +950,20 @@ export function renderGame(root, state, opts = {}) {
         if (!r.ok) { opts.onToast?.(r.msg, 'warn'); break; }
         opts.onToast?.('已停止培训，前期费用不退', 'warn');
         render(); break;
+      }
+      case 'loan-modal': openLoanModal(); break;
+      case 'loan-take': {
+        const r = takeLoan(state, ds.id);
+        opts.onToast?.(r.ok ? `已放款 ${fmtMoney(r.loan.principal)}` : r.msg, r.ok ? 'good' : 'bad');
+        if (r.ok) { closeModal(); sfx('good'); render(); }
+        break;
+      }
+      case 'loan-repay': {
+        const amount = Number(document.querySelector(`[data-loan-pay="${ds.id}"]`)?.value) || 0;
+        const r = repayLoan(state, ds.id, amount);
+        opts.onToast?.(r.ok ? `已还款 ${fmtMoney(r.paid)}` : r.msg, r.ok ? 'good' : 'bad');
+        if (r.ok) { closeModal(); render(); }
+        break;
       }
       case 'loan': {
         const amount = Number(ds.amount);
@@ -2160,6 +2184,21 @@ export function renderGame(root, state, opts = {}) {
     const dist = rankDistribution(state);
     const tree = orgTree(state);
     const stage = stageOf(state);
+    const perks = perkSummary(state);
+    const perkCard = `<div class="card" style="margin-bottom:12px">
+      <div class="card-title">经营成长 <span class="right">五轨独立升级 · 二选一 · 永久生效</span></div>
+      <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px">
+        ${perks.map((p) => `<div class="org-exec filled" style="border-color:${p.pending ? p.color + '88' : 'var(--line-2)'}">
+          <div class="between"><b class="tiny">${p.icon} ${p.name} <span class="chip">Lv${p.level}</span></b>
+            ${p.pending ? `<button class="btn tiny primary" data-act="perk-open" data-track="${p.id}">选择升级</button>` : ''}
+          </div>
+          <div class="bar" style="height:6px;margin:6px 0 4px"><div style="width:${Math.min(100, (p.xp / Math.max(1, p.need)) * 100)}%;height:100%;background:${p.color}"></div></div>
+          <div class="tiny dim">${p.xp.toFixed(0)} / ${p.need} XP · 已选 ${p.chosen.length} 项</div>
+          ${p.chosen.length ? `<div class="row" style="gap:3px;flex-wrap:wrap;margin-top:4px">${p.chosen.map((id) => `<span class="chip">${({ m1: '扁平组织', m2: '导师制度', m3: '精准招聘', m4: '长期激励', m5: '反挖角协议', m6: '明星团队', e1: '银行关系', e2: '选址眼光', e3: '精益办公', e4: '税务筹划', e5: '主题运营', e6: '资本结构', t1: '快速迭代', t2: '设计驱动', t3: '质量前置', t4: '续航优先', t5: '性能调校', t6: '影像算法', k1: '增长投放', k2: '需求创造', k3: '门店体验', k4: '口碑管理', k5: '价格锚点', k6: '发布节奏', i1: '生态授权', i2: '并购老手', i3: '品牌势能', i4: '集团协同', i5: '商业情报', i6: '猎头网络' }[id] || id)}</span>`).join('')}</div>` : ''}
+        </div>`).join('')}
+      </div>
+      <div class="tiny dim" style="margin-top:6px">做设计/研发涨技术轨，营销与销量涨市场轨，门店/融资涨经济轨，招聘/培训涨管理轨，授权/收购/子公司涨影响力轨。</div>
+    </div>`;
     return `
       ${head('组织与员工', `${state.employees.length} 名员工 · 月薪 ${fmtMoney(sum(state.employees, (e) => e.salary))}`,
         `<button class="btn small" data-act="refresh-pool">刷新招聘市场</button>`)}
@@ -2169,6 +2208,7 @@ export function renderGame(root, state, opts = {}) {
         <span class="tiny dim">${stage.desc}</span>
         <span class="chip ${tree.depts.filter((d) => d.head).length >= 5 ? 'good' : 'warn'}" style="margin-left:auto">已任命主管 ${tree.depts.filter((d) => d.head).length} / ${tree.depts.length}</span>
       </div>
+      ${perkCard}
       <div class="kpi-row">
         <div class="kpi"><div class="k">在岗人数</div><div class="v">${state.employees.length}</div><div class="d dim">工位 ${officeCapacity(state)}</div></div>
         <div class="kpi"><div class="k">培训中</div><div class="v">${ts.count}</div><div class="d dim">月支出 ${fmtMoney(ts.monthly)}</div></div>
@@ -2339,8 +2379,8 @@ export function renderGame(root, state, opts = {}) {
     const activePol = activePolicies(state);
     return `
       ${head('财务中心', `现金 ${fmtMoney(state.company.cash)} · 负债 ${fmtMoney(debt)}`,
-        `<button class="btn small" data-act="loan" data-amount="10000000">贷款 1000 万</button>
-         <button class="btn small ghost" data-act="repay" data-amount="10000000">还款 1000 万</button>`)}
+        `<button class="btn small primary" data-act="loan-modal">银行贷款 / 还款</button>
+         <span class="chip">信用 ${Math.round((state.credit?.score || 600))}</span>`)}
       ${activePol.length ? `
       <div class="card" style="margin-bottom:12px">
         <div class="card-title">宏观政策 <span class="right tiny dim">${activePol.length} 项生效中</span></div>
@@ -3339,35 +3379,109 @@ export function renderGame(root, state, opts = {}) {
   // 收购谈判弹窗：多轮出价，显示对方要价/情绪/回合
   // 研发立项弹窗：命名 + 规格设计（芯片核心构成/GPU、传感器底大小/像素、OS 底层、面板类型/分辨率）
   // ---------- 屏幕设计 / 宣传图 / 通知与新闻 / OS 发版 ----------
+  function openLoanModal() {
+    const info = loanSummary(state);
+    const offers = loanOffers(state);
+    const body = `<div class="tiny dim" style="margin-bottom:8px">信用分 ${Math.round(info.score)} · 当前额度 ${fmtMoney(info.limit)} · 基准年化 ${(info.rate * 100).toFixed(1)}% · 负债 ${fmtMoney(info.debt)}</div>
+      <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px">
+        ${offers.map((o) => `<div class="card" style="margin:0">
+          <div class="card-title">${o.name}</div>
+          <div class="tiny dim" style="min-height:34px">${o.desc}</div>
+          <div class="between tiny" style="margin:5px 0"><span>额度</span><b>${fmtMoney(o.amount)}</b></div>
+          <div class="between tiny" style="margin:5px 0"><span>期限</span><b>${o.months} 个月</b></div>
+          <div class="between tiny" style="margin:5px 0"><span>年化利率</span><b>${(o.rate * 100).toFixed(1)}%</b></div>
+          <button class="btn small primary" style="width:100%;margin-top:6px" data-act="loan-take" data-id="${o.id}">借款</button>
+        </div>`).join('')}
+      </div>
+      <div class="section-label">待还贷款</div>
+      ${info.loans.length ? `<div class="list">${info.loans.map((l) => `<div class="list-item">
+        <div style="flex:1;min-width:0"><b class="tiny">${esc(l.bank)}</b>
+          <div class="tiny dim">余额 ${fmtMoney(l.balance)} · 年化 ${(l.rate * 100).toFixed(1)}% · 到期 ${l.dueText}${l.overdue > 0 ? ` · <span class="bad">逾期 ${l.overdue} 月</span>` : ''}</div>
+        </div>
+        <input type="number" data-loan-pay="${l.id}" value="${Math.round(l.balance)}" min="0" max="${Math.round(l.balance)}" style="width:110px" />
+        <button class="btn tiny" data-act="loan-repay" data-id="${l.id}">还款</button>
+      </div>`).join('')}</div>` : '<div class="tiny dim">当前没有贷款。</div>'}
+      <div class="tiny dim" style="margin-top:8px">按时还款提升信用分；逾期会降信用、加息并产生罚息。可随时部分或全额还款。</div>`;
+    modalShell('银行贷款', `信用分 ${Math.round(info.score)} · 额度 ${fmtMoney(info.limit)}`, body, '');
+  }
+
+  function openPerkModal(track) {
+    const info = perkSummary(state).find((t) => t.id === track);
+    if (!info || !info.pending) { opts.onToast?.('当前没有待选择的 Perk', 'warn'); return; }
+    const body = `<div class="tiny dim" style="margin-bottom:8px">${info.icon} ${info.name} · Lv${info.level} · 选择一个永久加成</div>
+      <div class="grid" style="grid-template-columns:1fr 1fr;gap:10px">
+        ${info.options.map((p) => `<div class="card" style="margin:0">
+          <div class="card-title">${p.name}</div>
+          <div class="tiny dim" style="min-height:40px">${p.desc}</div>
+          <button class="btn small primary" style="width:100%;margin-top:8px" data-act="perk-choose" data-track="${track}" data-id="${p.id}">选择</button>
+        </div>`).join('')}
+      </div>`;
+    modalShell('经营成长 · 选择 Perk', `${info.name} 轨 Lv${info.level}`, body, '');
+  }
+
   function openThemePreview(uid) {
     const d = (state.uiDesigns || []).find((x) => x.uid === uid);
     if (!d) { opts.onToast?.('找不到该主题', 'bad'); return; }
-    const body = `<div class="row" style="gap:6px;margin-bottom:8px">
+    const body = `<div class="row" style="gap:6px;margin-bottom:8px;flex-wrap:wrap">
         <button class="btn small primary" data-preview-mode="home">桌面</button>
         <button class="btn small ghost" data-preview-mode="lock">锁屏</button>
-        <span class="tiny dim" style="margin-left:auto">主题评分 ${themeScore(d)} · 静态预览</span>
+        <span style="width:8px"></span>
+        <button class="btn small primary" data-device="phone">手机</button>
+        <button class="btn small ghost" data-device="tablet">平板</button>
+        <button class="btn small ghost" data-device="watch">手表</button>
+        <button class="btn small ghost" data-watch-shape="round">圆表</button>
+        <button class="btn small ghost" data-watch-shape="square">方表</button>
+        <span class="tiny dim" style="margin-left:auto">主题评分 ${themeScore(d)} · 简化实机预览</span>
       </div>
-      <div style="display:flex;justify-content:center"><canvas id="theme-preview-cv" style="border-radius:16px;box-shadow:0 8px 30px rgba(0,0,0,.5)"></canvas></div>`;
-    const { mask } = modalShell('OS 主题预览', esc(d.name || '未命名主题'), body, '');
+      <div style="display:flex;justify-content:center;align-items:center;min-height:620px"><canvas id="theme-preview-cv" style="box-shadow:0 8px 30px rgba(0,0,0,.5);transition:all .2s"></canvas></div>`;
+    const { mask } = modalShell('OS 实机预览', esc(d.name || '未命名主题'), body, '');
     const cv = mask.querySelector('#theme-preview-cv');
     const ctx = cv.getContext('2d');
-    const W = 300, H = 650;
-    cv.width = W; cv.height = H;
-    cv.style.width = '270px'; cv.style.height = '585px';
     let mode = 'home';
+    let device = 'phone';
+    let watchShape = 'round';
     let tries = 0;
+    const cfg = () => device === 'tablet'
+      ? { W: 520, H: 390, cw: 430, ch: 322, r: 18 }
+      : device === 'watch'
+        ? { W: 300, H: 300, cw: 230, ch: 230, r: watchShape === 'round' ? '50%' : 34 }
+        : { W: 300, H: 650, cw: 270, ch: 585, r: 36 };
+    const layout = () => {
+      const c = cfg();
+      cv.width = c.W; cv.height = c.H;
+      cv.style.width = c.cw + 'px'; cv.style.height = c.ch + 'px';
+      cv.style.borderRadius = typeof c.r === 'number' ? c.r + 'px' : c.r;
+      cv.style.border = device === 'watch' ? '9px solid #242a35' : '7px solid #1a1f28';
+      return c;
+    };
     const draw = () => {
-      const ok = composeScreenUI(ctx, W, H, d, mode);
-      if (!ok && tries++ < 5) setTimeout(() => { if (document.body.contains(cv)) draw(); }, 220);
+      const c = layout();
+      tries = 0;
+      const run = () => {
+        const ok = composeScreenUI(ctx, c.W, c.H, d, mode);
+        if (!ok && tries++ < 5) setTimeout(() => { if (document.body.contains(cv)) run(); }, 220);
+      };
+      run();
+    };
+    const setActive = (sel, attr, val, activeClass = 'primary') => {
+      mask.querySelectorAll(sel).forEach((x) => {
+        const on = x.dataset[attr] === val;
+        x.className = `btn small ${on ? activeClass : 'ghost'}`;
+      });
     };
     mask.querySelectorAll('[data-preview-mode]').forEach((b) => {
+      b.addEventListener('click', () => { mode = b.dataset.previewMode; setActive('[data-preview-mode]', 'previewMode', mode); draw(); });
+    });
+    mask.querySelectorAll('[data-device]').forEach((b) => {
       b.addEventListener('click', () => {
-        mode = b.dataset.previewMode;
-        mask.querySelectorAll('[data-preview-mode]').forEach((x) => {
-          x.className = `btn small ${x === b ? 'primary' : 'ghost'}`;
-        });
+        device = b.dataset.device;
+        setActive('[data-device]', 'device', device);
+        if (device === 'watch') { mode = 'lock'; setActive('[data-preview-mode]', 'previewMode', 'lock'); }
         draw();
       });
+    });
+    mask.querySelectorAll('[data-watch-shape]').forEach((b) => {
+      b.addEventListener('click', () => { watchShape = b.dataset.watchShape; setActive('[data-watch-shape]', 'watchShape', watchShape); draw(); });
     });
     draw();
   }

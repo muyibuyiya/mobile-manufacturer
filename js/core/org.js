@@ -4,6 +4,7 @@
 import { clamp, pick, rand } from './util.js';
 import { DEPT_DEFS, ROLE_BY_DEPT } from './state.js';
 import { layoutMoraleBonus, layoutRndBonus } from '../data/furniture.js';
+import { perkAdd } from './perks.js';
 
 export const EXEC_SEATS = [
   { id: 'ceo', name: 'CEO', desc: '统筹全局，影响所有部门的执行效率' },
@@ -122,7 +123,7 @@ export function fInterest(state) {
 
 export function fMorale(state) {
   const furniture = layoutMoraleBonus(state);
-  return (focusOf(state, 'hr') - 0.5) * 10 * deptStrength(state, 'hr') + furniture;
+  return (focusOf(state, 'hr') - 0.5) * 10 * deptStrength(state, 'hr') + furniture + perkAdd(state, 'morale');
 }
 
 // 部门等级：决定能挂多少人（GDD 的初创→大型阶段）

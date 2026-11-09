@@ -55,6 +55,12 @@ async function main() {
   check('主题预览弹窗', await ev(`!!document.querySelector('#theme-preview-cv')`));
   await ev(`document.querySelector('[data-preview-mode="lock"]')?.click()`); await sleep(250);
   check('主题预览可切锁屏', await ev(`document.querySelector('[data-preview-mode="lock"]')?.classList.contains('primary')`));
+  await ev(`document.querySelector('[data-device="tablet"]')?.click()`); await sleep(250);
+  check('形态预览可切平板', await ev(`(() => { const c = document.querySelector('#theme-preview-cv'); return c?.width === 520 && c?.height === 390; })()`));
+  await ev(`document.querySelector('[data-device="watch"]')?.click()`); await sleep(250);
+  check('形态预览可切圆表', await ev(`(() => { const c = document.querySelector('#theme-preview-cv'); return c?.width === 300 && c?.style.borderRadius === '50%'; })()`));
+  await ev(`document.querySelector('[data-watch-shape="square"]')?.click()`); await sleep(250);
+  check('形态预览可切方表', await ev(`document.querySelector('#theme-preview-cv')?.style.borderRadius === '34px'`));
   await ev(`document.querySelector('.modal-mask [data-close]')?.click()`); await sleep(200);
   check('无运行时报错', errors.length === 0, errors.slice(0, 2).join(' | '));
 

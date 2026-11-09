@@ -40,6 +40,30 @@ export const PHONE_TEMPLATES = [
     keypad: ['none'], home: null, notch: ['none', 'punch', 'notch', 'waterdrop', 'popup'], fold: true,
     extras: ['x_fp', 'x_face', 'x_wp', 'x_wl', 'x_fc', 'x_udc', 'x_vc', 'x_sat', 'x_sec'],
   },
+  {
+    id: 'tablet', name: '平板', from: 2010,
+    desc: '大屏触控平板：4:3/16:10 屏幕、无键盘、窄边框；摄像头与电池按平板尺寸适配。',
+    screen: { maxInch: 13.5, presetInch: 11, presetBezel: 4, aspects: ['4:3', '16:10', '3:2', '16:9'], frac: 0.9, cornerMax: 10 },
+    body: { length: 250, width: 176, thickness: 7.6, corner: 8 },
+    keypad: ['none'], home: null, notch: ['none', 'punch'], fold: false,
+    extras: ['x_fp', 'x_face', 'x_wp', 'x_wl', 'x_fc', 'x_vc', 'x_sec'],
+  },
+  {
+    id: 'watch_round', name: '智能手表（圆表）', from: 2015,
+    desc: '只设计表体：圆形表盘、无键盘、无摄像头；屏幕 1:1，圆角自动贴合表体。',
+    screen: { maxInch: 2.2, presetInch: 1.5, presetBezel: 1.4, aspects: ['1:1'], frac: 0.8, cornerMax: 24 },
+    body: { length: 46, width: 46, thickness: 11, corner: 22.5 },
+    keypad: ['none'], home: null, notch: ['none'], fold: false,
+    extras: ['x_wp', 'x_face', 'x_sec'],
+  },
+  {
+    id: 'watch_square', name: '智能手表（方表）', from: 2015,
+    desc: '只设计表体：方形表盘、无键盘、无摄像头；可调表体圆角在方表与圆表之间过渡。',
+    screen: { maxInch: 2.2, presetInch: 1.6, presetBezel: 1.4, aspects: ['1:1'], frac: 0.82, cornerMax: 8 },
+    body: { length: 42, width: 42, thickness: 10.5, corner: 4 },
+    keypad: ['none'], home: null, notch: ['none'], fold: false,
+    extras: ['x_wp', 'x_face', 'x_sec'],
+  },
 ];
 
 export const PHONE_TPL_MAP = Object.fromEntries(PHONE_TEMPLATES.map((t) => [t.id, t]));

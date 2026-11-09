@@ -4,6 +4,7 @@
 import { clamp } from './util.js';
 import { MARKET_MAP, LINEUP_MAP } from '../data/world.js';
 import { addLog } from './state.js';
+import { perkMul } from './perks.js';
 
 export const CAMPAIGN_TYPES = [
   { id: 'social', name: '社交种草', icon: '📱', desc: '短视频/社区口碑，适合主流与性价比机型', heat: 1.0, aware: 1.25, brand: 0.5, lineups: ['main', 'budget'], markets: ['cn', 'sea', 'in'] },
@@ -89,7 +90,7 @@ export function stepCampaigns(state, report) {
     if (!model || model.status !== 'production' || model.released === false) continue;
     const t = info.type;
     const staff = 1 + clamp((state.employees || []).filter((e) => e.deptId === 'mkt').length * 0.02, 0, 0.2);
-    const eff = info.fit * staff * (info.trend ? 1.25 : 1);
+    const eff = info.fit * staff * (info.trend ? 1.25 : 1) * perkMul(state, 'marketing');
     spend += c.monthly;
     const heatGain = t.heat * (1.2 + c.monthly / 2e6) * eff * 0.45;
     model.heat = clamp((model.heat === undefined ? 100 : model.heat) + heatGain, 0, 120);

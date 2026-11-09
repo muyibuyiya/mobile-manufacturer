@@ -3,6 +3,7 @@
 import { clamp, sum, rand } from './util.js';
 import { MEDIA_CHANNELS, MEDIA_MAP, DEMO_LINEUP } from '../data/media.js';
 import { addLog } from './state.js';
+import { perkMul } from './perks.js';
 
 export function ensureMarketing(state) {
   if (!state.marketing) state.marketing = {};
@@ -48,7 +49,7 @@ export function stepMarketing(state, report) {
     const budget = m.channels[ch.id] || 0;
     if (budget <= 0 || state.date.year < ch.from) continue;
     const fit = channelFit(state, ch);
-    const effect = (budget / 1e5) * ch.reach * fit * 0.16;
+    const effect = (budget / 1e5) * ch.reach * fit * 0.16 * perkMul(state, 'marketing');
     brandGain += effect * 0.55;
     awareGain += effect;
   }

@@ -1,6 +1,6 @@
 // 手机设计器：参数化 2D 六视图 + three.js 3D 模型 + 合理性校验
 import * as THREE from '../../vendor/three.module.js';
-import { derive, validate, bomCost, screenSize, SCREEN_ASPECTS, defaultDesign, maxScreenInch, cameraModuleRect, lensSpecs, ensureLenses, ensureBranding, speakerRowSpec, PORT_OPENINGS, layoutPos, makeLens, arrangeLenses } from '../core/design.js';
+import { derive, validate, bomCost, screenSize, SCREEN_ASPECTS, defaultDesign, maxScreenInch, cameraModuleRect, lensSpecs, ensureLenses, ensureBranding, ensurePackaging, packageScore, PACKAGE_MATERIALS, speakerRowSpec, PORT_OPENINGS, layoutPos, makeLens, arrangeLenses } from '../core/design.js';
 import { CPUS, RAMS, STORAGES, SCREENS, CAMERAS, BATTERIES, SYSTEMS, EXTRAS, MATERIALS, FINISHES, CHARGERS, BODY_COLORS } from '../data/parts.js';
 import { PHONE_TEMPLATES, PHONE_TPL_MAP, tplCaps } from '../data/templates.js';
 import { IMAGE_SENSORS, LENS_TYPES, DECO_SHAPES, PANEL_VENDORS, RES_TIERS, lensTypeById, sensorById, lensRadiusMm } from '../data/hardware.js';
@@ -269,14 +269,19 @@ export function renderDesigner(container, state, model, hooks = {}) {
   function controls() {
     const d = model.design;
     const body = d.body;
+    const pkg = ensurePackaging(d);
     const divs = state.divisions || {};
     const TPL = tplCaps(PHONE_TPL_MAP[d.template] || PHONE_TPL_MAP.full_screen, availYear);
     const freeAspect = d.screen.aspect === '自由';
+    const isTablet = TPL.id === 'tablet';
+    const isWatch = String(TPL.id).startsWith('watch');
+    const bodyLMin = isWatch ? 30 : 70, bodyLMax = isTablet ? 300 : 200;
+    const bodyWMin = isWatch ? 30 : 35, bodyWMax = isTablet ? 240 : 100;
     const ports = body.ports || {};
     const sp = speakerRowSpec(ports.speakerStyle);
     const micSpan = ports.micStyle && ports.micStyle !== 'hole' ? speakerRowSpec(ports.micStyle).span : 2.8;
-    return section('tpl', '手机模板', `
-      <span class="tiny dim" style="display:block;margin-bottom:6px">形态世代决定可用板块：屏幕比例 / 开孔 / 键盘 / Home 键 / 折叠 / 附加功能——切换时自动适配参数</span>
+    return section('tpl', '设备形态', `
+      <span class="tiny dim" style="display:block;margin-bottom:6px">手机 / 平板 / 智能手表共用同一套设计器；手表只设计表体与圆形/方形屏幕，不做表带。</span>
       <label class="field"><span>形态世代</span>
         <select data-k="template">
           ${PHONE_TEMPLATES.map((t) => `<option value="${t.id}" ${d.template === t.id ? 'selected' : ''} ${t.from > availYear ? 'disabled' : ''}>${t.name}${t.from > availYear ? `（${t.from} 年解锁）` : ''}</option>`).join('')}
@@ -284,10 +289,10 @@ export function renderDesigner(container, state, model, hooks = {}) {
       </label>
       <div class="tiny dim" style="margin-top:4px">${TPL.desc}</div>`)
       + section('body', '机身', `
-      ${sliderRow('长度', 'body.length', body.length, 70, 200, 1, 'mm')}
-      ${sliderRow('宽度', 'body.width', body.width, 35, 100, 0.5, 'mm')}
-      ${sliderRow('厚度', 'body.thickness', body.thickness, 5, 32, 0.1, 'mm')}
-      ${sliderRow('边角弧度', 'body.corner', body.corner, 0, 20, 0.5, 'mm')}
+      ${sliderRow('长度', 'body.length', body.length, bodyLMin, bodyLMax, 1, 'mm')}
+      ${sliderRow('宽度', 'body.width', body.width, bodyWMin, bodyWMax, 0.5, 'mm')}
+      ${sliderRow('厚度', 'body.thickness', body.thickness, 5, isWatch ? 16 : 32, 0.1, 'mm')}
+      ${sliderRow('边角弧度', 'body.corner', body.corner, 0, isWatch ? 30 : 20, 0.5, 'mm')}
       <label class="field"><span>中框轮廓（侧边剖面）</span>
         <select data-k="body.frameType">
           ${[['flat', '直角边框（iPhone 4/12 式硬朗）'], ['arc', '圆弧边框（圆润手感，多数安卓）'], ['chamfer', '45° 切角（iPhone 5 式棱线）'], ['bevel', '2.5D 缓弧（微弧过渡）']].map(([v, n]) => `<option value="${v}" ${(body.frameType || 'flat') === v ? 'selected' : ''}>${n}</option>`).join('')}
@@ -372,7 +377,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
           }).join('')}
         </select>
       </label>`)
-      + section('camera', '影像模组', `
+      + (isWatch ? '' : section('camera', '影像模组', `
       ${d.camera.lenses.map((l, i) => lensCard(l, i, d, divs)).join('')}
       ${d.camera.lenses.length < 6 ? `<button type="button" class="btn small" data-lens-add style="margin:4px 0 8px">＋ 添加镜头（${d.camera.lenses.length}/6）</button>` : ''}
       <label class="field"><span>阵列布局（一键重排镜头位置）</span>
@@ -442,7 +447,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
           <option value="v" ${(d.camera.periDir || 'v') === 'v' ? 'selected' : ''}>竖向（长边沿机身纵向）</option>
           <option value="h" ${d.camera.periDir === 'h' ? 'selected' : ''}>横向（长边沿机身横向）</option>
         </select>
-      </label>` : ''}`)
+      </label>` : ''}`))
       + section('material', '材质与外观', `
       <label class="field"><span>中框</span>
         <select data-k="body.frame">
@@ -461,6 +466,28 @@ export function renderDesigner(container, state, model, hooks = {}) {
       </label>`)
       + section('scheme', '配色方案', schemeSection())
       + section('branding', '背面装饰', brandingSection())
+      + section('package', '包装设计', `
+      <div style="display:flex;gap:10px;align-items:flex-start">
+        <div style="width:86px;height:118px;border-radius:10px;background:${pkg.color};border:1px solid rgba(255,255,255,.18);display:flex;flex-direction:column;align-items:center;justify-content:center;box-shadow:inset 0 0 24px rgba(0,0,0,.35)">
+          ${pkg.logo ? `<div style="width:34px;height:34px;border-radius:9px;background:linear-gradient(135deg,${partColor('frame')},#0b1220);display:flex;align-items:center;justify-content:center;font-weight:700;color:#fff;font-size:15px">${esc((state.company.name || 'M').slice(0, 1))}</div>` : ''}
+          <div style="font-size:10px;color:#e6edf7;margin-top:6px;text-align:center;padding:0 4px">${esc(pkg.text || state.company.name || '')}</div>
+        </div>
+        <div style="flex:1;min-width:0">
+          <label class="field"><span>盒型 / 材质</span>
+            <select data-k="packaging.material">${PACKAGE_MATERIALS.map((m) => `<option value="${m.id}" ${pkg.material === m.id ? 'selected' : ''}>${m.name} · ¥${m.cost}</option>`).join('')}</select>
+          </label>
+          <label class="field"><span>主色</span>
+            <input type="color" data-k="packaging.color" value="${pkg.color}" style="width:44px;height:26px;padding:1px" />
+          </label>
+          <label class="opt ${pkg.logo ? 'on' : ''}" style="display:flex;gap:6px;align-items:center;padding:5px 7px;margin:3px 0">
+            <input type="checkbox" data-k="packaging.logo" data-bool="1" ${pkg.logo ? 'checked' : ''} style="width:auto" /><span>盒面 Logo</span>
+          </label>
+          <label class="field"><span>盒面文字</span>
+            <input type="text" data-k="packaging.text" value="${esc(pkg.text || '')}" maxlength="18" style="width:100%" placeholder="${esc(state.company.name || '')}" />
+          </label>
+        </div>
+      </div>
+      <div class="tiny dim" style="margin-top:4px">包装评分 ${packageScore(d)}/6 · 影响开箱评价与单机包装成本</div>`)
       + section('buttons', '按键与接口', `
       <label class="field"><span>侧键样式</span>
         <select data-k="body.buttons">
@@ -3364,6 +3391,12 @@ export function renderDesigner(container, state, model, hooks = {}) {
     }
     if (key === 'template' && v !== prevTpl) {
       d.template = v; // 先落模板，maxScreenInch 的年代上限才能用新模板
+      if (String(v).startsWith('watch')) {
+        d.camera.lenses = [];
+        d.camera.flash = null;
+        d.body.fold = 'none';
+        d.body.buttons = 'none';
+      }
       const T = tplCaps(PHONE_TPL_MAP[v] || PHONE_TPL_MAP.full_screen, availYear);
       // 机身：该世代典型尺寸
       if (T.body) {
@@ -3515,6 +3548,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
     // 勾选背面 Logo/文字时出现位置、颜色与材质编辑；开孔样式切单孔时出现挖孔位置滑杆
     if (key === 'camera.layout') arrangeLenses(d.camera); // 切换镜头布局模式时半径感知重排
     if (key === 'template' || key === 'camera.layout' || key === 'camera.deco.w' || key === 'camera.deco.h' || key === 'screen.aspect' || key === 'screen.panelVendor' || key === 'body.ports.charge' || key === 'body.ports.micStyle' || key === 'body.fold' || key === 'camera.flash.style' || key === 'logoOnBack' || key === 'brandText' || key === 'body.coverOn' || key === 'screen.notch' || key === 'body.coverScreen.notch'
+      || (key.startsWith('packaging.') && key !== 'packaging.text')
       || (key.startsWith('camera.lenses.') && key.endsWith('.type'))) { // 镜头类型切换时出现潜望凸台厚度/方向控件
       renderControls();
       syncFoldToggle();

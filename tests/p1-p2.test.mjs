@@ -3,6 +3,8 @@ import { createGame } from '../js/core/state.js';
 import { openStore, upgradeStore, closeStore, storeStats, storeSalesMul, stepStores } from '../js/core/stores.js';
 import { startCampaign, stepCampaigns, cancelCampaign, currentTrend } from '../js/core/campaigns.js';
 import { themeScore, selectTheme, themeBonus } from '../js/core/themes.js';
+import { addPerkXp, perkSummary, perkChoices, choosePerk } from '../js/core/perks.js';
+import { loanSummary, loanOffers, takeLoan, repayLoan, stepLoans } from '../js/core/loans.js';
 
 let bad = 0;
 const check = (name, ok, detail = '') => {
@@ -57,6 +59,30 @@ check('主题评分有效', score > 50 && score <= 100, String(score));
 const sel = selectTheme(s, 'u_theme');
 check('可设为 OS 主题', sel.ok === true && s.osThemeUid === 'u_theme');
 check('主题提供流行度加成', themeBonus(s).popGrowth > 0);
+
+// Perk
+addPerkXp(s, 'tech', 999);
+const techTrack = perkSummary(s).find((t) => t.id === 'tech');
+check('Perk 可升级并待选择', techTrack.pending === true && techTrack.level === 1);
+const opts = perkChoices(s, 'tech');
+check('Perk 二选一', opts.length === 2, String(opts.length));
+const chosen = choosePerk(s, 'tech', opts[0].id);
+check('Perk 可选择生效', chosen.ok === true);
+check('Perk 选择后关闭待选', perkSummary(s).find((t) => t.id === 'tech').pending === false);
+
+// 贷款 2.0
+const beforeLoan = s.company.cash;
+const offer = loanOffers(s)[0];
+const ln = takeLoan(s, offer.id);
+check('可申请贷款', ln.ok === true && s.loans.length >= 1);
+check('贷款放款并计入负债', s.company.cash > beforeLoan && s.company.debt >= offer.amount);
+const rep2 = {};
+const interest2 = stepLoans(s, rep2);
+check('贷款按月计息', interest2 > 0 && rep2.interest === interest2);
+const paid = repayLoan(s, ln.loan.id, ln.loan.balance);
+check('可提前全额还款', paid.ok === true && s.loans.every((l) => l.id !== ln.loan.id));
+check('还清后负债下降', s.company.debt < offer.amount, String(s.company.debt));
+check('信用分存在', loanSummary(s).score >= 300);
 
 console.log(bad ? `\n${bad} failed` : '\nALL PASS');
 process.exit(bad ? 1 : 0);

@@ -1,19 +1,20 @@
 // 产品评价：用户评分 / 媒体评测 / 故障率 / 退货率 / 玩家评论
 // 这些数字不是装饰——故障率决定售后成本与退货支出，口碑又回灌到下一代产品。
 import { clamp } from './util.js';
-import { derive, eraBaseline, eraRel } from './design.js';
+import { derive, eraBaseline, eraRel, packageScore } from './design.js';
 import { MARKET_MAP, expectedPrice } from '../data/world.js';
 import { staffPower } from './state.js';
 import { fQa } from './org.js';
 import { warrantyRatingAdd, returnsCutOf } from './aftermarket.js';
 import { modelCommentTags, pickComments } from '../data/reviews-text.js';
+import { perkMul } from './perks.js';
 
 // 故障率：质量投入、产线水平、质量部强度共同决定
 export function defectRate(state, model) {
   const qaPower = staffPower(state, 'qa');
   const base = 0.03 + Math.max(0, 72 - (model.quality ?? 65)) * 0.0016;
   const improve = clamp(qaPower * 0.0022, 0, 0.02);
-  return clamp((base - improve) * fQa(state), 0.0015, 0.16);
+  return clamp((base - improve) * fQa(state) * perkMul(state, 'defect'), 0.0015, 0.16);
 }
 
 const lg = (x) => Math.log2(Math.max(x, 0.35));
@@ -50,7 +51,7 @@ export function computeReview(state, model) {
   );
   const user = clamp(
     52 + 40 * userRaw + (q - 65) * 0.45 + warrantyRatingAdd(state)
-    - Math.max(0, fair - 1) * 18 - defect * 110 + (state.company.reputation - 45) * 0.12,
+    - Math.max(0, fair - 1) * 18 - defect * 110 + (state.company.reputation - 45) * 0.12 + (packageScore(model.design) - 2) * 0.5,
     5, 98,
   );
   return {

@@ -4,6 +4,7 @@
 import { clamp } from './util.js';
 import { MARKET_MAP } from '../data/world.js';
 import { addLog } from './state.js';
+import { perkMul } from './perks.js';
 
 export const MAX_STORES_PER_MARKET = 3;
 export const MAX_STORE_LEVEL = 3;
@@ -30,7 +31,7 @@ export function storeList(state, marketId) {
 export function storeOpenCost(state, marketId) {
   const mk = MARKET_MAP[marketId];
   if (!mk) return 0;
-  return Math.round(mk.base * 0.1 + 1.5e6);
+  return Math.round((mk.base * 0.1 + 1.5e6) * perkMul(state, 'storeCost'));
 }
 
 export function storeUpgradeCost(state, store) {
@@ -48,7 +49,7 @@ export function storeStats(state, marketId) {
     const lv = STORE_LEVELS.find((x) => x.level === (s.level || 1)) || STORE_LEVELS[0];
     upkeep += Math.round((MARKET_MAP[marketId]?.base || 0) * 0.006 * lv.upkeepMul);
     traffic += lv.trafficMul;
-    salesMul += 0.05 + 0.035 * lv.convMul * (s.level || 1);
+    salesMul += (0.05 + 0.035 * lv.convMul * (s.level || 1)) * perkMul(state, 'storeConv');
   }
   return {
     count: list.length,

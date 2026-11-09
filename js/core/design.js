@@ -35,6 +35,33 @@ export function speakerRowSpec(style) {
 
 // 背面装饰（Logo + 文字）位置与尺寸（mm，原点=机身中心，+y 朝顶部）。
 // text=null/'' 表示跟随公司英文名；logoOnBack / brandText 仍是显隐开关。幂等。
+export const PACKAGE_MATERIALS = [
+  { id: 'cardboard', name: '环保纸盒', cost: 2, quality: 0, desc: '可回收纸浆，成本低，开箱质感一般' },
+  { id: 'plastic', name: '硬质塑料', cost: 5, quality: 1.5, desc: '耐用、防潮，适合中端走量' },
+  { id: 'premium', name: '高端礼盒', cost: 12, quality: 3.5, desc: '厚卡纸 + 内衬，开箱仪式感强' },
+  { id: 'minimal', name: '极简无塑', cost: 7, quality: 2.2, desc: '无塑内衬 + 大豆油墨，环保叙事' },
+];
+
+export function ensurePackaging(design) {
+  if (!design) return design;
+  if (!design.packaging || typeof design.packaging !== 'object') design.packaging = {};
+  const p = design.packaging;
+  if (!PACKAGE_MATERIALS.some((m) => m.id === p.material)) p.material = 'cardboard';
+  if (!/^#[0-9a-f]{6}$/i.test(String(p.color || ''))) p.color = '#1f2937';
+  if (p.logo === undefined) p.logo = true;
+  if (p.text === undefined) p.text = '';
+  return p;
+}
+
+export function packageScore(design) {
+  const p = ensurePackaging(design);
+  const m = PACKAGE_MATERIALS.find((x) => x.id === p.material) || PACKAGE_MATERIALS[0];
+  let s = 2 + m.quality;
+  if (p.logo) s += 0.8;
+  if (p.text) s += 0.5;
+  return +clamp(s, 0, 6).toFixed(1);
+}
+
 export function ensureBranding(design) {
   if (!design || !design.body) return design;
   if (!design.branding || typeof design.branding !== 'object') design.branding = {};
@@ -145,6 +172,7 @@ export function defaultDesign(year = 2020, unlocked = []) {
     },
     // 外观装饰
     logoOnBack: true,
+    packaging: { material: 'cardboard', color: '#1f2937', logo: true, text: '' },
     brandText: true,
     speakerGrill: modern ? false : true,
     keyboard: year < 2008,
@@ -492,9 +520,11 @@ function rawBom(design) {
   const camCost = lensesCost(design);
   const coverScreenInch = design.body.coverScreen?.inch || 0;
   const coverPanelCost = coverScreenInch > 0 ? panel.priceFor(Math.min(coverScreenInch, 7)) * 0.7 : 0;
+  const pk = ensurePackaging(design);
+  const pkM = PACKAGE_MATERIALS.find((x) => x.id === pk.material) || PACKAGE_MATERIALS[0];
   const parts = c.price + r.price + s.price + b.price + camCost
     + panel.priceFor(design.screen.inch) * (1 + ((design.screen.hz || 60) - 60) * 0.004) + coverPanelCost + frame.price + back.price * 1.4 + os.fee
-    + cw.price + wl.price + pr.bonus * 4;
+    + cw.price + wl.price + pr.bonus * 4 + pkM.cost;
   const extras = design.parts.extras.reduce((sum, id) => {
     const x = EXTRAS.find((e) => e.id === id);
     return sum + (x ? x.price : 0);
@@ -568,7 +598,8 @@ export function derive(design, year, opts = {}) {
   const effLen = b.fold === 'flip' ? b.length * 2 : b.length;
   const effWid = b.fold === 'fold' ? b.width * 2 : b.width;
   const ratio = effLen / effWid;
-  const ratioIdeal = b.fold === 'fold' ? 1.06 : 2.05;
+  const formId = design.template || 'full_screen';
+  const ratioIdeal = formId === 'tablet' ? 1.4 : formId.startsWith('watch') ? 1.0 : b.fold === 'fold' ? 1.06 : 2.05;
   const ratioScore = clamp(100 - Math.abs(ratio - ratioIdeal) * 90, 0, 100);
   const thinScore = clamp(100 - Math.max(0, b.thickness - 6.5) * 7.5, 0, 100);
   const screenRatio = clamp(((scr.w * scr.h) / (b.length * b.width)) * 100, 0, 100);
@@ -958,6 +989,7 @@ export function newModel(year, unlocked, name = '新机型') {
 // 老档迁移：无 template 字段按年代/屏幕尺寸推断；键盘与 Home 键按模板归位
 export function ensureTemplate(d, year = 2020) {
   if (!PHONE_TPL_MAP[d.template]) d.template = templateForYear(year);
+  ensurePackaging(d);
   const T = PHONE_TPL_MAP[d.template];
   d.keypad = d.keypad || { kind: T.keypad.includes('none') ? 'none' : T.keypad[0], style: 'grid', scale: 1 };
   if (!T.keypad.includes(d.keypad.kind)) d.keypad.kind = T.keypad.includes('none') ? 'none' : T.keypad[0];

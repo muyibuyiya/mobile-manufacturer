@@ -38,6 +38,13 @@ async function main() {
 
   check('市场页有门店网络', await ev(`document.body.textContent.includes('全球门店网络')`));
   check('市场页有区域营销活动', await ev(`document.body.textContent.includes('区域营销活动')`));
+  await ev(`document.querySelector('[data-tab=company]')?.click()`); await sleep(250);
+  check('组织页有经营成长 Perk', await ev(`document.body.textContent.includes('经营成长') && document.body.textContent.includes('影响力与支配')`));
+  await ev(`document.querySelector('[data-tab=finance]')?.click()`); await sleep(250);
+  await ev(`document.querySelector('[data-act="loan-modal"]')?.click()`); await sleep(250);
+  check('银行贷款弹窗有 3 档方案', await ev(`document.querySelectorAll('[data-act="loan-take"]').length === 3`));
+  await ev(`document.querySelector('.modal-mask [data-close]')?.click()`); await sleep(200);
+  await ev(`document.querySelector('[data-tab=market]')?.click()`); await sleep(250);
 
   // 开店 → 升级 → 关店
   const open = await ev(`(() => { const b = document.querySelector('[data-act="store-open"]'); if (!b) return ''; const before = b.closest('.org-exec')?.textContent || ''; b.click(); return before; })()`);
