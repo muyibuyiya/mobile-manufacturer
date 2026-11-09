@@ -61,6 +61,10 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
   let previewMode = 'home';
   let sdTab = 'controls';
   let zoomMode = 'fit';
+  const undoStack = [];
+  const redoStack = [];
+  let lastUndoAt = 0;
+  let restoring = false;
   let onChangedCb = null;
   let dead = false;
 
@@ -83,6 +87,8 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
         <button class="btn small" data-sd="zoom" data-v="75">75%</button>
         <button class="btn small" data-sd="zoom" data-v="100">100%</button>
       </div>
+      <button class="btn small ghost" data-sd="undo" title="撤销 Ctrl+Z">撤销</button>
+      <button class="btn small ghost" data-sd="redo" title="重做 Ctrl+Shift+Z">重做</button>
       <div style="flex:1"></div>
       <button class="btn small ghost" data-sd="discard">不保存退出</button>
       <button class="btn small" data-sd="save">保存</button>
@@ -101,6 +107,33 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
   const statusEl = overlay.querySelector('[data-sd=status]');
 
   // ---------- 编辑逻辑 ----------
+  function pushUndo() {
+    if (restoring) return;
+    const now = Date.now();
+    if (now - lastUndoAt < 280) return;
+    lastUndoAt = now;
+    undoStack.push(JSON.parse(JSON.stringify(active)));
+    if (undoStack.length > 60) undoStack.shift();
+    redoStack.length = 0;
+  }
+  function applySnap(snap) {
+    restoring = true;
+    for (const k of Object.keys(active)) delete active[k];
+    Object.assign(active, JSON.parse(JSON.stringify(snap)));
+    restoring = false;
+    markDirty();
+    renderControls(); draw();
+  }
+  function undoDesign() {
+    if (!undoStack.length) return;
+    redoStack.push(JSON.parse(JSON.stringify(active)));
+    applySnap(undoStack.pop());
+  }
+  function redoDesign() {
+    if (!redoStack.length) return;
+    undoStack.push(JSON.parse(JSON.stringify(active)));
+    applySnap(redoStack.pop());
+  }
   function newDesign(name) {
     return {
       uid: 'ui' + Date.now().toString(36) + Math.random().toString(36).slice(2, 4), name,
@@ -399,6 +432,7 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
     destroy();
   }
   function discard() {
+    if (dirty && !window.confirm('有未保存的修改，确定不保存退出？')) return;
     if (onToast && dirty) onToast('已放弃本次修改', 'warn');
     destroy();
   }
@@ -412,6 +446,7 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
     const act = e.target.closest('[data-sd]');
     if (!act) return;
     const k = act.dataset.sd;
+    if (!['tab', 'preview', 'sel', 'undo', 'redo', 'import', 'lock-import'].includes(k)) pushUndo();
     if (k === 'new') {
       const d = newDesign(`UI 方案 ${draft.length + 1}`);
       draft.push(d); active = d; markDirty();
@@ -475,6 +510,7 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
   controlsEl.addEventListener('input', (e) => {
     const k = e.target.dataset.sd;
     if (!k) return;
+    pushUndo();
     if (k === 'name') active.name = e.target.value;
     else if (k === 'wall-color') active.wallColor = e.target.value;
     else if (k === 'lock-wall-color') active.lockWallColor = e.target.value;
@@ -547,6 +583,8 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
       overlay.querySelectorAll('[data-sd="zoom"]').forEach((b) => b.classList.toggle('primary', b.dataset.v === zoomMode));
       draw(); return;
     }
+    if (e.target.closest('[data-sd="undo"]')) { undoDesign(); return; }
+    if (e.target.closest('[data-sd="redo"]')) { redoDesign(); return; }
   });
   // 画布点选：上/中/下区域跳到对应控件组
   cv.addEventListener('click', (e) => {
@@ -567,7 +605,13 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
   });
 
   // ---------- 键盘 ----------
-  function onKey(e) { if (e.key === 'Escape') discard(); }
+  function onKey(e) {
+    if (e.key === 'Escape') discard();
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+      e.preventDefault();
+      if (e.shiftKey) redoDesign(); else undoDesign();
+    }
+  }
   window.addEventListener('keydown', onKey);
 
   renderControls();

@@ -43,6 +43,8 @@ export function deviceTypeOf(design) {
 export function ensureDeviceExtras(design) {
   if (!design) return design;
   design.deviceType = deviceTypeOf(design);
+  if (typeof design.uiDesign !== 'string') design.uiDesign = '';
+  if (design.screenMode !== 'home' && design.screenMode !== 'lock') design.screenMode = 'home';
   if (!design.tablet || typeof design.tablet !== 'object') design.tablet = {};
   const t = design.tablet;
   if (typeof t.stand !== 'boolean') t.stand = false;

@@ -48,6 +48,7 @@ async function main() {
     return ev(`(() => ({ cat: document.querySelector('[data-cat].primary')?.dataset.cat, len: document.querySelector('[data-k="body.length"]')?.value, wid: document.querySelector('[data-k="body.width"]')?.value, corner: document.querySelector('[data-k="body.corner"]')?.value, aspect: document.querySelector('[data-k="screen.aspect"]')?.value }))()`);
   };
   check('设计器可打开', await ev(`!!document.querySelector('[data-k="template"]')`));
+  await ev('window.confirm = () => true');
   const tablet = await pickCat('tablet');
   check('平板品类可切换', tablet.cat === 'tablet' && tablet.len === '250' && tablet.wid === '188' && tablet.aspect === '4:3', JSON.stringify(tablet));
   check('平板有 3D 画布', await ev(`!!document.querySelector('canvas')`));
@@ -62,6 +63,9 @@ async function main() {
   check('方表模板可切换', square.len === '42' && square.wid === '42' && square.corner === '4', JSON.stringify(square));
   check('手表无摄像头配置', await ev(`!document.querySelector('[data-k="camera.lenses.0.type"]')`));
   check('手表专属机身选项', await ev(`['watch.shape','watch.crown','watch.bezel','watch.button'].every(k => !!document.querySelector('[data-k="'+k+'"]')) && document.body.textContent.includes('手表专属') && ![...document.querySelectorAll('.section-label')].some(x => x.textContent.trim() === '折叠形态')`));
+  await ev(`document.querySelector('[data-pick-open="parts.battery"]')?.click()`); await sleep(150);
+  check('手表硬件列表过滤', await ev(`(() => { const vals = [...document.querySelectorAll('[data-pick="parts.battery"] .pselect-item')].map(o => Number((o.textContent.match(/(\\d+)mAh/)||[])[1]||0)); return vals.length > 0 && vals.every(v => v > 0 && v <= 800); })()`));
+  await ev(`document.querySelector('[data-pick-open="parts.battery"]')?.click()`);
   const shapeBack = await ev(`(() => { const s = document.querySelector('[data-k="watch.shape"]'); s.value = 'round'; s.dispatchEvent(new Event('input', { bubbles: true })); s.dispatchEvent(new Event('change', { bubbles: true })); return s.value; })()`);
   await sleep(700);
   const roundAgain = await ev(`(() => ({ tpl: document.querySelector('[data-k="template"]')?.value, corner: document.querySelector('[data-k="body.corner"]')?.value }))()`);
@@ -71,6 +75,18 @@ async function main() {
   const tabletBack = await pickCat('tablet');
   const limits = await ev(`(() => { const l = document.querySelector('[data-k="body.length"]'), w = document.querySelector('[data-k="body.width"]'); const a = [...document.querySelectorAll('[data-k="screen.aspect"] option')].map(o => o.textContent.trim()); return { lmax: l.max, wmax: w.max, aspects: a.join(',') }; })()`);
   check('平板范围与比例修订', tabletBack.cat === 'tablet' && limits.lmax === '360' && limits.wmax === '260' && limits.aspects === '4:3,3:2,16:9', JSON.stringify(limits));
+  await ev(`document.querySelector('[data-pick-open="parts.battery"]')?.click()`); await sleep(150);
+  check('平板硬件列表过滤', await ev(`(() => { const vals = [...document.querySelectorAll('[data-pick="parts.battery"] .pselect-item')].map(o => Number((o.textContent.match(/(\\d+)mAh/)||[])[1]||0)); return vals.length > 0 && vals.every(v => v >= 5000); })()`));
+  await ev(`document.querySelector('[data-pick-open="parts.battery"]')?.click()`);
+  await ev(`(() => { const el = document.querySelector('[data-k="body.length"]'); el.value = '300'; el.dispatchEvent(new Event('input', { bubbles: true })); })()`); await sleep(200);
+  await pickCat('phone'); await pickCat('tablet');
+  check('品类快照可恢复', await ev(`document.querySelector('[data-k="body.length"]')?.value === '300'`));
+  const ratioLink = await ev(`(() => { const s = document.querySelector('[data-k="screen.aspect"]'); s.value = '16:9'; s.dispatchEvent(new Event('input', { bubbles: true })); const w = Number(document.querySelector('[data-k="body.width"]')?.value); return { w, expect: Math.round(300 / (16/9) * 10) / 10 }; })()`);
+  check('平板比例联动机身', Math.abs(ratioLink.w - ratioLink.expect) < 1.2, JSON.stringify(ratioLink));
+  const preset = await ev(`(() => { document.querySelector('[data-tablet-size="14.6"]').click(); return { inch: document.querySelector('[data-k="screen.inch"]')?.value, len: Number(document.querySelector('[data-k="body.length"]')?.value) }; })()`);
+  check('平板尺寸预设', preset.inch === '14.6' && preset.len > 300, JSON.stringify(preset));
+  const undoLen = await ev(`(() => { const el = document.querySelector('[data-k="body.length"]'); el.value = '200'; el.dispatchEvent(new Event('input', { bubbles: true })); document.querySelector('#dz-undo').click(); return document.querySelector('[data-k="body.length"]')?.value; })()`);
+  check('设计器撤销可恢复', Number(undoLen) === 300, String(undoLen));
   check('设计器有包装设计', await ev(`!!document.querySelector('[data-k="packaging.material"]') && document.body.textContent.includes('包装评分')`));
   check('评估栏可收起', await ev(`(() => { const b = document.querySelector('#dz-assess-toggle'); if (!b) return false; b.click(); const off = document.querySelector('.designer')?.classList.contains('assess-collapsed'); b.click(); return off && !document.querySelector('.designer')?.classList.contains('assess-collapsed'); })()`));
   check('左栏可拖宽', await ev(`(() => { const l = document.querySelector('#dz-left'); return !!document.querySelector('#dz-resizer') && l.clientWidth >= 220 && l.clientWidth <= 460; })()`));

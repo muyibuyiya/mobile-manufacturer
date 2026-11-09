@@ -66,6 +66,7 @@ async function main() {
   })()`);
   await sleep(500);
   check('打开屏幕设计页', !!entry, entry);
+  await ev('window.confirm = () => true');
 
   const ui = await ev(`(() => {
     const ov = document.querySelector('[data-pause-game]');
@@ -109,6 +110,14 @@ async function main() {
   }))()`);
   check('横条长度/粗细可调', gesture.w === '40%' && gesture.h === '4.2u', JSON.stringify(gesture));
   check('电池位置滑杆存在', gesture.bat === true);
+  const undoUI = await ev(`(() => {
+    const el = document.querySelector('[data-sd=batteryDY]');
+    const before = el.value;
+    el.value = '3'; el.dispatchEvent(new Event('input', { bubbles: true }));
+    document.querySelector('[data-sd="undo"]').click();
+    return { before, after: document.querySelector('[data-sd=batteryDY]')?.value };
+  })()`);
+  check('屏幕设计撤销可恢复', undoUI.after === undoUI.before, JSON.stringify(undoUI));
 
   // 锁屏预览
   await ev(`document.querySelector('[data-sd=preview][data-v=lock]').click()`);
@@ -247,6 +256,20 @@ async function main() {
   // 保存的数据含新字段
   const data = await ev(`(() => { try { return JSON.parse(localStorage.getItem('mobile_manufacturer_save_v5_auto') || '{}').uiDesigns || []; } catch(e) { return []; } })()`);
   check('存档写入锁屏/导航新字段', data.length > 0 && data[0].navDir === 'rtl' && data[0].lockShowNotif !== undefined, `count=${data.length}`);
+
+  // 屏幕设计接入产品设计器：选择 UI 方案应改变 2D 屏幕内容
+  await ev(`document.querySelector('[data-tab=product]')?.click()`); await sleep(300);
+  await ev(`document.querySelector('[data-act=design]')?.click()`); await sleep(1400);
+  const uiSel = await ev(`(() => { const s = document.querySelector('[data-k="uiDesign"]'); return { exists: !!s, opts: s ? s.options.length : 0, second: s?.options[1]?.value || '' }; })()`);
+  check('设计器有 UI 方案选择', uiSel.exists && uiSel.opts > 1, JSON.stringify(uiSel));
+  const beforeShot = await ev(`document.querySelector('#dz-2d')?.toDataURL() || ''`);
+  await ev(`(() => { const s = document.querySelector('[data-k="uiDesign"]'); s.value = s.options[1].value; s.dispatchEvent(new Event('input', { bubbles: true })); })()`); await sleep(500);
+  const afterShot = await ev(`document.querySelector('#dz-2d')?.toDataURL() || ''`);
+  check('选择 UI 方案后屏幕变化', !!beforeShot && !!afterShot && beforeShot !== afterShot, `${beforeShot.length}/${afterShot.length}`);
+  const lockShot = await ev(`(() => { const s = document.querySelector('[data-k="screenMode"]'); s.value = 'lock'; s.dispatchEvent(new Event('input', { bubbles: true })); return document.querySelector('#dz-2d')?.toDataURL() || ''; })()`);
+  check('产品屏幕可切锁屏', !!lockShot && lockShot !== afterShot);
+  await ev(`document.querySelector('[data-vm="3d"]')?.click()`); await sleep(900);
+  check('UI 方案可用于 3D', await ev(`!!document.querySelector('#dz-stage-body canvas')`));
 
   // 共享合成管线：桌面/锁屏应产生不同画面
   const compose = await ev(`(async () => {
