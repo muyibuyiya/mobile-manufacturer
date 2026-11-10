@@ -267,6 +267,44 @@ export function renderDesigner(container, state, model, hooks = {}) {
     panelToggle.classList.toggle('primary', hidden);
     if (viewMode === '2d') setTimeout(draw2D, 30); else setTimeout(buildPhone, 30);
   });
+  // 顶部分区快捷条：鼠标按住拖动 / 滚轮横向滚动（桌面端没有触控板也能拖动）
+  {
+    let drag = null;
+    let suppressClick = false;
+    left.addEventListener('pointerdown', (e) => {
+      const toc = e.target.closest('.dz-toc');
+      if (!toc || e.button !== 0) return;
+      drag = { toc, x: e.clientX, sl: toc.scrollLeft, moved: false, id: e.pointerId };
+      toc.classList.add('dragging');
+      try { toc.setPointerCapture(e.pointerId); } catch (err) { /* 忽略 */ }
+    });
+    left.addEventListener('pointermove', (e) => {
+      if (!drag || drag.id !== e.pointerId) return;
+      const dx = e.clientX - drag.x;
+      if (Math.abs(dx) > 4) drag.moved = true;
+      drag.toc.scrollLeft = drag.sl - dx;
+    });
+    const endDrag = (e) => {
+      if (!drag || drag.id !== e.pointerId) return;
+      suppressClick = drag.moved;
+      drag.toc.classList.remove('dragging');
+      drag = null;
+      setTimeout(() => { suppressClick = false; }, 0);
+    };
+    left.addEventListener('pointerup', endDrag);
+    left.addEventListener('pointercancel', endDrag);
+    left.addEventListener('click', (e) => {
+      if (suppressClick && e.target.closest('.dz-toc')) { e.preventDefault(); e.stopPropagation(); }
+    }, true);
+    left.addEventListener('wheel', (e) => {
+      const toc = e.target.closest('.dz-toc');
+      if (!toc) return;
+      const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+      if (!delta) return;
+      e.preventDefault();
+      toc.scrollLeft += delta;
+    }, { passive: false });
+  }
   const DZ_LEFT_KEY = 'dz_left_w';
   const DZ_ASSESS_KEY = 'dz_assess_collapsed';
   const savedLeftW = Number(localStorage.getItem(DZ_LEFT_KEY));
@@ -390,6 +428,14 @@ export function renderDesigner(container, state, model, hooks = {}) {
     return `<div class="dz-sec ${on ? 'collapsed' : ''}" data-sec="${key}">
       <button type="button" class="dz-sec-head" data-sec-toggle="${key}"><span>${title}${tip ? ` <span class="tiny dim">${tip}</span>` : ''}</span><i class="chev"></i></button>
       <div class="dz-sec-body">${inner}</div>
+    </div>`;
+  }
+  // 二级折叠块：用于影像区里的 Deco / 闪光灯 / 模组位置，避免长面板一屏塞满
+  function subSection(key, title, inner, tip = '') {
+    const on = collapsedSecs.has(key);
+    return `<div class="dz-sub ${on ? 'collapsed' : ''}" data-sub="${key}">
+      <button type="button" class="dz-sub-head" data-sub-toggle="${key}"><span>${title}${tip ? ` <span class="tiny dim">${tip}</span>` : ''}</span><i class="chev"></i></button>
+      <div class="dz-sub-body">${inner}</div>
     </div>`;
   }
 
@@ -546,7 +592,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
           ${[['vertical', '竖排胶囊'], ['square', '2×2 方阵'], ['dual', '横排双摄'], ['horizontal', '横排'], ['ring', '环绕']].map(([v, n]) => `<option value="${v}" ${(d.camera.layout || 'vertical') === v ? 'selected' : ''}>${n}</option>`).join('')}
         </select>
       </label>
-      <div class="tiny dim" style="margin:2px 0 6px">Deco 布局区 <span class="dim">（未开凸台时不渲染装饰板）</span></div>
+      ${subSection('camera-deco', 'Deco 布局区', `
       <label class="field"><span>deco 形状</span>
         <select data-k="camera.deco.shape">
           ${DECO_SHAPES.map((s) => `<option value="${s.id}" ${d.camera.deco.shape === s.id ? 'selected' : ''}>${s.name}</option>`).join('')}
@@ -565,8 +611,8 @@ export function renderDesigner(container, state, model, hooks = {}) {
           <input type="color" data-k="camera.deco.color" value="${d.camera.deco.color || partColor('back')}" style="width:40px;height:24px;padding:1px;background:#10151c;border:1px solid var(--line-2);border-radius:6px;cursor:pointer" />
           <button type="button" class="btn tiny ghost" data-deco-auto ${d.camera.deco.color ? '' : 'disabled'}>跟随后盖</button>
         </div>
-      </label>
-      <div class="tiny dim" style="margin:6px 0 4px">闪光灯</div>
+      </label>`, '未开凸台不渲染')}
+      ${subSection('camera-flash', '闪光灯', `
       <label class="field"><span>闪光灯样式</span>
         <select data-k="camera.flash.style">
           ${[['round', '圆形'], ['rounded', '圆角矩形'], ['slot', '槽形'], ['ring', '环形（比例固定）']].map(([v, n]) => `<option value="${v}" ${(d.camera.flash.style || 'round') === v ? 'selected' : ''}>${n}</option>`).join('')}
@@ -587,8 +633,8 @@ export function renderDesigner(container, state, model, hooks = {}) {
       <label class="opt ${d.camera.flash.offDeco ? 'on' : ''}" style="display:flex;gap:6px;align-items:center;padding:6px 8px;margin-bottom:6px">
         <input type="checkbox" data-k="camera.flash.offDeco" data-bool="1" ${d.camera.flash.offDeco ? 'checked' : ''} style="width:auto" />
         <span>闪光灯放在 deco 外</span>
-      </label>
-      <div class="tiny dim" style="margin:6px 0 4px">模组整体位置</div>
+      </label>`, '可放在 deco 外')}
+      ${subSection('camera-pos', '模组整体位置', `
       <label class="field"><span>模组位置</span>
         <select data-k="camera.pos">
           ${[['top-left', '左上'], ['top-center', '顶部居中'], ['top-right', '右上']].map(([v, n]) => `<option value="${v}" ${d.camera.pos === v ? 'selected' : ''}>${n}</option>`).join('')}
@@ -600,7 +646,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
         <input type="checkbox" data-k="camera.step" data-bool="1" ${d.camera.step ? 'checked' : ''} style="width:auto" />
         <span>摄像头凸台（台阶）</span>
       </label>
-      ${d.camera.step ? sliderRow('模组凸起', 'camera.bump', d.camera.bump, 0, 5, 0.1, 'mm') : ''}
+      ${d.camera.step ? sliderRow('模组凸起', 'camera.bump', d.camera.bump, 0, 5, 0.1, 'mm') : ''}`, '位置与凸台')}
       ${(d.camera.lenses || []).some((l) => l.type === 'periscope') ? `
       ${sliderRow('潜望凸台厚度', 'camera.periT', d.camera.periT ?? 0.6, 0.3, 3, 0.1, 'mm')}
       <label class="field"><span>潜望方向</span>
@@ -4270,6 +4316,18 @@ export function renderDesigner(container, state, model, hooks = {}) {
       const sec = secBtn.closest('.dz-sec');
       const collapsed = !sec.classList.contains('collapsed');
       sec.classList.toggle('collapsed', collapsed);
+      if (collapsed) collapsedSecs.add(key); else collapsedSecs.delete(key);
+      try { localStorage.setItem(DZ_SEC_KEY, JSON.stringify([...collapsedSecs])); } catch (err) { /* 隐私模式忽略 */ }
+      return;
+    }
+    // 影像区二级折叠（Deco / 闪光灯 / 模组位置）
+    const subBtn = e.target.closest('[data-sub-toggle]');
+    if (subBtn) {
+      e.preventDefault();
+      const key = subBtn.dataset.subToggle;
+      const sub = subBtn.closest('.dz-sub');
+      const collapsed = !sub.classList.contains('collapsed');
+      sub.classList.toggle('collapsed', collapsed);
       if (collapsed) collapsedSecs.add(key); else collapsedSecs.delete(key);
       try { localStorage.setItem(DZ_SEC_KEY, JSON.stringify([...collapsedSecs])); } catch (err) { /* 隐私模式忽略 */ }
       return;

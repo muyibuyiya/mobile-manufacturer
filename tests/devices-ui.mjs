@@ -106,6 +106,12 @@ async function main() {
   check('评分项可点击定位', jumpFix === true, String(jumpFix));
   const hw2d = await ev(`(() => { const cv = document.querySelector('#dz-2d'); const a = cv.toDataURL(); const c = document.querySelector('[data-k="tablet.stylus"]'); c.checked = true; c.dispatchEvent(new Event('input', { bubbles: true })); c.dispatchEvent(new Event('change', { bubbles: true })); return { diff: a !== document.querySelector('#dz-2d').toDataURL() }; })()`);
   check('2D 视图同步品类硬件', hw2d.diff === true, JSON.stringify(hw2d));
+  // 影像区二级折叠 + 顶部分区条拖动
+  check('影像区有 3 个可折叠子块', await ev(`document.querySelectorAll('.dz-sub[data-sub]').length === 3`));
+  const subFold = await ev(`(() => { const b = document.querySelector('[data-sub-toggle="camera-flash"]'); if (!b) return null; b.click(); const sub = b.closest('.dz-sub'); return { collapsed: sub.classList.contains('collapsed'), hidden: getComputedStyle(sub.querySelector('.dz-sub-body')).display === 'none' }; })()`);
+  check('闪光灯设置可收纳', subFold && subFold.collapsed && subFold.hidden, JSON.stringify(subFold));
+  const tocDrag = await ev(`(() => { const toc = document.querySelector('.dz-toc'); if (!toc) return null; const before = toc.scrollLeft; toc.style.maxWidth = '120px'; const opts = { bubbles: true, pointerId: 7, button: 0, clientX: 200, clientY: 40, isPrimary: true }; toc.dispatchEvent(new PointerEvent('pointerdown', opts)); toc.dispatchEvent(new PointerEvent('pointermove', { ...opts, clientX: 60 })); toc.dispatchEvent(new PointerEvent('pointerup', { ...opts, clientX: 60 })); const after = toc.scrollLeft; toc.style.maxWidth = ''; return { before, after, overflow: toc.scrollWidth > toc.clientWidth }; })()`);
+  check('顶部分区条可拖动/横向滚动', tocDrag && tocDrag.after > 20, JSON.stringify(tocDrag));
   const exTab = await ev(`(() => { const t = document.body.textContent; const opts = [...document.querySelectorAll('[data-x]')].map(x => x.dataset.x); return { udc: opts.includes('x_udc'), sat: opts.includes('x_sat'), standLabel: t.includes('不画支架本体'), n: opts.length }; })()`);
   check('平板附加功能按品类过滤（无屏下摄像头/有卫星）', exTab.udc === false && exTab.sat === true, JSON.stringify(exTab));
   check('支架只画磁吸位（选项文案）', exTab.standLabel === true, JSON.stringify(exTab));

@@ -336,7 +336,9 @@ div.field > span:first-child { display: block; font-size: 11.5px; color: var(--m
   cursor: col-resize; z-index: 6; border-radius: 4px;
 }
 .dz-resizer:hover, .dz-resizer.dragging { background: rgba(74,163,255,.35); }
-.dz-toc { display: flex; gap: 4px; overflow-x: auto; padding-bottom: 6px; margin-bottom: 4px; scrollbar-width: none; }
+.dz-toc { display: flex; gap: 4px; overflow-x: auto; padding-bottom: 6px; margin-bottom: 4px; scrollbar-width: none; cursor: grab; }
+.dz-toc.dragging { cursor: grabbing; }
+.dz-toc.dragging .btn { pointer-events: none; }
 .dz-toc::-webkit-scrollbar { display: none; }
 .dz-toc .btn { flex: none; }
 #dz-panel-toggle { display: none; }
@@ -387,6 +389,27 @@ div.field > span:first-child { display: block; font-size: 11.5px; color: var(--m
 .dz-sec-body { padding: 3px 0 4px; }
 .dz-sec.collapsed .dz-sec-body { display: none; }
 .dz-sec + .dz-sec .dz-sec-head { border-top: 1px solid var(--line); }
+
+/* 影像区二级折叠块 */
+.dz-sub {
+  border-left: 2px solid rgba(74, 163, 255, .22);
+  padding-left: 9px; margin: 6px 0 8px; border-radius: 0 5px 5px 0;
+}
+.dz-sub-head {
+  display: flex; align-items: center; justify-content: space-between; width: 100%;
+  background: none; border: none; color: var(--text); cursor: pointer;
+  font-size: 12px; font-weight: 600; padding: 4px 0; text-align: left;
+}
+.dz-sub-head:hover { color: var(--accent); }
+.dz-sub-head .tiny { font-weight: 400; text-transform: none; }
+.dz-sub-head .chev {
+  width: 0; height: 0; flex: none; margin-left: 6px;
+  border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 5px solid currentColor;
+  transition: transform .15s;
+}
+.dz-sub.collapsed .dz-sub-head .chev { transform: rotate(-90deg); }
+.dz-sub.collapsed .dz-sub-body { display: none; }
+.dz-sub-body { padding: 2px 0 2px; }
 
 /* 配色方案编辑面板（点「添加配色方案」后展开） */
 .scheme-editor {
