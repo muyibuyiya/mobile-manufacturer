@@ -7,7 +7,29 @@ import { CPUS, CAMERAS, SCREENS } from '../data/parts.js';
 import { CPU_CORES, GPU_ARCHS, OS_BASES, PANEL_VENDORS, RES_TIERS, LENS_TYPES, formatFactor, lensThicknessMm } from '../data/hardware.js';
 import { staffPower as staffPowerRef, addLog } from './state.js';
 import { OS_TECH_MAP, OS_ROUTE_MAP } from '../data/os-tech.js';
+import { TECH_MAP } from '../data/tech.js';
 import { themeBonus, themeRevenue } from './themes.js';
+
+// 自研部门与主科技树的门槛：部门不是万能钥匙，必须先掌握对应技术
+// build = 成立部门所需节点；spec = 具体规格额外需要的能力
+export const DIVISION_TECH_GATES = {
+  chip: { build: ['chip_own'], spec: { selfCore: 'chip_own' } },
+  optics: { build: ['cmos'], spec: { periscope: 'periscope' } },
+  panel: { build: ['tft'], spec: { oled: 'oled' } },
+  osd: { build: ['os_smart'], spec: {} },
+};
+
+function missingTech(state, ids) {
+  const unlocked = (state.tech && state.tech.unlocked) || [];
+  return (ids || []).filter((t) => !unlocked.includes(t));
+}
+
+function techListText(ids) {
+  return ids.map((id) => {
+    const t = TECH_MAP[id];
+    return t ? `「${t.name}」（${t.year} 年）` : id;
+  }).join('、');
+}
 
 export const DIVISION_DEFS = {
   optics: {
@@ -130,7 +152,10 @@ export function startOsTech(state, techId) {
   if (ot.unlocked.includes(techId)) return { ok: false, msg: '已掌握该技术' };
   if (ot.proj) return { ok: false, msg: '已有系统技术在研，请等待完工' };
   if (t.year > state.date.year) return { ok: false, msg: `${t.name} 需要 ${t.year} 年及以后的技术环境` };
-  if (t.prereq.some((p2) => !ot.unlocked.includes(p2))) return { ok: false, msg: '前置技术未满足' };
+  if (t.prereq.some((p2) => !ot.unlocked.includes(p2))) return { ok: false, msg: '前置系统技术未满足' };
+  // 系统科技不是孤立技能树：节点要求的主科技没掌握就不能立项
+  const missMain = missingTech(state, t.requires || []);
+  if (missMain.length) return { ok: false, msg: `需要先掌握主科技：${techListText(missMain)}` };
   if ((state.divisions?.osd?.level || 0) < 1) return { ok: false, msg: '需要先成立系统开发部' };
   if (state.company.cash < t.cost) return { ok: false, msg: '资金不足' };
   state.company.cash -= t.cost;
@@ -197,11 +222,15 @@ export function buildDivision(state, id) {
   const def = DIVISION_DEFS[id];
   const div = ensureDivisions(state)[id];
   if (div.level > 0) return { ok: false, msg: '该部门已成立' };
-  if (state.company.cash < def.buildCost) return { ok: false, msg: '资金不足' };
-  state.company.cash -= def.buildCost;
+  // 建部不再硬拦：没有技术积累也能成立，只是要多付 50% 学费（差距体现在规格与性能上）
+  const miss = missingTech(state, DIVISION_TECH_GATES[id]?.build || []);
+  const buildCost = miss.length ? Math.round(def.buildCost * 1.5) : def.buildCost;
+  if (state.company.cash < buildCost) return { ok: false, msg: '资金不足' };
+  state.company.cash -= buildCost;
   div.level = 1;
   div.builtAt = { ...state.date };
-  return { ok: true, msg: `${def.name} 已成立（Lv.1）` };
+  const note = miss.length ? `（无技术积累，建部成本 +50%；建议先研发 ${techListText(miss)}）` : '';
+  return { ok: true, msg: `${def.name} 已成立（Lv.1）${note}` };
 }
 
 // ---------- 设计新产品（与升级解耦，同一等级下可设计多款） ----------
@@ -263,13 +292,14 @@ export function computeCustomSpec(state, id, form) {
     if (chosen.some((a) => a.self) && chosen.some((a) => !a.self)) {
       errors.push('自研核心不能与 ARM 公版核心混排（参考：骁龙 8 至尊版 = 全自研 Oryon 2+6）');
     }
+    // 自研核不再硬拦：未掌握芯片设计时按逆向工程试制，性能与成本都吃亏
     const gpu = GPU_ARCHS.find((g) => g.id === form.gpuArch);
     if (!gpu) errors.push('请选择 GPU 架构');
     else if (gpu.year > year) errors.push(`${gpu.name} 尚未发布（${gpu.year} 年）`);
     const nP = clamp(form.primeN | 0, 0, 2), nB = clamp(form.bigN | 0, 1, 6);
     const nL = little ? clamp(form.littleN | 0, 1, 6) : 0; // 小核可选「无」
     const total = nP + nB + nL;
-    if (total < 2 || total > 12) errors.push('核心总数需在 2~12 之间');
+    if (total < 1 || total > 12) errors.push('核心总数需在 1~12 之间');
     const ghzP = prime ? clamp(Number(form.primeGhz) || 3.0, prime.ghz[0], prime.ghz[1]) : 3;
     const ghzB = big ? clamp(Number(form.bigGhz) || 2.5, big.ghz[0], big.ghz[1]) : 2.5;
     const ghzL = little ? clamp(Number(form.littleGhz) || 1.8, little.ghz[0], little.ghz[1]) : 1.8;
@@ -280,11 +310,14 @@ export function computeCustomSpec(state, id, form) {
       + (little ? little.ipc * ghzL * nL * 0.85 : 0);
     const gpuRatio = clamp((form.gpuCores | 0) / Math.max(1, gpu.maxCore), 0.1, 1);
     const gpuScore = gpu.perf * gpuRatio * 24;
-    const perf = clamp(10 + (cpuScore + gpuScore) * 1.7 + lv * 1.2, 8, 104);
+    // 未掌握自研芯片设计时按「逆向工程」试制：性能打折、成本上升，但不禁止
+    const selfReverse = chosen.some((a) => a.self) && missingTech(state, ['chip_own']).length > 0;
+    const perf = clamp(clamp(10 + (cpuScore + gpuScore) * 1.7 + lv * 1.2, 8, 104) * (selfReverse ? 0.88 : 1), 8, 104);
     spec.ok = true;
     spec.perf = Math.round(perf);
     spec.power = round(1.7 + total * 0.16 + (ghzP - 2.5) * 0.5 + gpuScore * 0.008, 2);
-    spec.price = Math.round((420 + total * 85 + nP * 150 + (form.gpuCores | 0) * 24) * 0.82);
+    spec.price = Math.round((420 + total * 85 + nP * 150 + (form.gpuCores | 0) * 24) * 0.82 * (selfReverse ? 1.8 : 1));
+    spec.warning = selfReverse ? '未掌握「自研芯片设计」：按逆向工程试制，性能 -12%、成本 +80%' : '';
     spec.cores = `${nP ? `${nP}×${prime.name}@${ghzP}GHz + ` : ''}${nB}×${big.name}@${ghzB}GHz${nL && little ? ` + ${nL}×${little.name}@${ghzL}GHz` : ''}`;
     spec.gpu = `${gpu.name} MC${form.gpuCores | 0}`;
     spec.desc = `${spec.cores} · ${spec.gpu}`;
@@ -299,6 +332,9 @@ export function computeCustomSpec(state, id, form) {
     const focal = clamp(Number(form.focal) || lt.defFocal, lt.focal[0], lt.focal[1]);
     const ap = clamp(Number(form.ap) || lt.defAp, 0.95, 4);
     const fmtF = formatFactor(form.sensorFormat);
+    if (lt.id === 'periscope' && missingTech(state, ['periscope']).length) {
+      return { ok: false, errors: ['潜望式长焦需要先掌握「潜望式长焦」（2019 年）'] };
+    }
     spec.ok = true;
     spec.score = Math.round(clamp(18 + fmtF * 58 + Math.min(mp, 200) / 200 * 24 + (ap < 1.7 ? 4 : 0) + lv * 2, 10, 100));
     spec.mp = round(mp, 1);
@@ -335,6 +371,9 @@ export function computeCustomSpec(state, id, form) {
     if (!res) return { ok: false, errors: ['请选择分辨率档位'] };
     if (res.year > year) return { ok: false, errors: [`${res.name} 面板 ${res.year} 年后才量产`] };
     const kindBonus = form.kind === 'oled' ? 10 : form.kind === 'miniled' ? 7 : 0;
+    if (form.kind === 'oled' && missingTech(state, ['oled']).length) {
+      return { ok: false, errors: ['OLED 面板需要先掌握「OLED」（2012 年）'] };
+    }
     spec.ok = true;
     spec.kind = form.kind || 'lcd';
     spec.quality = Math.round(clamp(52 + res.level * 26 + kindBonus + lv * 3.5, 10, 100));

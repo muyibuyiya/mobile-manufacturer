@@ -117,7 +117,7 @@ async function main() {
   check('支架只画磁吸位（选项文案）', exTab.standLabel === true, JSON.stringify(exTab));
   await pickCat('watch');
   const exWatch = await ev(`(() => { const opts = [...document.querySelectorAll('[data-x]')].map(x => x.dataset.x); return { opts, n: opts.length, t: document.body.textContent.includes('屏下摄像头') }; })()`);
-  check('手表附加功能按品类过滤', exWatch.n === 3 && !exWatch.opts.includes('x_udc') && !exWatch.opts.includes('x_fp'), JSON.stringify(exWatch));
+  check('手表附加功能按品类过滤', exWatch.n >= 3 && !exWatch.opts.includes('x_udc') && !exWatch.opts.includes('x_fp') && exWatch.opts.includes('x_bt') && exWatch.opts.includes('x_gps'), JSON.stringify(exWatch));
   await pickCat('tablet');
   const presetV = await ev(`(() => { const before = document.querySelectorAll('[data-variant-del]').length; document.querySelector('[data-variant-presets]')?.click(); return { before, after: document.querySelectorAll('[data-variant-del]').length }; })()`);
   check('配置矩阵一键补齐常用组合', presetV.after > presetV.before && presetV.after <= 6, JSON.stringify(presetV));

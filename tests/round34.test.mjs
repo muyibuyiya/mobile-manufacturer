@@ -23,9 +23,15 @@ const sandbox = (cash = 2e10) => {
 // 1. 历史降采样：30 个月后明细 12、季度归档存在、展开仍 24 个月
 {
   const s = sandbox();
+  // 机型历史只在「当月真实卖出」时写入。沙盒开局没有任何市场进入，热度与认知度都是 0，
+  // 这样的机型第 6 个月起需求就归零，会让“历史压缩”断言误判成功能回归。这里显式补齐销售条件。
+  const cn = s.markets.find((x) => x.id === 'cn');
+  cn.launched = true;
+  cn.awareness = 60;
   const m = newModel(2020, s.tech.unlocked, 'Hist 1');
   m.status = 'production';
   m.released = true;
+  m.heat = 60;
   m.markets = ['cn'];
   m.price.cn = 2000;
   m.productionTarget = 20000;

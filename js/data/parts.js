@@ -126,6 +126,16 @@ export const EXTRAS = [
   { id: 'x_vc', name: '均热板散热', tech: 'cooling_vc', year: 2016, price: 50, weight: 8, thick: 0.5 },
   { id: 'x_sat', name: '卫星通信', tech: 'satellite', year: 2022, price: 130, weight: 5, thick: 0.4 },
   { id: 'x_sec', name: '安全芯片', tech: 'security_chip', year: 2018, price: 35, weight: 1, thick: 0.1 },
+  // 连接能力：Wi-Fi / 蓝牙 / 定位 / 近场 / 卫星（由科技树连接域解锁）
+  { id: 'x_wifi', name: 'Wi-Fi 模块', tech: 'wifi', year: 1999, price: 26, weight: 2, thick: 0.1 },
+  { id: 'x_bt', name: '蓝牙模块', tech: 'bluetooth', year: 2000, price: 22, weight: 1.5, thick: 0.1 },
+  { id: 'x_gps', name: 'GNSS 定位', tech: 'gps', year: 2000, price: 30, weight: 2, thick: 0.1 },
+  { id: 'x_nfc', name: 'NFC 模块', tech: 'nfc', year: 2006, price: 18, weight: 1, thick: 0.05 },
+  { id: 'x_esim', name: 'eSIM 芯片', tech: 'esim', year: 2018, price: 14, weight: 0.5, thick: 0.05 },
+  { id: 'x_wifi6', name: 'Wi-Fi 6 模组', tech: 'wifi6', year: 2019, price: 46, weight: 2.5, thick: 0.15 },
+  { id: 'x_uwb', name: 'UWB 模组', tech: 'uwb', year: 2019, price: 60, weight: 2, thick: 0.1 },
+  { id: 'x_mm', name: '毫米波阵列', tech: 'mmwave', year: 2020, price: 85, weight: 4, thick: 0.2 },
+  { id: 'x_satd', name: '卫星直连模组', tech: 'sat_direct', year: 2026, price: 180, weight: 6, thick: 0.4 },
 ];
 
 // 充电：有线功率档 / 无线功率档 / 协议

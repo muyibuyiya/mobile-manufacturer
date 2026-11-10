@@ -1,6 +1,7 @@
 // 科技树：每个节点都带历史年份门槛、研发成本与前置依赖
 export const TECH_CATS = [
-  { id: 'comm', name: '通信技术', color: '#4aa3ff' },
+  { id: 'comm', name: '蜂窝通信', color: '#4aa3ff' },
+  { id: 'connect', name: '连接与定位', color: '#5ad0e0' },
   { id: 'cpu', name: '处理器', color: '#ff8f4a' },
   { id: 'screen', name: '屏幕技术', color: '#7c6cff' },
   { id: 'camera', name: '影像技术', color: '#37c9a5' },
@@ -19,6 +20,17 @@ export const TECHS = [
   { id: '5ga', name: '5G-Advanced', cat: 'comm', year: 2024, cost: 460000, prereq: ['5g'], desc: '通感一体、上行增强。' },
   { id: '6g', name: '6G 太赫兹', cat: 'comm', year: 2030, cost: 900000, prereq: ['5ga'], desc: '太赫兹频段与空天地一体组网。' },
   { id: 'quantum_comm', name: '量子通信模组', cat: 'comm', year: 2038, cost: 1800000, prereq: ['6g'], desc: '物理层加密，政企市场的新壁垒。' },
+
+  // 连接与定位：短距无线 / 定位 / 卫星直连（多数节点是跨域汇聚，不是蜂窝主干）
+  { id: 'wifi', name: 'Wi-Fi 无线局域网', cat: 'connect', year: 1999, cost: 48000, prereq: ['2_5g'], desc: '手机第一次接入固定宽带；后续世代在同一能力上升级。' },
+  { id: 'bluetooth', name: '蓝牙短距连接', cat: 'connect', year: 2000, cost: 42000, prereq: ['2_5g'], desc: '耳机、车载与文件互传，短距外设生态的起点。' },
+  { id: 'gps', name: 'GNSS 卫星定位', cat: 'connect', year: 2000, cost: 46000, prereq: ['cpu16'], desc: '导航与位置服务的底层能力，搜星速度决定地图体验。' },
+  { id: 'nfc', name: 'NFC 近场通信', cat: 'connect', year: 2006, cost: 58000, prereq: ['bluetooth', 'color_lcd'], desc: '刷卡、门禁与触碰配对，与蓝牙共用射频前端。' },
+  { id: 'esim', name: 'eSIM 虚拟卡', cat: 'connect', year: 2018, cost: 180000, prereq: ['4g'], desc: '省掉实体卡槽，为轻薄与防水让出结构空间。' },
+  { id: 'wifi6', name: 'Wi-Fi 6 高密组网', cat: 'connect', year: 2019, cost: 300000, prereq: ['wifi', '5g'], desc: 'OFDMA 与 160MHz，多设备并发不掉速；与 5G 共用天线设计。' },
+  { id: 'uwb', name: 'UWB 超宽带', cat: 'connect', year: 2019, cost: 280000, prereq: ['nfc', 'soc'], desc: '厘米级定位，用于精准查找、无感解锁与空间交互。' },
+  { id: 'mmwave', name: '毫米波天线阵列', cat: 'connect', year: 2020, cost: 320000, prereq: ['5g', 'wifi'], desc: '高频段阵列与散热共设计，北美市场的准入能力。' },
+  { id: 'sat_direct', name: '卫星直连上网', cat: 'connect', year: 2026, cost: 760000, prereq: ['satellite', '5ga'], desc: '不依赖地面基站的窄带数据，荒野与海上场景的护城河。' },
 
   // 处理器
   { id: 'cpu8', name: '8 位处理器', cat: 'cpu', year: 1980, cost: 9000, prereq: [], desc: '单片机级别算力，只够驱动通话与简单界面。' },
@@ -58,7 +70,7 @@ export const TECHS = [
   { id: 'dual_cam', name: '多摄系统', cat: 'camera', year: 2016, cost: 210000, prereq: ['mp_cam'], desc: '广角+长焦+景深，模组占用更大空间。' },
   { id: 'comp_photo', name: '计算摄影', cat: 'camera', year: 2018, cost: 300000, prereq: ['dual_cam', 'soc'], desc: '多帧合成、夜景与 HDR 算法。' },
   { id: 'periscope', name: '潜望式长焦', cat: 'camera', year: 2019, cost: 360000, prereq: ['ois', 'dual_cam'], desc: '折叠光路实现高倍变焦，厚度代价明显。' },
-  { id: 'ai_imaging', name: 'AI 影像引擎', cat: 'camera', year: 2023, cost: 520000, prereq: ['comp_photo', 'aicpu'], desc: '语义分割与生成式增强。' },
+  { id: 'ai_imaging', name: 'AI 影像引擎', cat: 'camera', year: 2023, cost: 520000, prereq: ['comp_photo', 'soc'], desc: '语义分割与生成式增强，需要 SoC 侧算力配合。' },
   { id: 'lightfield', name: '光场相机', cat: 'camera', year: 2035, cost: 1400000, prereq: ['ai_imaging'], desc: '先拍照后对焦。' },
 
   // 电池
@@ -77,20 +89,71 @@ export const TECHS = [
 
   // 系统与其他
   { id: 'os_basic', name: '嵌入式系统', cat: 'other', year: 1980, cost: 7000, prereq: [], desc: '固定功能机系统，无法安装应用。' },
-  { id: 'os_smart', name: '智能手机 OS', cat: 'other', year: 2007, cost: 120000, prereq: ['arm', 'color_lcd'], desc: '开放应用生态，软件成为核心竞争力。' },
+  { id: 'os_smart', name: '智能手机 OS', cat: 'other', year: 2007, cost: 120000, prereq: ['arm', 'color_lcd', 'ui_touch'], desc: '开放应用生态，软件成为核心竞争力；以多点触控为输入前提。' },
   { id: 'ui_touch', name: '多点触控交互', cat: 'other', year: 2007, cost: 90000, prereq: ['color_lcd'], desc: '取消实体键盘的设计前提。' },
   { id: 'storage_flash', name: '闪存存储', cat: 'other', year: 2005, cost: 48000, prereq: ['cpu16'], desc: '替代存储卡，机身可做一体化。' },
-  { id: 'ram_lpddr', name: '低功耗内存', cat: 'other', year: 2010, cost: 70000, prereq: ['storage_flash'], desc: '多任务与高带宽。' },
+  { id: 'ram_lpddr', name: '低功耗内存', cat: 'other', year: 2010, cost: 70000, prereq: ['storage_flash', 'arm'], desc: '多任务与高带宽，需要 ARM 架构的带宽管理配合。' },
   { id: 'cooling_vc', name: '均热板散热', cat: 'other', year: 2016, cost: 130000, prereq: ['soc'], desc: '压制旗舰芯片的持续功耗。' },
   { id: 'waterproof', name: '防水防尘结构', cat: 'other', year: 2013, cost: 100000, prereq: ['liion'], desc: '密封设计增加成本与厚度。' },
   { id: 'fingerprint', name: '指纹识别', cat: 'other', year: 2014, cost: 110000, prereq: ['os_smart'], desc: '生物识别进入日常。' },
-  { id: 'faceid', name: '3D 人脸识别', cat: 'other', year: 2017, cost: 180000, prereq: ['fingerprint', 'ai_imaging'], desc: '需要额外的结构光模组空间。' },
-  { id: 'security_chip', name: '独立安全芯片', cat: 'other', year: 2018, cost: 150000, prereq: ['fingerprint'], desc: '政企与支付市场的入场券。' },
-  { id: 'satellite', name: '卫星通信', cat: 'other', year: 2022, cost: 420000, prereq: ['5g'], desc: '无地面网络也能求救。' },
-  { id: 'ai_assistant', name: '端侧 AI 助手', cat: 'other', year: 2023, cost: 500000, prereq: ['aicpu', 'os_smart'], desc: '系统级智能体，重塑交互。' },
+  { id: 'faceid', name: '3D 人脸识别', cat: 'other', year: 2017, cost: 180000, prereq: ['mp_cam', 'soc'], desc: '结构光/ToF 建模，需要额外的模组空间与算力。' },
+  { id: 'security_chip', name: '独立安全芯片', cat: 'other', year: 2018, cost: 150000, prereq: ['fingerprint', 'soc'], desc: '政企与支付市场的入场券。' },
+  { id: 'satellite', name: '卫星短信', cat: 'connect', year: 2022, cost: 420000, prereq: ['5g'], desc: '无地面网络也能发出求救短信，是卫星直连上网的前置。' },
+  { id: 'ai_assistant', name: '端侧 AI 助手', cat: 'other', year: 2025, cost: 500000, prereq: ['aicpu', 'os_smart'], desc: '系统级智能体，重塑交互。' },
 ];
 
 export const TECH_MAP = Object.fromEntries(TECHS.map((t) => [t.id, t]));
+
+// 技术对外转让的成熟度：只卖上市满 2 年的技术（与 sim 的引进报价保持一致）
+export const TECH_BUY_MIN_AGE = 2;
+
+// 反查依赖：某节点被哪些节点当前置（科技树页的“可用于”提示）
+export const TECH_CHILDREN = (() => {
+  const m = new Map();
+  for (const t of TECHS) for (const p of t.prereq || []) {
+    if (!m.has(p)) m.set(p, []);
+    m.get(p).push(t.id);
+  }
+  return m;
+})();
+
+export function techMissing(t, unlocked) {
+  return (t.prereq || []).filter((p) => !unlocked.includes(p));
+}
+
+export function techDependents(id) {
+  return (TECH_CHILDREN.get(id) || []).map((x) => TECH_MAP[x]).filter(Boolean);
+}
+
+// 缺前置但已成熟 → 可以走「技术引进」补课，而不是永远锁死
+export function techBuyable(t, year, unlocked) {
+  if (unlocked.includes(t.id)) return false;
+  if (year < t.year + TECH_BUY_MIN_AGE) return false;
+  return techMissing(t, unlocked).length > 0;
+}
+
+// 提前研发的阻力曲线：不禁止任何年代，但让「跨年代硬啃」在时间和资金上都不划算
+// 成本只作用于每月预算，速度作用于进度，两者叠加后 10 年以上的提前量几乎不可能自然完成
+export function techLeadYears(t, year) {
+  return Math.max(0, t.year - year);
+}
+
+export function techLeadPenalty(lead) {
+  if (lead <= 0) return { stage: 'normal', costMul: 1, speedMul: 1, trialMul: 0 };
+  if (lead <= 3) return { stage: 'lead', costMul: 1.8, speedMul: 0.7, trialMul: 0.35 };
+  if (lead <= 6) return { stage: 'concept', costMul: 3, speedMul: 0.4, trialMul: 0.6 };
+  if (lead <= 10) return { stage: 'explore', costMul: 5, speedMul: 0.25, trialMul: 0.9 };
+  return { stage: 'basics', costMul: 9, speedMul: 0.15, trialMul: 1.4 };
+}
+
+// 超前项目必须走一次试制（流片/工程验证），费用随提前量上升，付清才真正掌握
+export function techTrialCost(t, lead) {
+  return Math.round(t.cost * techLeadPenalty(lead).trialMul);
+}
+
+export const TECH_LEAD_STAGE_NAME = {
+  normal: '按计划', lead: '超前研发', concept: '概念验证', explore: '探索研究', basics: '基础研究',
+};
 
 export function techAvailable(t, year, unlocked) {
   if (unlocked.includes(t.id)) return true;
@@ -100,9 +163,9 @@ export function techAvailable(t, year, unlocked) {
 
 export function techState(t, year, unlocked, researching) {
   if (unlocked.includes(t.id)) return 'done';
-  if (researching && researching.techId === t.id) return 'doing';
-  if (year < t.year) return 'future';
+  if (researching && researching.techId === t.id) return researching.awaitingTrial ? 'trial' : 'doing';
   if (t.excludes && t.excludes.some((x) => unlocked.includes(x))) return 'route';
   if (!t.prereq.every((p) => unlocked.includes(p))) return 'locked';
-  return 'ready';
+  // 年代不再拦截：晚于当前年的节点进入「超前」状态，代价体现在成本与速度上
+  return year < t.year ? 'lead' : 'ready';
 }

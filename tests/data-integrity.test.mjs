@@ -84,15 +84,27 @@ const d2020 = defaultDesign(2020, unlocked2020);
 const okIssues = eraAvailability(d2020, 2020, unlocked2020);
 check('2020 年默认设计无可用性问题', okIssues.length === 0, okIssues.map((i) => i.text).join(' / '));
 
-const futureCpu = CPUS.find((c) => Number(c.year) > 2020);
-check('存在 2020 年后的处理器用于测试', !!futureCpu);
-const futureDesign = JSON.parse(JSON.stringify(d2020));
-futureDesign.parts.cpu = futureCpu.id;
-const futureIssues = eraAvailability(futureDesign, 2020, unlocked2020);
-check('硬锁拦截未来处理器', futureIssues.some((i) => i.text.includes('处理器')),
-  futureIssues.map((i) => i.text).join(' / '));
-const vFuture = validate(futureDesign, 2020, { unlocked: unlocked2020 });
-check('validate 汇总为 error 且不可量产', !vFuture.ok && vFuture.issues.some((i) => i.level === 'error'));
+// 超出 3 年窗口：仍然硬拦截
+const farCpu = CPUS.find((c) => Number(c.year) > 2023);
+check('存在超前 3 年以上的处理器用于测试', !!farCpu, farCpu ? `${farCpu.year}` : '');
+const farDesign = JSON.parse(JSON.stringify(d2020));
+farDesign.parts.cpu = farCpu.id;
+const farIssues = eraAvailability(farDesign, 2020, unlocked2020);
+check('超出窗口的未来处理器被硬锁拦截', farIssues.some((i) => i.level === 'error' && i.text.includes('处理器')),
+  farIssues.map((i) => i.text).join(' / '));
+const vFar = validate(farDesign, 2020, { unlocked: unlocked2020 });
+check('超出窗口 validate 为 error 且不可量产', !vFar.ok && vFar.issues.some((i) => i.level === 'error'));
+
+// 提前 1~3 年：按工程样品放行，但要求 warn 且可量产
+const nearCpu = CPUS.find((c) => Number(c.year) > 2020 && Number(c.year) <= 2023);
+check('存在 1~3 年窗口的处理器用于测试', !!nearCpu, nearCpu ? `${nearCpu.year}` : '');
+const nearDesign = JSON.parse(JSON.stringify(d2020));
+nearDesign.parts.cpu = nearCpu.id;
+const nearIssues = eraAvailability(nearDesign, 2020, unlocked2020);
+check('工程样品按 warn 放行', nearIssues.some((i) => i.level === 'warn' && i.text.includes('工程样品')) && !nearIssues.some((i) => i.level === 'error'),
+  nearIssues.map((i) => i.text).join(' / '));
+const vNear = validate(nearDesign, 2020, { unlocked: unlocked2020 });
+check('工程样品仍可量产', vNear.ok === true, vNear.issues.filter((i) => i.level === 'error').map((i) => i.text).join(' / '));
 
 const unlocked2010 = TECHS.filter((t) => t.year <= 2010).map((t) => t.id);
 const techIssues = eraAvailability(d2020, 2020, unlocked2010);

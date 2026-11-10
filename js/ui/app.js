@@ -1,13 +1,15 @@
 // 游戏主界面：顶栏 / 导航 / 各功能面板 / 回合循环
 import {
   tick, marketShare, suggestedPrice, unitCost, capacityOf, FOUNDRIES, factoryCapacity,
-  startResearch, researchBudget, avgShare, bomUnit, assemblyUnit, ownFactoryCount,
-  suggestTargets, techOffers, buyTech, poachFromRival,
+  startResearch, researchBudget, payResearchTrial, techIpStats, avgShare, bomUnit, assemblyUnit, ownFactoryCount,
+  suggestTargets, techOffers, techQuote, buyTech, poachFromRival,
 } from '../core/sim.js';
 import { autoPriceModel, variantCost, variantPriceMul, priceCurve } from '../core/pricing.js';
+import { assetRows, cashFlowSnapshot } from '../core/finance.js';
+import { ROUTES, routeOf, equipmentLevel, equipmentUpgradeCost, buyEquipment, setRoute } from '../core/production.js';
 import {
   saveGame, loadGame, saveSlots, deleteSave, staffPower, deptCost, generateEmployee,
-  ensureLayout, autoSave, queueAutoSave, flushAutoSave,
+  ensureLayout, autoSave, queueAutoSave, flushAutoSave, storageUsage,
   DEPT_DEFS, ROLE_BY_DEPT, traitNames, addLog, officeCapacity, canHireMore,
 } from '../core/state.js';
 import { historyRows, historyTotals, historyMaxUnits, compHistoryRows } from '../core/history.js';
@@ -16,7 +18,7 @@ import { phoneBackDataUrl, phoneFrontDataUrl } from './designer.js';
 import { openFloorplanPlanner } from './floorplan2d.js';
 import { openScreenDesign } from './screendesign.js';
 import { openPosterStudio } from './poster.js';
-import { TECHS, TECH_MAP, TECH_CATS, techState } from '../data/tech.js';
+import { TECHS, TECH_MAP, TECH_CATS, techState, techBuyable, techMissing, techDependents, techLeadYears, techLeadPenalty, TECH_LEAD_STAGE_NAME } from '../data/tech.js';
 import { MARKETS, MARKET_MAP, COUNTRIES, eraFactor, expectedPrice, SEGMENTS, SEGMENT_MAP, LINEUPS, LINEUP_MAP, marketMix, suggestModelName, signatureOf, phonePriceInMarket } from '../data/world.js';
 import { DIVISION_DEFS, DIVISION_IDS, buildDivision, startUpgrade, upgradeCost, computeCustomSpec, ownCpuSpec, ownCmrSpec, ownOsSpec, ownPanelSpec, releaseOsVersion, toggleOsLicense, osReleaseCost, startOsTech, osTechBonuses, chooseOsRoute } from '../core/divisions.js';
 import { OS_TECHS, OS_TECH_BRANCHES, osTechState, OS_ROUTES } from '../data/os-tech.js';
@@ -64,6 +66,7 @@ import { sfx, audioEnabled, setAudioEnabled, setAudioVolume, audioVolume, unlock
 import { renderDesigner } from './designer.js';
 import { composeScreenUI } from './screendesign.js';
 import { createOfficeScene, readQualityPref, writeQualityPref } from '../three/office.js';
+import { createEstateScene } from '../three/estate.js';
 import { exportSave, importSave } from '../core/state.js';
 import { createStageScene } from '../three/stage.js';
 
@@ -155,6 +158,7 @@ export function renderGame(root, state, opts = {}) {
   let empFilter = 'all';
   let prodFilter = 'all';
   let sbCollapsed = localStorage.getItem('mm_sb_collapsed') === '1';
+  let hqMode = localStorage.getItem('mm_hq_mode') || 'estate';
   const foldedSeries = new Set();
   let rivalRank = 'month';
   let renameTargetId = null;
@@ -416,8 +420,7 @@ export function renderGame(root, state, opts = {}) {
     if (el.dataset.act === 'speed') { setSpeed(Number(el.dataset.v)); return; }
     if (el.dataset.act === 'advance') { if (speed > 0) setSpeed(0); tickOnce(false); return; }
     if (el.dataset.act === 'save') {
-      saveGame(state, Number(el.dataset.slot));
-      opts.onToast?.('已保存到槽位 ' + el.dataset.slot, 'good');
+      saveToSlot(Number(el.dataset.slot), '到槽位 ' + el.dataset.slot);
     }
     if (el.dataset.act === 'open-news') { tab = 'news'; designer?.destroy(); designer = null; render(); return; }
     if (el.dataset.act === 'open-gamemenu') { gameMenu(); return; }
@@ -585,7 +588,27 @@ export function renderGame(root, state, opts = {}) {
         const t = TECH_MAP[id];
         const r = startResearch(state, id);
         if (!r.ok) { opts.onToast?.(r.msg, 'bad'); break; }
-        opts.onToast?.(`已立项：${t.name}，每月预算 ${fmtMoney(researchBudget(state))}`, 'good');
+        const pen = techLeadPenalty(r.lead || 0);
+        const leadNote = r.lead > 0 ? `（超前 ${r.lead} 年 · ${TECH_LEAD_STAGE_NAME[pen.stage]}，成本 ×${pen.costMul}、速度 ×${pen.speedMul}）` : '';
+        opts.onToast?.(`已立项：${t.name}${leadNote}，每月预算 ${fmtMoney(researchBudget(state))}`, r.lead > 0 ? 'warn' : 'good');
+        render(); break;
+      }
+      case 'research-trial': {
+        const rt = payResearchTrial(state);
+        opts.onToast?.(rt.msg, rt.ok ? 'good' : 'bad');
+        if (rt.ok) sfx('good');
+        render(); break;
+      }
+      case 'tech-buy-quote': {
+        const q = techQuote(state, id);
+        if (!q) break;
+        openTechBuy(q);
+        break;
+      }
+      case 'tech-buy-confirm': {
+        const r = buyTech(state, id);
+        opts.onToast?.(r.msg, r.ok ? 'good' : 'bad');
+        if (r.ok) { sfx('good'); closeModal(); addLog(state, 'tech', r.msg); }
         render(); break;
       }
       case 'cancel-research':
@@ -758,6 +781,12 @@ export function renderGame(root, state, opts = {}) {
         render();
         break;
       }
+      case 'hq-mode': {
+        hqMode = ds.v === 'floor' ? 'floor' : 'estate';
+        localStorage.setItem('mm_hq_mode', hqMode);
+        render();
+        break;
+      }
       case 'div-build': {
         const r = buildDivision(state, ds.id);
         opts.onToast?.(r.msg, r.ok ? 'good' : 'bad');
@@ -867,10 +896,9 @@ export function renderGame(root, state, opts = {}) {
         break;
       }
       case 'buy-tech': {
-        const r = buyTech(state, ds.id);
-        opts.onToast?.(r.msg, r.ok ? 'good' : 'bad');
-        if (r.ok) sfx('good');
-        render();
+        // 兼容旧入口：一律走确认弹窗，避免误触直接花掉引援预算
+        const q0 = techQuote(state, ds.id);
+        if (q0) openTechBuy(q0);
         break;
       }
       case 'os-route': {
@@ -1039,6 +1067,19 @@ export function renderGame(root, state, opts = {}) {
         render(); break;
       }
       case 'loan-modal': openLoanModal(); break;
+      case 'prod-route': {
+        const rr = setRoute(state, ds.v);
+        opts.onToast?.(rr.msg, rr.ok ? 'good' : 'bad');
+        render(); break;
+      }
+      case 'buy-equipment': {
+        const re = buyEquipment(state);
+        opts.onToast?.(re.msg, re.ok ? 'good' : 'bad');
+        if (re.ok) sfx('build');
+        render(); break;
+      }
+      case 'fin-bs': openBalanceSheet(); break;
+      case 'fin-cf': openCashFlow(); break;
       case 'loan-take': {
         const r = takeLoan(state, ds.id);
         opts.onToast?.(r.ok ? `已放款 ${fmtMoney(r.loan.principal)}` : r.msg, r.ok ? 'good' : 'bad');
@@ -1108,7 +1149,7 @@ export function renderGame(root, state, opts = {}) {
         render();
         break;
       }
-      case 'save': saveGame(state, Number(ds.slot) || 1); opts.onToast?.('已保存', 'good'); render(); break;
+      case 'save': saveToSlot(Number(ds.slot) || 1); render(); break;
       case 'load': {
         const s = loadGame(Number(ds.slot));
         if (!s) { opts.onToast?.('槽位为空', 'warn'); break; }
@@ -1380,19 +1421,83 @@ export function renderGame(root, state, opts = {}) {
     if (name === 'auto-supply') { ensureSupply(state).auto = el.checked; render(); }
   }
 
+  // 手动存档统一出口：容量不足必须变成可见提示，不能让 QuotaExceededError 静默打断保存流程
+  function saveToSlot(slot, label = '') {
+    const r = saveGame(state, slot);
+    if (!r.ok) {
+      opts.onToast?.('存档空间不足，本次未保存。请先导出备份、删除旧槽位后重试。', 'bad');
+      sfx('bad');
+      return false;
+    }
+    opts.onToast?.(`已保存${label}`, 'good');
+    if (r.replaced) opts.onToast?.('存储空间紧张，已用当前进度覆盖该槽位旧档。', 'warn');
+    return true;
+  }
+
+  // 内容未变化时不重建横幅，避免每个回合都闪一下
+  function paintBanner(selector, cls, key, inner, anchorSelector) {
+    const cur = content.querySelector(selector);
+    if (key && cur && cur.dataset.key === key) return;
+    if (cur) cur.remove();
+    if (!key) return;
+    const el = document.createElement('div');
+    el.className = cls;
+    el.dataset.key = key;
+    el.innerHTML = inner;
+    const anchor = content.querySelector(anchorSelector) || content.querySelector('.page-head');
+    if (anchor) anchor.after(el);
+  }
+
+  // 同页数据刷新的轻量 DOM 复用：只同步变化的属性与文本，
+  // 保住输入焦点、滚动位置与已解码的机型缩略图（否则 8× 速度下每 260ms 重建一次）
+  function morphInto(host, html) {
+    const box = document.createElement('div');
+    box.innerHTML = html;
+    morphChildren(host, box);
+  }
+
+  function morphChildren(cur, next) {
+    const oldNodes = Array.from(cur.childNodes);
+    const newNodes = Array.from(next.childNodes);
+    const n = Math.max(oldNodes.length, newNodes.length);
+    for (let i = 0; i < n; i++) {
+      const a = oldNodes[i];
+      const b = newNodes[i];
+      if (!a) { cur.appendChild(b.cloneNode(true)); continue; }
+      if (!b) { a.remove(); continue; }
+      if (a.nodeType !== b.nodeType) { cur.replaceChild(b.cloneNode(true), a); continue; }
+      if (a.nodeType === 3) { if (a.nodeValue !== b.nodeValue) a.nodeValue = b.nodeValue; continue; }
+      if (a.nodeType !== 1) continue;
+      if (a.tagName !== b.tagName) { cur.replaceChild(b.cloneNode(true), a); continue; }
+      // canvas 的画面由各自绘制函数维护，这里只同步属性，避免被清空
+      if (a.tagName === 'CANVAS') { syncAttrs(a, b); continue; }
+      // 正在编辑的控件保留用户输入与光标
+      if (a === document.activeElement && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) continue;
+      syncAttrs(a, b);
+      morphChildren(a, b);
+    }
+  }
+
+  function syncAttrs(cur, next) {
+    for (const attr of Array.from(next.attributes)) {
+      if (cur.getAttribute(attr.name) !== attr.value) cur.setAttribute(attr.name, attr.value);
+    }
+    for (const attr of Array.from(cur.attributes)) {
+      if (!next.hasAttribute(attr.name)) cur.removeAttribute(attr.name);
+    }
+  }
+
   // ---------- 渲染 ----------
   function render() {
     if (floorplanUI) { floorplanUI.destroy(); floorplanUI = null; }
     if (designer) designer.destroy();
     designer = null;
-    if (scene) { scene.destroy(); scene = null; }
     paintTopbar();
     sidebar.querySelectorAll('[data-tab]').forEach((n) => n.classList.toggle('on', n.dataset.tab === tab));
     const page = PAGES.find((p) => p.id === tab) || PAGES[0];
     // 同页刷新（调价/切榜/开罢弹窗等）保持滚动位置；只有切换页面才回到顶部
     const tabChanged = prevTab !== tab;
     const keepScroll = content.scrollTop;
-    content.innerHTML = pageShell(page, PAGES[tab] || ({}));
     // 各页面内容
     const fn = {
       overview: pageOverview, news: pageNews, product: pageProducts, tech: pageTech, supply: pageSupply,
@@ -1400,32 +1505,30 @@ export function renderGame(root, state, opts = {}) {
       market: pageMarket, company: pageCompany, finance: pageFinance, rivals: pageRivals,
       hq: pageHQ,
     }[tab];
-    if (fn) content.innerHTML = `<div class="crumbs"><button type="button" data-act="goto" data-tab="overview">公司总览</button><span class="sep">/</span><span class="cur">${page.name}</span></div>` + fn();
-    // 新手引导横幅：插在页面头部之后
+    const crumbs = `<div class="crumbs"><button type="button" data-act="goto" data-tab="overview">公司总览</button><span class="sep">/</span><span class="cur">${page.name}</span></div>`;
+    const html = fn ? crumbs + fn() : pageShell(page, PAGES[tab] || ({}));
+    // 同页数据刷新走 DOM 复用：保住输入焦点、滚动位置与缩略图（避免每回合重新解码 dataURL）
+    const useDiff = !tabChanged && tab !== 'hq';
+    if (!useDiff && scene) { scene.destroy(); scene = null; }
+    if (useDiff) morphInto(content, html); else content.innerHTML = html;
+    // 新手引导横幅 / 中后期提示：内容未变时不重建，避免每回合闪动
     const g = advanceGuide(state);
-    if (g) {
-      const banner = document.createElement('div');
-      banner.className = 'card guide-banner';
-      banner.innerHTML = `<div class="between">
+    paintBanner('.guide-banner:not(.hint)', 'card guide-banner',
+      g ? `${g.title}|${g.target?.tab || ''}` : '',
+      g ? `<div class="between">
           <span>💡 <b>${g.title}</b> <span class="dim tiny">${g.text}</span></span>
           <button class="btn tiny ghost" data-act="guide-skip">关闭引导</button>
         </div>
-        ${g.target?.tab && g.target.tab !== tab ? `<button class="btn small primary" style="margin-top:7px" data-act="goto" data-tab="${g.target.tab}">前往「${PAGES.find((p) => p.id === g.target.tab)?.name || ''}」</button>` : ''}`;
-      const ph = content.querySelector('.page-head');
-      if (ph) ph.after(banner);
-    }
-    // 中后期系统提示（一次性，知道后不再出现）
+        ${g.target?.tab && g.target.tab !== tab ? `<button class="btn small primary" style="margin-top:7px" data-act="goto" data-tab="${g.target.tab}">前往「${PAGES.find((p) => p.id === g.target.tab)?.name || ''}」</button>` : ''}` : '',
+      '.page-head');
     const hint = advanceHints(state);
-    if (hint) {
-      const hb = document.createElement('div');
-      hb.className = 'card guide-banner hint';
-      hb.innerHTML = `<div class="between">
+    paintBanner('.guide-banner.hint', 'card guide-banner hint',
+      hint ? `${hint.id}|${hint.title}` : '',
+      hint ? `<div class="between">
           <span>📌 <b>${hint.title}</b> <span class="dim tiny">${hint.text}</span></span>
           <button class="btn tiny ghost" data-act="hint-dismiss" data-hint="${hint.id}">知道了</button>
-        </div>`;
-      const anchor = content.querySelector('.guide-banner') || content.querySelector('.page-head');
-      if (anchor) anchor.after(hb);
-    }
+        </div>` : '',
+      '.guide-banner');
     content.scrollTop = tabChanged ? 0 : keepScroll;
     prevTab = tab;
     if (tab === 'hq') mountOffice();
@@ -1814,6 +1917,41 @@ export function renderGame(root, state, opts = {}) {
       </div></div>`}`;
   }
 
+  // 科技树分层：按依赖深度把节点放进“代际列”，让前置关系在布局上也能看出来
+  let techDepthCache = null;
+  function techDepthMap() {
+    if (techDepthCache) return techDepthCache;
+    const cache = new Map();
+    const visit = (id, seen) => {
+      if (cache.has(id)) return cache.get(id);
+      if (seen.has(id)) return 0;
+      seen.add(id);
+      const t = TECH_MAP[id];
+      const d = !t || !(t.prereq || []).length ? 0 : 1 + Math.max(...t.prereq.map((p) => visit(p, seen)));
+      cache.set(id, d);
+      return d;
+    };
+    for (const t of TECHS) visit(t.id, new Set());
+    techDepthCache = cache;
+    return cache;
+  }
+
+  // 技术引进确认：把报价、前置缺口与现金摆在同一张弹窗里，避免误点花掉大钱
+  function openTechBuy(q) {
+    const gap = q.missing.map((mid) => (TECH_MAP[mid] || {}).name || mid);
+    modalShell('技术引进', `${esc(q.name)} · ${q.year} 年`, `
+      <div class="tiny" style="line-height:2">
+        <div class="between"><span class="dim">对方报价</span><b>${fmtMoney(q.price)}</b></div>
+        <div class="between"><span class="dim">前置缺口</span><b class="${gap.length ? 'warn' : 'good'}">${gap.length ? esc(gap.join('、')) : '无'}</b></div>
+        <div class="between"><span class="dim">当前现金</span><b>${fmtMoney(state.company.cash)}</b></div>
+      </div>
+      <div class="tiny dim" style="margin-top:8px;line-height:1.8">引进会跳过上述前置直接掌握该技术，手续费已计入报价；之后才能继续向上研发。</div>
+      <div class="row" style="margin-top:12px;justify-content:flex-end">
+        <button class="btn" data-close>取消</button>
+        <button class="btn primary" data-act="tech-buy-confirm" data-id="${q.techId}">确认引进</button>
+      </div>`);
+  }
+
   function pageTech() {
     const r = state.tech.researching;
     const t = r ? TECH_MAP[r.techId] : null;
@@ -1834,12 +1972,13 @@ export function renderGame(root, state, opts = {}) {
         <div class="card-title">技术引进 <span class="right">直接购买竞品成熟技术 · 立即到手 · 价格高于自研</span></div>
         ${(() => {
           const offs = techOffers(state);
-          if (!offs.length) return '<div class="tiny dim">当前没有可引进的技术（都已掌握或前置未满足）。</div>';
+          if (!offs.length) return '<div class="tiny dim">当前没有已成熟的对外转让技术（技术出现满 2 年后才会流通）。</div>';
           return offs.map((o) => `
             <div class="between" style="padding:7px 0;border-bottom:1px solid rgba(255,255,255,.06);gap:10px">
               <div style="min-width:0"><b class="tiny">${o.name}</b> <span class="tiny dim">${o.year} 年 · ${o.seller} 出售</span>
+                ${o.missing.length ? `<div class="tiny warn">缺 ${o.missing.length} 项前置（可越级补课）</div>` : ''}
                 <div class="tiny dim">${o.desc}</div></div>
-              <button class="btn small" data-act="buy-tech" data-id="${o.techId}" ${state.company.cash < o.price ? 'disabled' : ''}>引进（${fmtMoney(o.price)}）</button>
+              <button class="btn small" data-act="tech-buy-quote" data-id="${o.techId}" ${state.company.cash < o.price ? 'disabled' : ''}>引进（${fmtMoney(o.price)}）</button>
             </div>`).join('');
         })()}
       </div>
@@ -1848,7 +1987,19 @@ export function renderGame(root, state, opts = {}) {
         <div class="kpi"><div class="k">研发人力</div><div class="v">${staffPower(state, 'rnd').toFixed(1)}</div><div class="d dim">${state.employees.filter((e) => e.deptId === 'rnd').length} 人</div></div>
         <div class="kpi"><div class="k">在研项目</div><div class="v">${t ? t.name : '无'}</div></div>
         <div class="kpi"><div class="k">年度研发投入</div><div class="v">${fmtMoney((t ? researchBudget(state) : 0) * 12)}</div></div>
+        <div class="kpi"><div class="k">专利 / 论文</div><div class="v">${(() => { const ip = techIpStats(state); return `${ip.patent}<span class="tiny dim"> / ${ip.paper}</span>`; })()}</div><div class="d dim">每篇论文 +1% 研发速度（上限 20%），每项专利 +0.03 品牌/月</div></div>
       </div>
+      ${state.tech.researching && state.tech.researching.awaitingTrial ? (() => {
+        const r0 = state.tech.researching;
+        const t0 = TECH_MAP[r0.techId];
+        return `<div class="card" style="margin-bottom:12px;border-color:rgba(255,159,74,.45)">
+          <div class="between" style="gap:10px">
+            <div><b>${esc(t0 ? t0.name : '超前技术')} 已进入试制</b>
+              <div class="tiny dim" style="margin-top:4px">研发已完成，但超前 ${r0.lead || 0} 年意味着必须过流片/工程验证；付清试制费才真正掌握，放弃则前期投入沉没。</div></div>
+            <button class="btn small primary" data-act="research-trial">支付试制费 ${fmtMoney(r0.trialCost || 0)}</button>
+          </div>
+        </div>`;
+      })() : ''}
       ${(() => {
         if (t) return '';
         const readyNow = TECHS.filter((x) => techState(x, state.date.year, state.tech.unlocked, state.tech.researching) === 'ready');
@@ -1859,21 +2010,54 @@ export function renderGame(root, state, opts = {}) {
           <div class="tiny dim" style="margin-top:6px">${future ? `这一年能做的技术都已在手，行业下一个节点是 ${future.year} 年的「${future.name}」。先把现有产品卖好。` : '所有技术都已掌握。'}</div>
         </div>`;
       })()}
-      ${TECH_CATS.map((cat) => `
-        <div class="tech-cat">
-          <h3><span style="width:8px;height:8px;border-radius:2px;background:${cat.color};display:inline-block"></span>${cat.name}</h3>
-          <div class="tech-grid">
-            ${TECHS.filter((x) => x.cat === cat.id).map((x) => {
-              const st = techState(x, state.date.year, state.tech.unlocked, state.tech.researching);
-              const label = { done: '已掌握', doing: '研发中', future: `${x.year} 年`, locked: '需前置', route: '已选另一路线', ready: `研发 ${fmtMoney(x.cost)}` }[st];
-              return `<div class="tech-node ${st}" ${st === 'ready' ? `data-act="research" data-id="${x.id}"` : ''}>
-                <div class="tname">${x.name}</div>
-                <div class="tmeta"><span>${x.year}</span><span>${label}</span></div>
-                ${st === 'doing' ? `<div class="prog" style="width:${state.tech.researching.progress}%"></div>` : ''}
-              </div>`;
-            }).join('')}
+      <div class="tech-legend tiny dim">按依赖深度分层 · <b class="good">绿</b>=已掌握 · <b class="accent">蓝</b>=可研发 · <b class="warn">橙</b>=可引进补课 · 灰=未到年代 · 淡=缺前置</div>
+      ${TECH_CATS.map((cat) => {
+        const depthOf = techDepthMap();
+        const list = TECHS.filter((x) => x.cat === cat.id);
+        const lanes = new Map();
+        for (const x of list) {
+          const d = depthOf.get(x.id) || 0;
+          if (!lanes.has(d)) lanes.set(d, []);
+          lanes.get(d).push(x);
+        }
+        return `<div class="tech-cat">
+          <h3><span style="width:8px;height:8px;border-radius:2px;background:${cat.color};display:inline-block"></span>${cat.name}<span class="tiny dim" style="margin-left:6px">${list.length} 项</span></h3>
+          <div class="tech-lanes">
+            ${[...lanes.keys()].sort((a, b) => a - b).map((d) => `<div class="tech-lane">
+              <div class="lane-label">${d === 0 ? '起点' : `第 ${d} 层`}</div>
+              ${lanes.get(d).sort((a, b) => a.year - b.year).map((x) => {
+                let st = techState(x, state.date.year, state.tech.unlocked, state.tech.researching);
+                if (st === 'locked' && techBuyable(x, state.date.year, state.tech.unlocked)) st = 'buyable';
+                const q = st === 'buyable' ? techQuote(state, x.id) : null;
+                const lead = techLeadYears(x, state.date.year);
+                const pen = techLeadPenalty(lead);
+                const gap = techMissing(x, state.tech.unlocked).map((id) => (TECH_MAP[id] || {}).name || id);
+                const kids = techDependents(x.id);
+                const label = {
+                  done: '已掌握',
+                  doing: '研发中',
+                  trial: `试制 ${fmtMoney((state.tech.researching && state.tech.researching.trialCost) || 0)}`,
+                  locked: '需前置',
+                  route: '已选另一路线',
+                  ready: `研发 ${fmtMoney(x.cost)}`,
+                  lead: `超前 ${lead} 年 · ${fmtMoney(Math.round(x.cost * pen.costMul))}`,
+                  buyable: q ? `引进 ${fmtMoney(q.price)}` : '可引进',
+                }[st];
+                const attrs = (st === 'ready' || st === 'lead') ? `data-act="research" data-id="${x.id}"`
+                  : st === 'buyable' ? `data-act="tech-buy-quote" data-id="${x.id}"`
+                    : st === 'trial' ? 'data-act="research-trial"' : '';
+                return `<div class="tech-node ${st}" ${attrs} title="${esc(x.desc || '')}">
+                  <div class="tname">${esc(x.name)}</div>
+                  <div class="tmeta"><span>${x.year}</span><span>${label}</span></div>
+                  ${st === 'locked' && gap.length ? `<div class="tlink bad">缺：${esc(gap.join('、'))}</div>` : ''}
+                  ${kids.length ? `<div class="tlink">→ ${esc(kids.slice(0, 2).map((k) => k.name).join('、'))}${kids.length > 2 ? ` 等 ${kids.length} 项` : ''}</div>` : ''}
+                  ${st === 'doing' ? `<div class="prog" style="width:${state.tech.researching.progress}%"></div>` : ''}
+                </div>`;
+              }).join('')}
+            </div>`).join('')}
           </div>
-        </div>`).join('')}`;
+        </div>`;
+      }).join('')}`;
   }
 
   function progressPerMonth() {
@@ -1901,6 +2085,22 @@ export function renderGame(root, state, opts = {}) {
       ${head('生产供应链', `当前产能 ${fmtUnit(cap)}（${state.production.mode === 'own' ? '自建产线' : '委托代工'}）· 已排产 ${fmtUnit(used)}`,
         `<button class="btn small primary" data-act="auto-production">智能匹配排产</button>
          <button class="btn small" data-act="goto" data-tab="hq">园区与产线</button>`)}
+      <div class="card" style="margin-bottom:12px">
+        <div class="between" style="gap:10px">
+          <div class="card-title" style="margin:0">工艺路线与自研设备</div>
+          <span class="tiny dim">路线决定成本 / 品质取舍，设备是长期降本投资</span>
+        </div>
+        <div class="row" style="gap:6px;margin:8px 0;flex-wrap:wrap">
+          ${ROUTES.map((r) => `<button class="btn small ${state.production.route === r.id ? 'primary' : 'ghost'}" data-act="prod-route" data-v="${r.id}" title="${esc(r.desc)}">${r.name}</button>`).join('')}
+          <span class="tiny dim">加工费 ×${routeOf(state).costMul} · 品质 ${routeOf(state).quality >= 0 ? '+' : ''}${routeOf(state).quality}</span>
+        </div>
+        <div class="between">
+          <span class="tiny">自研设备 Lv.${equipmentLevel(state)} <span class="dim">装配成本 -${equipmentLevel(state) * 3}% · 产能 +${equipmentLevel(state) * 2}%</span></span>
+          ${equipmentLevel(state) < 3
+            ? `<button class="btn small" data-act="buy-equipment">研发升级（${fmtMoney(equipmentUpgradeCost(state))}）</button>`
+            : '<span class="chip good">已满级</span>'}
+        </div>
+      </div>
       <div class="kpi-row">
         <div class="kpi"><div class="k">自有产能</div><div class="v">${fmtUnit(factoryCapacity(state))}</div><div class="d dim">${ownFactoryCount(state)} 座生产基地</div></div>
         <div class="kpi"><div class="k">元器件覆盖</div><div class="v ${health.tone}">${fmtUnit(cover.units)}</div><div class="d dim">${health.label}${cover.bottleneck ? ` · 瓶颈 ${COMPONENT_MAP[cover.bottleneck].name}` : ''}</div></div>
@@ -2408,11 +2608,15 @@ export function renderGame(root, state, opts = {}) {
             <h3><span style="width:8px;height:8px;border-radius:2px;background:${br.color};display:inline-block"></span>${br.name}</h3>
             <div class="tech-grid">
               ${OS_TECHS.filter((t) => t.branch === br.id).map((t) => {
-                const st = osTechState(t, state.date.year, ot.unlocked, ot.proj);
-                const label = { done: '已掌握', doing: '研发中', future: `${t.year} 年`, locked: '需前置', ready: `研发 ${fmtMoney(t.cost)}` }[st];
+                const base = osTechState(t, state.date.year, ot.unlocked, ot.proj);
+                const missMain = (t.requires || []).filter((id) => !state.tech.unlocked.includes(id));
+                const blockedByMain = missMain.length && base !== 'done' && base !== 'doing';
+                const st = blockedByMain ? 'locked' : base;
+                const label = { done: '已掌握', doing: '研发中', future: `${t.year} 年`, locked: blockedByMain ? '需主科技' : '需前置', ready: `研发 ${fmtMoney(t.cost)}` }[st];
                 return `<div class="tech-node ${st}" ${st === 'ready' ? `data-act="os-tech-start" data-id="${t.id}" title="${esc(t.desc)}（${t.months} 个月）"` : `title="${esc(t.desc)}"`}>
                   <div class="tname">${t.name}</div>
                   <div class="tmeta"><span>${t.year}</span><span>${label}</span></div>
+                  ${blockedByMain ? `<div class="tlink bad">需主科技：${esc(missMain.map((id) => (TECH_MAP[id] || {}).name || id).join('、'))}</div>` : ''}
                   ${st === 'doing' ? `<div class="prog" style="width:${Math.round((1 - ot.proj.monthsLeft / ot.proj.monthsTotal) * 100)}%"></div>` : ''}
                 </div>`;
               }).join('')}
@@ -2660,6 +2864,65 @@ export function renderGame(root, state, opts = {}) {
   }
 
 
+  // ---------- 财务三表：资产负债表 / 现金流量表 ----------
+  function openBalanceSheet() {
+    const { current, fixed, intangible, liability, f } = assetRows(state);
+    const row = ([k, v]) => `<div class="between"><span class="dim">${esc(k)}</span><b class="mono">${fmtMoney(v)}</b></div>`;
+    const totalRow = (label, v) => `<div class="between" style="border-top:1px solid var(--line);margin-top:6px;padding-top:6px"><b>${label}</b><b class="mono">${fmtMoney(v)}</b></div>`;
+    modalShell('资产负债表', `${fmtDate(state.date)} · 单位：元`, `
+      <div class="two-col">
+        <div class="card">
+          <div class="card-title">资产 · 流动</div>
+          <div class="tiny" style="line-height:2">
+            ${current.map(row).join('')}
+            ${totalRow('流动资产合计', f.currentAssets)}
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-title">资产 · 非流动</div>
+          <div class="tiny" style="line-height:2">
+            ${[...fixed, ...intangible].map(row).join('')}
+            ${totalRow('非流动资产合计', f.nonCurrent)}
+          </div>
+        </div>
+      </div>
+      <div class="card" style="margin-top:10px">
+        <div class="card-title">负债与所有者权益</div>
+        <div class="tiny" style="line-height:2">
+          ${liability.map(row).join('')}
+          ${totalRow('负债合计', f.debt)}
+          <div class="between" style="margin-top:6px"><span class="dim">所有者权益（资产 − 负债）</span><b class="mono">${fmtMoney(f.equity)}</b></div>
+          ${totalRow('负债与权益合计', f.debt + f.equity)}
+        </div>
+      </div>
+      <div class="tiny dim" style="margin-top:8px">房屋与楼宇按楼宇建造成本 × 等级估值；专利按每项 ${fmtMoney(200000)} 计入无形资产；收购分期未付计入应付。</div>`);
+  }
+
+  function openCashFlow() {
+    const c = cashFlowSnapshot(state);
+    const line = (k, v, cls = '') => `<div class="between"><span class="dim">${esc(k)}</span><b class="mono ${cls}">${fmtMoney(v)}</b></div>`;
+    modalShell('现金流量表', `近 ${c.months} 个月 · 单位：元`, `
+      <div class="card">
+        <div class="card-title">经营活动</div>
+        <div class="tiny" style="line-height:2.1">
+          ${line('营业收入', c.revenue)}
+          ${line('净利润', c.netSum)}
+          ${line('折旧摊销（非付现，加回）', c.depreciation)}
+          <div class="between" style="border-top:1px solid var(--line);margin-top:6px;padding-top:6px"><b>经营活动现金流</b><b class="mono ${c.op >= 0 ? 'good' : 'bad'}">${fmtMoney(c.op)}</b></div>
+        </div>
+      </div>
+      <div class="card" style="margin-top:10px">
+        <div class="card-title">投资与筹资（倒推）</div>
+        <div class="tiny" style="line-height:2.1">
+          ${line('期初现金', c.startCash)}
+          <div class="between"><span class="dim">投资与筹资净额</span><b class="mono ${c.other >= 0 ? 'good' : 'bad'}">${fmtMoney(c.other)}</b></div>
+          ${line('期末现金', c.endCash)}
+          <div class="between" style="border-top:1px solid var(--line);margin-top:6px;padding-top:6px"><b>现金净变动</b><b class="mono ${c.delta >= 0 ? 'good' : 'bad'}">${fmtMoney(c.delta)}</b></div>
+        </div>
+      </div>
+      <div class="tiny dim" style="margin-top:8px">投资与筹资按「现金净变动 − 经营现金流」倒推：园区建设、设备投入、贷款与融资都归入此项。</div>`);
+  }
+
   function pageFinance() {
     const r = lastReport;
     const hist = historyRows(state, 24);
@@ -2668,6 +2931,8 @@ export function renderGame(root, state, opts = {}) {
     return `
       ${head('财务中心', `现金 ${fmtMoney(state.company.cash)} · 负债 ${fmtMoney(debt)}`,
         `<button class="btn small primary" data-act="loan-modal">银行贷款 / 还款</button>
+         <button class="btn small" data-act="fin-bs">资产负债表</button>
+         <button class="btn small" data-act="fin-cf">现金流量表</button>
          <span class="chip">信用 ${Math.round((state.credit?.score || 600))}</span>`)}
       ${activePol.length ? `
       <div class="card" style="margin-bottom:12px">
@@ -3089,6 +3354,14 @@ export function renderGame(root, state, opts = {}) {
           </div>`).join('') || '<div class="empty">无在售机型</div>'}
           <div class="section-label">招牌能力</div>
           <div class="tiny" style="line-height:1.8">${sig ? `<b>${sig.icon} ${esc(sig.name)}</b><div class="dim">${esc(sig.desc)}</div>` : '<span class="dim">无</span>'}</div>
+          <div class="section-label">技术资产（收购可获得）</div>
+          <div class="tiny" style="line-height:1.7">${(c.techAssets || []).length ? c.techAssets.map((id) => {
+            const t = TECH_MAP[id];
+            if (!t) return '';
+            const owned = state.tech.unlocked.includes(id);
+            return `<span class="chip ${owned ? 'dim' : ''}" style="margin:2px">${esc(t.name)}${owned ? ' · 已掌握' : ''}</span>`;
+          }).join('') : '<span class="dim">暂无</span>'}</div>
+          <div class="tiny dim" style="margin-top:5px">收购后需等整合期满（6/9 个月）才并入母公司，敌意收购只保留 70%；尚未出现的未来技术不会随并购转移。</div>
           <div class="section-label">战略联盟</div>
           <div class="tiny">${allies.length ? allies.map((n) => `<span class="chip good" style="margin:2px">${esc(n)}</span>`).join('') : '<span class="dim">暂无盟友</span>'}</div>
           <div class="tiny dim" style="margin-top:8px">联盟成员在份额计算中获得 6% 曝光加成，联盟到期后自动解除。</div>
@@ -3128,8 +3401,17 @@ export function renderGame(root, state, opts = {}) {
          <button class="btn small" data-act="expand-office">租用临时工位（${fmtMoney(2000000 * o.level)}）</button>`)}
       <div class="two-col" style="grid-template-columns:1.25fr 1fr">
         <div class="card" style="padding:8px">
-          <div class="scene-3d" id="office-scene"></div>
-          <div class="tiny dim" style="padding:8px 6px 2px">拖动旋转视角 · 右键/Ctrl+拖动平移 · 滚轮缩放。45° 视角下自动隐藏面朝你的墙体与天花板，切「俯视」看整体布局。</div>
+          <div class="row" style="gap:6px;padding:2px 2px 8px">
+            <button class="btn tiny ${hqMode === 'estate' ? 'primary' : 'ghost'}" data-act="hq-mode" data-v="estate">园区总览</button>
+            <button class="btn tiny ${hqMode === 'floor' ? 'primary' : 'ghost'}" data-act="hq-mode" data-v="floor">楼层平面</button>
+            <span class="tiny dim" style="margin-left:6px">${hqMode === 'estate'
+              ? `${(state.campus?.plots || []).filter((p) => p.owned).length} 块已购地块 · 拖动旋转 · 滚轮缩放`
+              : '单层办公区 · 可拖放房间与家具'}</span>
+          </div>
+          <div class="scene-3d" id="${hqMode === 'estate' ? 'estate-scene' : 'office-scene'}"></div>
+          <div class="tiny dim" style="padding:8px 6px 2px">${hqMode === 'estate'
+            ? '园区俯视：地块、楼宇外形与等级、道路与绿化；切「楼层平面」查看室内布局与工位。'
+            : '拖动旋转视角 · 右键/Ctrl+拖动平移 · 滚轮缩放。45° 视角下自动隐藏面朝你的墙体与天花板。'}</div>
         </div>
         <div class="grid" style="gap:12px">
           <div class="card">
@@ -3205,6 +3487,16 @@ export function renderGame(root, state, opts = {}) {
 
   // ---------- 3D / 图表挂载 ----------
   function mountOffice() {
+    if (hqMode === 'estate') {
+      const el2 = content.querySelector('#estate-scene');
+      if (!el2) return;
+      try {
+        scene = createEstateScene(el2, state);
+      } catch (e) {
+        el2.innerHTML = `<div class="empty">园区 3D 初始化失败：${esc(e.message)}</div>`;
+      }
+      return;
+    }
     const el = content.querySelector('#office-scene');
     if (!el) return;
     try {
@@ -3875,9 +4167,12 @@ export function renderGame(root, state, opts = {}) {
     mask.className = 'modal-mask';
     const renderSlots = () => {
       const slots = saveSlots();
+      const used = storageUsage().used;
+      const usedMB = (used / 1048576).toFixed(2);
       mask.innerHTML = `<div class="modal" style="width:min(480px,94vw)">
         <h2>保存存档</h2>
         <div class="modal-sub">选择槽位 · 自动存档每回合都会进行</div>
+        <div class="tiny ${used > 4 * 1048576 ? 'bad' : 'dim'}" style="margin:-4px 0 8px">本机存档占用 ${usedMB} MB（浏览器上限约 5 MB，超出会保存失败）</div>
         <div class="list">
           ${slots.map((s) => `<div class="list-item">
             <div style="flex:1"><b>槽位 ${s.slot}</b> ${s.empty ? '<span class="tiny dim">空</span>' : s.name}
@@ -3895,9 +4190,7 @@ export function renderGame(root, state, opts = {}) {
         b.onclick = () => {
           const n = Number(b.dataset.slot);
           if (b.dataset.sp === 'save') {
-            saveGame(state, n);
-            opts.onToast?.(`已保存到槽位 ${n}`, 'good');
-            sfx('good');
+            if (saveToSlot(n, `到槽位 ${n}`)) { sfx('good'); }
             renderSlots();
           } else if (b.dataset.sp === 'load') {
             const s2 = loadGame(n);

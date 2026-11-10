@@ -8,5 +8,6 @@ node_modules/
 # 内部文档：含 APK 签名密钥口令等敏感信息，不随公开仓库发布
 HANDOVER.md
 .zcode/
+.opencode/
 # 交付压缩包内含 HANDOVER（签名口令），不得入库
 mm.zip

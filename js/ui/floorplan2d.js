@@ -117,6 +117,23 @@ export function openFloorplanPlanner(mount, state, { onChanged, onClose, onToast
     ctx.fillText('入口大厅', ex + 6, ey + 14);
 
     const counts = deptHeadcounts(state);
+    // 公共空间：色块 + 名称（虚线边框表示非部门房间）
+    const FAC_COLORS = { meeting: '#6f7fd8', pantry: '#d8a95a', server: '#5aa6a0', exec: '#b07ac0' };
+    for (const f of (layout.facilities || [])) {
+      const [rx, ry] = w2c(f.cx * CELL - FLOOR_X / 2, f.cy * CELL - FLOOR_Z / 2);
+      const rw = f.w * CELL * scale, rh = f.h * CELL * scale;
+      const fc = FAC_COLORS[f.type] || '#55637a';
+      ctx.fillStyle = hexA(fc, 0.1);
+      ctx.fillRect(rx, ry, rw, rh);
+      ctx.strokeStyle = fc;
+      ctx.lineWidth = Math.max(1.6, 0.4 * scale);
+      ctx.setLineDash([6, 4]);
+      ctx.strokeRect(rx, ry, rw, rh);
+      ctx.setLineDash([]);
+      ctx.fillStyle = 'rgba(214,226,242,.85)';
+      ctx.font = '11px sans-serif';
+      ctx.fillText(f.name, rx + 6, ry + rh / 2 + 4);
+    }
     // 房间：色块 + 周界墙 + 门 + 标签
     for (const d of DEPT_DEFS.slice(0, 9)) {
       const room = layout.rooms[d.id];

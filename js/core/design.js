@@ -3,7 +3,7 @@ import { PHONE_TEMPLATES, PHONE_TPL_MAP, templateForYear } from '../data/templat
 import { clamp, round } from './util.js';
 import { CPUS, RAMS, STORAGES, SCREENS, CAMERAS, BATTERIES, SYSTEMS, EXTRAS, MATERIALS, FINISHES, CHARGERS } from '../data/parts.js';
 import { IMAGE_SENSORS, LENS_TYPES, PANEL_VENDORS, RES_TIERS, formatFactor, lensRadiusMm, lensThicknessMm, sensorById, lensTypeById } from '../data/hardware.js';
-import { TECHS } from '../data/tech.js';
+import { TECHS, TECH_MAP } from '../data/tech.js';
 import { expectedPrice } from '../data/world.js';
 
 export const SCREEN_ASPECTS = {
@@ -42,8 +42,9 @@ export function deviceTypeOf(design) {
 
 // 各品类可用的附加功能（手表不做屏下摄像头/均热板/指纹；平板不做屏下摄像头）
 export const CAT_EXTRAS = {
-  watch: ['x_wp', 'x_sec', 'x_sat'],
-  tablet: ['x_fp', 'x_face', 'x_wp', 'x_wl', 'x_fc', 'x_vc', 'x_sat', 'x_sec'],
+  watch: ['x_wp', 'x_sec', 'x_sat', 'x_bt', 'x_gps', 'x_wifi', 'x_esim'],
+  tablet: ['x_fp', 'x_face', 'x_wp', 'x_wl', 'x_fc', 'x_vc', 'x_sat', 'x_sec',
+    'x_wifi', 'x_bt', 'x_gps', 'x_nfc', 'x_esim', 'x_wifi6', 'x_uwb', 'x_mm', 'x_satd'],
 };
 
 // 返回该品类的附加功能白名单；手机沿用模板能力，返回 null 表示不额外限制
@@ -503,7 +504,7 @@ export function shellWeight(design) {
 }
 
 export function bomCost(design, year) {
-  return Math.round(rawBom(design) * eraCostScale(year));
+  return Math.round(rawBom(design, year) * eraCostScale(year));
 }
 
 // 各年代主流机的 BOM 占零售价的比例，用来把成本锚定到该年代的物价水平
@@ -523,6 +524,25 @@ export function eraCostScale(year) {
 }
 
 // 器件原价直接加总：只反映"选了多好的料"，不含年代物价
+// 设计里有多少件属于「工程样品」（年份晚于当前年）：用于生产良率惩罚与提示
+export function leadPartCount(design, year) {
+  const y = Number(year) || 0;
+  if (!design || !design.parts) return 0;
+  let n = 0;
+  const chk = (x) => { if (x && Number.isFinite(Number(x.year)) && Number(x.year) > y) n += 1; };
+  if (!design.parts.ownCpu) chk(CPUS.find((x) => x.id === design.parts.cpu));
+  chk(RAMS.find((x) => x.id === design.parts.ram));
+  chk(STORAGES.find((x) => x.id === design.parts.storage));
+  chk(BATTERIES.find((x) => x.id === design.parts.battery));
+  chk(SYSTEMS.find((x) => x.id === design.parts.os));
+  chk(SCREENS.find((x) => x.id === design.screen.panel));
+  for (const l of design.camera?.lenses || []) {
+    chk(l.sensor === 'sn_own' ? null : sensorById(l.sensor));
+  }
+  for (const id of design.parts.extras || []) chk(EXTRAS.find((e) => e.id === id));
+  return n;
+}
+
 function resolveCpu(design) {
   if (design.parts.ownCpu) return design.parts.ownCpu;
   return CPUS.find((x) => x.id === design.parts.cpu) || CPUS[0];
@@ -578,7 +598,7 @@ export function lensesCost(design) {
   return Math.round(sum);
 }
 
-function rawBom(design) {
+function rawBom(design, year = 0) {
   ensureLenses(design);
   const c = resolveCpu(design);
   const r = RAMS.find((x) => x.id === design.parts.ram) || RAMS[0];
@@ -595,12 +615,18 @@ function rawBom(design) {
 
   // 摄像头逐镜计价：传感器价 × 镜头类型系数 + OIS + deco 模具 + 闪光灯
   const camCost = lensesCost(design);
+  // 工程样品：年份晚于当前年的零件按 2.2 倍采购（供应链提前拿货的溢价）
+  const leadMul = (x) => (x && year && Number(x.year) > Number(year) ? 2.2 : 1);
+  const camLead = (design.camera.lenses || []).some((l) => {
+    const sn = l.sensor === 'sn_own' ? design.parts.ownCmr : sensorById(l.sensor);
+    return sn && Number(sn.year) > Number(year);
+  });
   const coverScreenInch = design.body.coverScreen?.inch || 0;
   const coverPanelCost = coverScreenInch > 0 ? panel.priceFor(Math.min(coverScreenInch, 7)) * 0.7 : 0;
   const pk = ensurePackaging(design);
   const pkM = PACKAGE_MATERIALS.find((x) => x.id === pk.material) || PACKAGE_MATERIALS[0];
-  const parts = c.price + r.price + s.price + b.price + camCost
-    + panel.priceFor(design.screen.inch) * (1 + ((design.screen.hz || 60) - 60) * 0.004) + coverPanelCost + frame.price + back.price * 1.4 + os.fee
+  const parts = c.price * leadMul(c) + r.price * leadMul(r) + s.price * leadMul(s) + b.price * leadMul(b) + (camLead ? camCost * 2.2 : camCost)
+    + panel.priceFor(design.screen.inch) * leadMul(panel) * (1 + ((design.screen.hz || 60) - 60) * 0.004) + coverPanelCost + frame.price + back.price * 1.4 + os.fee * leadMul(os)
     + cw.price + wl.price + pr.bonus * 4 + pkM.cost;
   const extras = design.parts.extras.reduce((sum, id) => {
     const x = EXTRAS.find((e) => e.id === id);
@@ -881,8 +907,14 @@ export function eraAvailability(design, year, unlocked) {
   const flag = (item, label) => {
     if (!item) return;
     const nm = item.name || item.id || '未知部件';
-    if (Number.isFinite(Number(item.year)) && Number(item.year) > y) {
-      issues.push({ level: 'error', text: `${label}「${nm}」要到 ${item.year} 年才可用（当前 ${y} 年）。` });
+    const ahead = Number(item.year) - y;
+    if (Number.isFinite(Number(item.year)) && ahead > 0) {
+      // 提前 ≤3 年可走「工程样品」采购：能装，但成本与良率都要付代价
+      if (ahead <= 3) {
+        issues.push({ level: 'warn', text: `${label}「${nm}」是 ${item.year} 年的产品，按「工程样品」采购：成本 ×2.2、良率下降。` });
+      } else {
+        issues.push({ level: 'error', text: `${label}「${nm}」要到 ${item.year} 年才可用（当前 ${y} 年，超出可提前采购的 3 年）。` });
+      }
       return;
     }
     if (unl && item.tech && !unl.has(item.tech)) {
@@ -933,6 +965,19 @@ export function validate(design, year, opts = {}) {
 
   // 年代硬锁：零件/传感器/面板/充电/附加功能必须在该年已发布且科技已解锁
   if (!opts.ignoreEra) issues.push(...eraAvailability(design, year, opts.unlocked));
+
+  // 折叠盖板路线同样受科技树约束：CPI / UTG 都要先掌握对应材料技术
+  const foldGlass = design.parts && design.parts.foldGlass;
+  if (foldGlass && foldGlass !== 'none' && !opts.ignoreEra && Array.isArray(opts.unlocked)) {
+    const need = foldGlass === 'utg' ? 'fold_utg' : 'fold_cpi';
+    if (!opts.unlocked.includes(need)) {
+      const t = TECH_MAP[need];
+      issues.push({
+        level: 'error',
+        text: `折叠盖板「${foldGlass === 'utg' ? 'UTG 超薄玻璃' : 'CPI 聚合物'}」需要先掌握「${t ? t.name : need}」`,
+      });
+    }
+  }
 
   if (scr.w + design.screen.bezel * 2 > effW + 0.6) {
     issues.push({ level: 'error', text: `屏幕宽度 ${scr.w}mm 超出机身 ${effW}mm，无法装配。` });

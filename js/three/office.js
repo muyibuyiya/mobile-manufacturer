@@ -240,9 +240,9 @@ export function createOfficeScene(container, state) {
 
   // ---------- 可复用几何 / 材质 ----------
   const GEO = {
-    deskTop: new THREE.BoxGeometry(6.2, 0.28, 3.4),
-    deskLeg: new THREE.BoxGeometry(0.22, 1.5, 3.2),
-    monitor: new THREE.BoxGeometry(2.2, 1.3, 0.14),
+    deskTop: new THREE.BoxGeometry(3.5, 0.26, 2.2),
+    deskLeg: new THREE.BoxGeometry(0.18, 1.15, 2.0),
+    monitor: new THREE.BoxGeometry(1.9, 1.15, 0.12),
     monitorStand: new THREE.BoxGeometry(0.3, 0.5, 0.3),
     seat: new THREE.BoxGeometry(1.5, 0.22, 1.5),
     back: new THREE.BoxGeometry(1.5, 1.5, 0.2),
@@ -461,6 +461,96 @@ export function createOfficeScene(container, state) {
       dynGroup.add(label);
     }
 
+    // ---------- 公共空间：会议室 / 茶水间 / 机房 / 总经理办公室 ----------
+    const FAC_COLORS = { meeting: 0x6f7fd8, pantry: 0xd8a95a, server: 0x5aa6a0, exec: 0xb07ac0 };
+    for (const f of (layout.facilities || [])) {
+      const px = f.cx * CELL - FLOOR_X / 2, pz = f.cy * CELL - FLOOR_Z / 2;
+      const pw = f.w * CELL, ph = f.h * CELL;
+      const col = new THREE.Color(FAC_COLORS[f.type] || 0x55637a);
+      const pad = new THREE.Mesh(
+        new THREE.BoxGeometry(pw - 0.4, 0.22, ph - 0.4),
+        new THREE.MeshStandardMaterial({ color: col.clone().multiplyScalar(0.1), roughness: 0.92, metalness: 0.06 }),
+      );
+      pad.position.set(px + pw / 2, 0.11, pz + ph / 2);
+      pad.receiveShadow = true;
+      dynGroup.add(pad);
+
+      const edgeMat = new THREE.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 0.55, roughness: 0.45 });
+      const isDoorSeg = (side, t) => f.door && f.door.side === side && f.door.t === t;
+      const segs = [];
+      for (let t = 0; t < f.w; t++) {
+        segs.push({ kind: 'H', a: f.cx + t, b: f.cy, side: 'N', t });
+        segs.push({ kind: 'H', a: f.cx + t, b: f.cy + f.h, side: 'S', t });
+      }
+      for (let t = 0; t < f.h; t++) {
+        segs.push({ kind: 'V', a: f.cx, b: f.cy + t, side: 'W', t });
+        segs.push({ kind: 'V', a: f.cx + f.w, b: f.cy + t, side: 'E', t });
+      }
+      for (const s of segs) {
+        const key = `${s.kind}:${s.a}:${s.b}`;
+        if (wallKeys.has(key)) continue;
+        wallKeys.add(key);
+        drawWallSeg(s.kind, s.a, s.b, isDoorSeg(s.side, s.t), col, edgeMat);
+      }
+
+      const label = makeLabel(f.name, '#d6e2f2');
+      label.scale.set(9.5, 2.4, 1);
+      const doorAtS = (f.door.side === 'N' || f.door.side === 'S');
+      const lblZ = f.door.side === 'N' ? pz - 1.2 : f.door.side === 'S' ? pz + ph + 1.2 : pz + ph / 2;
+      const lblX = doorAtS ? px + (f.door.t + 0.5) * CELL : (f.door.side === 'W' ? px - 1.2 : px + pw + 1.2);
+      label.position.set(lblX, 6.4, lblZ);
+      label.material.depthTest = false;
+      label.renderOrder = 50;
+      dynGroup.add(label);
+
+      const cx0 = px + pw / 2, cz0 = pz + ph / 2;
+      if (f.type === 'meeting') {
+        const table = new THREE.Mesh(new THREE.BoxGeometry(pw * 0.44, 0.36, ph * 0.4), MAT.desk);
+        table.position.set(cx0, 1.9, cz0);
+        dynGroup.add(table);
+        for (let i = 0; i < 8; i++) {
+          const ang = (i / 8) * Math.PI * 2;
+          const chair = new THREE.Mesh(new THREE.BoxGeometry(1.4, 1.4, 1.4), MAT.chair);
+          chair.position.set(cx0 + Math.cos(ang) * pw * 0.3, 1.2, cz0 + Math.sin(ang) * ph * 0.3);
+          dynGroup.add(chair);
+        }
+        const screen = new THREE.Mesh(new THREE.BoxGeometry(pw * 0.46, 2.1, 0.18), MAT.screen);
+        screen.position.set(cx0, 3.6, pz + 0.9);
+        dynGroup.add(screen);
+      } else if (f.type === 'pantry') {
+        const bar = new THREE.Mesh(new THREE.BoxGeometry(pw * 0.78, 2.0, 1.5), MAT.desk);
+        bar.position.set(cx0, 1.5, pz + ph * 0.3);
+        dynGroup.add(bar);
+        const coffee = new THREE.Mesh(new THREE.BoxGeometry(1.2, 1.4, 1.0), MAT.deskDark);
+        coffee.position.set(cx0 + pw * 0.24, 3.0, pz + ph * 0.3);
+        dynGroup.add(coffee);
+        const stool = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.7, 1.4, 10), MAT.chair);
+        stool.position.set(cx0 - pw * 0.2, 0.9, cz0);
+        dynGroup.add(stool);
+      } else if (f.type === 'server') {
+        for (let i = 0; i < 3; i++) {
+          const rack = new THREE.Mesh(new THREE.BoxGeometry(1.6, 4.2, 1.1), MAT.deskDark);
+          rack.position.set(px + pw - 2.4, 2.9, pz + 3 + i * 2.6);
+          rack.castShadow = true;
+          dynGroup.add(rack);
+          const led = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.2, 0.1),
+            new THREE.MeshStandardMaterial({ color: 0x37c9a5, emissive: 0x37c9a5, emissiveIntensity: 0.9 }));
+          led.position.set(px + pw - 2.4, 3.9, pz + 2.4 + i * 2.6);
+          dynGroup.add(led);
+        }
+      } else if (f.type === 'exec') {
+        const desk = new THREE.Mesh(new THREE.BoxGeometry(pw * 0.44, 0.3, ph * 0.3), MAT.desk);
+        desk.position.set(cx0, 1.9, pz + ph * 0.34);
+        dynGroup.add(desk);
+        const sofa = new THREE.Mesh(new THREE.BoxGeometry(pw * 0.4, 1.1, ph * 0.22), MAT.chair);
+        sofa.position.set(cx0, 0.6, pz + ph * 0.78);
+        dynGroup.add(sofa);
+        const shelf = new THREE.Mesh(new THREE.BoxGeometry(pw * 0.3, 3.2, 0.6), MAT.deskDark);
+        shelf.position.set(px + 1.4, 1.9, cz0);
+        dynGroup.add(shelf);
+      }
+    }
+
     // 家具：内置工位（派生）+ 用户 items —— 同一渲染路径，重叠从数据层杜绝
     const desks = builtinDesks(layout, headcounts);
     for (const d of desks) {
@@ -569,14 +659,14 @@ export function createOfficeScene(container, state) {
   group.add(logo);
 
   const reception = new THREE.Mesh(new THREE.BoxGeometry(14, 2.4, 3.2), MAT.desk);
-  reception.position.set(0, 1.6, 31);
+  reception.position.set(0, 1.6, 39);
   reception.castShadow = true;
   group.add(reception);
   const receptionTop = new THREE.Mesh(new THREE.BoxGeometry(15, 0.3, 4), new THREE.MeshStandardMaterial({
     color: new THREE.Color(state.company.logoColor), emissive: new THREE.Color(state.company.logoColor),
     emissiveIntensity: 0.35, roughness: 0.4, metalness: 0.5,
   }));
-  receptionTop.position.set(0, 2.95, 31);
+  receptionTop.position.set(0, 2.95, 39);
   group.add(receptionTop);
 
   // ---------- 围墙（面朝相机时自动隐藏）与天花板（尺寸随楼层网格） ----------
@@ -802,11 +892,11 @@ export function createOfficeScene(container, state) {
     switch (typeId) {
       case 'desk': {
         const top = new THREE.Mesh(GEO.deskTop, MAT.desk);
-        top.position.y = 2.6; top.castShadow = true;
+        top.position.y = 2.0; top.castShadow = true;
         const leg = new THREE.Mesh(GEO.deskLeg, MAT.deskDark);
         leg.position.y = 1.5;
         const mon = new THREE.Mesh(GEO.monitor, MAT.screen);
-        mon.position.set(0, 3.6, -0.9);
+        mon.position.set(0, 2.72, -0.5);
         g.add(top, leg, mon);
         break;
       }

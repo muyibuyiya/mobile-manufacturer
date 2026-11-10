@@ -1,7 +1,7 @@
 // 第二十一轮验收：芯片核心互斥规则（computeCustomSpec）
 import { computeCustomSpec } from '../js/core/divisions.js';
 
-const state = { date: { year: 2025 }, divisions: { chip: { level: 3 } } };
+const state = { date: { year: 2025 }, divisions: { chip: { level: 3 } }, tech: { unlocked: ['chip_own'] } };
 let fails = 0;
 const check = (name, form, expectOk, expectWord) => {
   const r = computeCustomSpec(state, 'chip', form);
@@ -30,11 +30,19 @@ else if (r5?.ok) console.log(`  cores=${r5.cores} · perf=${r5.perf}`);
 // ⑥ 2025 全自研新一代：C1-Ultra+C1-Premium+C1-Nano
 check('C1 全系同代通过', { ...base, primeArch: 'c1_ultra', primeN: 2, primeGhz: 4.2, bigArch: 'c1_prem', bigN: 4, bigGhz: 3.2, littleArch: 'c1_nano', littleN: 2, littleGhz: 1.9 }, true);
 // ⑦ 未发布架构：Oryon 三代(2025) 在 2024 年不可用
-const state24 = { date: { year: 2024 }, divisions: { chip: { level: 3 } } };
+const state24 = { date: { year: 2024 }, divisions: { chip: { level: 3 } }, tech: { unlocked: ['chip_own'] } };
 const r7 = computeCustomSpec(state24, 'chip', { ...base, primeArch: 'oryon3', primeN: 2, primeGhz: 4.0, bigArch: 'taishan', bigN: 4, bigGhz: 2.4, littleArch: '', littleN: 0 });
 const p7 = !r7.ok && r7.errors.some((e) => e.includes('尚未发布'));
 console.log(`${p7 ? 'PASS' : 'FAIL'} 未发布架构拦截（2024 年选 Oryon 三代）`);
 if (!p7) fails++;
+
+// ⑧ 未掌握「自研芯片设计」时不再禁止，而是按逆向工程惩罚（性能 -12%、成本 +80%）
+const selfForm = { ...base, primeArch: 'oryon', primeN: 2, primeGhz: 3.8, bigArch: 'taishan', bigN: 6, bigGhz: 2.4, littleArch: '', littleN: 0 };
+const r8no = computeCustomSpec({ date: { year: 2025 }, divisions: { chip: { level: 3 } }, tech: { unlocked: [] } }, 'chip', selfForm);
+const r8yes = computeCustomSpec(state, 'chip', selfForm);
+const p8 = r8no.ok && !!r8no.warning && r8no.perf < r8yes.perf && r8no.price > r8yes.price;
+console.log(`${p8 ? 'PASS' : 'FAIL'} 未掌握自研芯片设计时按逆向工程惩罚 → perf ${r8no?.perf}/${r8yes?.perf} price ${r8no?.price}/${r8yes?.price}`);
+if (!p8) fails++;
 
 console.log(fails ? `\n${fails} 项失败` : '\n芯片互斥规则全部通过');
 process.exit(fails ? 1 : 0);

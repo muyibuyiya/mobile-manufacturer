@@ -23,7 +23,7 @@ import { compactAll } from './history.js';
 
 export { DEPT_DEFS, ROLE_BY_DEPT };
 
-export const GAME_VERSION = '1.22.0'; // 全局唯一版本号（启动页/关于/存档兼容判断）
+export const GAME_VERSION = '1.27.0'; // 全局唯一版本号（启动页/关于/存档兼容判断）
 
 // 室内布局（v2）：房间可拖放/调尺寸 + 家具/隔墙单数据源。
 // 旧档（v1：仅 items/edges，房间位置硬编码）经 migrateV1 迁移：rooms 取默认双排布局，items/edges 原样保留
@@ -229,7 +229,7 @@ export function createGame(opts) {
     departments: DEPT_DEFS.map((d) => ({ ...d, budget: 0, focus: 50 })),
     employees: [],
     models: [],
-    tech: { all: !!techAll, unlocked: techAll ? TECHS.map((t) => t.id) : [], researching: null, completed: [] },
+    tech: { all: !!techAll, unlocked: techAll ? TECHS.map((t) => t.id) : [], researching: null, completed: [], patents: [] },
     production: { mode: 'foundry', foundryId: 'f1', batch: 20000, quality: 65, process: 0, automation: 0, autoInvested: 0 },
     factories: [],
     campus: newCampus(year),
@@ -349,11 +349,45 @@ function readRaw(slot) {
   return null;
 }
 
+// 手动存档：容量不足（QuotaExceededError）时必须把结果交回 UI，不能让异常冒到点击处理器里
+// 返回值 { ok, size, error, replaced }：size 为序列化字节数，replaced 表示本次是丢弃旧档换新档
 export function saveGame(state, slot = 1) {
   const data = JSON.stringify(state);
-  localStorage.setItem(SAVE_KEY + '_' + slot, data);
-  localStorage.setItem(SAVE_KEY + '_last', String(slot));
-  return data.length;
+  const key = SAVE_KEY + '_' + slot;
+  try {
+    localStorage.setItem(key, data);
+    localStorage.setItem(SAVE_KEY + '_last', String(slot));
+    return { ok: true, size: data.length, error: null, replaced: false };
+  } catch (e) {
+    // 空间不足：玩家点“保存”的意图是保存当前进度，优先丢弃本槽旧档再试一次
+    const prev = (() => { try { return localStorage.getItem(key); } catch { return null; } })();
+    try {
+      localStorage.removeItem(key);
+      localStorage.setItem(key, data);
+      localStorage.setItem(SAVE_KEY + '_last', String(slot));
+      return { ok: true, size: data.length, error: null, replaced: true };
+    } catch (e2) {
+      // 仍然失败：把旧档写回，保证不因一次失败的保存把原有进度弄丢
+      if (prev) { try { localStorage.setItem(key, prev); } catch { /* 写回也失败则只能放弃 */ } }
+      return { ok: false, size: data.length, error: e2?.name || e?.name || 'SaveError', replaced: false };
+    }
+  }
+}
+
+// 存档占用统计：给存档弹窗显示用量，避免玩家在不知不觉中撞上 5MB 配额
+export function storageUsage() {
+  const slots = [];
+  let used = 0;
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k || !k.startsWith(SAVE_KEY + '_')) continue;
+      const size = (localStorage.getItem(k) || '').length;
+      used += size;
+      slots.push({ key: k.slice(SAVE_KEY.length + 1), size });
+    }
+  } catch (e) { /* 隐私模式/被禁用时按 0 处理 */ }
+  return { used, slots };
 }
 
 // 自动存档：独立槽位，不占用 1~3 手动槽，也不改写 last 指针
@@ -450,7 +484,8 @@ export function sanitizeState(s) {
   // 中后期系统提示（一次性）
   if (!s.hints || typeof s.hints.seen !== 'object') s.hints = { seen: s.hints?.seen && typeof s.hints.seen === 'object' ? s.hints.seen : {} };
   // 沙盒全解锁标记：旧档没有 tech.all 字段，按「沙盒 + 技术全掌握」推断补齐
-  if (!s.tech) s.tech = { all: false, unlocked: [], researching: null, completed: [] };
+  if (!s.tech) s.tech = { all: false, unlocked: [], researching: null, completed: [], patents: [] };
+  if (!Array.isArray(s.tech.patents)) s.tech.patents = [];
   if (typeof s.tech.all !== 'boolean') {
     s.tech.all = s.mode === 'sandbox' && Array.isArray(s.tech.unlocked)
       && (TECHS.length === 0 || s.tech.unlocked.length >= TECHS.length);

@@ -1,8 +1,8 @@
 // 月度模拟核心
 import { clamp, rand, randInt, pick, chance, fmtMoney, fmtNum, fmtUnit, sum } from './util.js';
 import { MARKETS, MARKET_MAP, eraFactor, EVENTS, COUNTRIES, expectedPrice, makeCompetitorPhone, LINEUP_MAP, COMPETITORS, phonePriceInMarket, scaleCompetitorPrice } from '../data/world.js';
-import { derive, validate, eraBaseline, eraRel } from './design.js';
-import { TECHS, TECH_MAP } from '../data/tech.js';
+import { derive, validate, eraBaseline, eraRel, leadPartCount } from './design.js';
+import { TECHS, TECH_MAP, TECH_BUY_MIN_AGE, techLeadYears, techLeadPenalty, techTrialCost, TECH_LEAD_STAGE_NAME } from '../data/tech.js';
 import { addLog, staffPower, deptById, DIFFICULTY, makeCompetitors, generateEmployee, salaryBase } from './state.js';
 import { checkMilestones } from './milestones.js';
 import { campusBonus, stepConstruction, buildingCount } from './campus.js';
@@ -24,7 +24,7 @@ import { stepReviews, wordOfMouth } from './reviews.js';
 import { fRnd, fProdCost, fProdQuality, fSupply, fBrand, fReach, fInterest, fMorale, fDesign } from './org.js';
 import { stepCapital } from './capital.js';
 import {
-  processCapMul, processCostMul, processQualityBonus, automationUpkeep, automationLaborCut, ensureProduction,
+  processCapMul, processCostMul, processQualityBonus, automationUpkeep, automationLaborCut, ensureProduction, routeOf, equipmentLevel,
 } from './production.js';
 import { compactAll } from './history.js';
 
@@ -66,19 +66,71 @@ export function startResearch(state, techId) {
   const t = TECH_MAP[techId];
   if (!t) return { ok: false, msg: '技术不存在' };
   if (state.tech.unlocked.includes(techId)) return { ok: false, msg: '已掌握该技术' };
-  if (state.date.year < t.year) return { ok: false, msg: `${t.year} 年才会出现这项技术` };
   if (!t.prereq.every((p) => state.tech.unlocked.includes(p))) return { ok: false, msg: '前置技术未完成' };
   if (state.tech.researching) return { ok: false, msg: '已有进行中的研发项目' };
-  state.tech.researching = { techId, progress: 0, spent: 0, startYear: state.date.year, startMonth: state.date.month };
-  addLog(state, 'tech', `启动研发：${t.name}（预算 ${fmtMoney(researchBudget(state))}/月）`);
-  return { ok: true };
+  // 年代不再是闸门：提前量转化为成本与速度惩罚，完成后还要过一次试制
+  const lead = techLeadYears(t, state.date.year);
+  const pen = techLeadPenalty(lead);
+  state.tech.researching = {
+    techId, progress: 0, spent: 0, lead,
+    costMul: pen.costMul, speedMul: pen.speedMul,
+    awaitingTrial: false, trialCost: techTrialCost(t, lead),
+    startYear: state.date.year, startMonth: state.date.month,
+  };
+  const stage = TECH_LEAD_STAGE_NAME[pen.stage] || '';
+  const note = lead > 0 ? `（提前 ${lead} 年 · ${stage} · 成本 ×${pen.costMul} · 速度 ×${pen.speedMul}）` : '';
+  addLog(state, 'tech', `启动研发：${t.name}${note}（预算 ${fmtMoney(researchBudget(state))}/月）`);
+  return { ok: true, lead };
+}
+
+// 超前项目的试制费：付清后技术才真正到手（相当于流片/工程验证）
+export function payResearchTrial(state) {
+  const r = state.tech.researching;
+  if (!r || !r.awaitingTrial) return { ok: false, msg: '没有待试制的项目' };
+  const t = TECH_MAP[r.techId];
+  if (state.company.cash < r.trialCost) return { ok: false, msg: `试制费不足（需 ${fmtMoney(r.trialCost)}）` };
+  state.company.cash -= r.trialCost;
+  state.tech.unlocked.push(t.id);
+  state.tech.completed.push({ id: t.id, date: { ...state.date } });
+  awardIp(state, t, r.lead || 0);
+  state.tech.researching = null;
+  state.company.brand += 1.6;
+  addLog(state, 'tech', `试制成功：${t.name}（试制费 ${fmtMoney(r.trialCost)}）`);
+  return { ok: true, msg: `试制成功，「${t.name}」已掌握` };
+}
+
+// 研发产出：每个节点至少 1 项专利；超前项目按提前量追加论文
+export function awardIp(state, t, lead = 0) {
+  state.tech.patents = state.tech.patents || [];
+  let n = 0;
+  if (!state.tech.patents.some((p) => p.techId === t.id && p.kind === 'patent')) {
+    state.tech.patents.push({ kind: 'patent', techId: t.id, name: `${t.name} 核心专利`, year: state.date.year, month: state.date.month });
+    n += 1;
+  }
+  if (lead > 0) {
+    const papers = Math.min(3, Math.ceil(lead / 3));
+    for (let i = 0; i < papers; i++) {
+      state.tech.patents.push({ kind: 'paper', techId: t.id, name: `${t.name} 前瞻研究 ${i + 1}`, year: state.date.year, month: state.date.month });
+      n += 1;
+    }
+  }
+  return n;
+}
+
+export function techIpStats(state) {
+  const list = (state.tech && state.tech.patents) || [];
+  return {
+    patent: list.filter((p) => p.kind === 'patent').length,
+    paper: list.filter((p) => p.kind === 'paper').length,
+    total: list.length,
+  };
 }
 
 export function researchBudget(state) {
   const r = state.tech.researching;
   if (!r) return 0;
   const t = TECH_MAP[r.techId];
-  return Math.round(t.cost / 24);
+  return Math.round(t.cost / 24 * (r.costMul || 1));
 }
 
 // ---------- 生产 ----------
@@ -113,7 +165,7 @@ export function assemblyUnit(state) {
   if (state.production.mode === 'own' && factoryCapacity(state) > 0) {
     const base = (7 + state.production.quality * 0.05) * (1 - clamp(staffPower(state, 'prod') * 0.01, 0, 0.18));
     // 装配工艺越高，单位加工费越低
-    return base * costMul * processCostMul(state);
+    return base * costMul * processCostMul(state) * routeOf(state).costMul * (1 - 0.03 * equipmentLevel(state));
   }
   const f = FOUNDRIES.find((x) => x.id === state.production.foundryId) || FOUNDRIES[0];
   return f.fee * costMul;
@@ -135,7 +187,7 @@ export function capacityOf(state) {
   ensureProduction(state);
   if (state.production.mode === 'own') {
     const base = factoryCapacity(state) * (0.6 + clamp(staffPower(state, 'prod') * 0.03, 0, 0.55));
-    return Math.round(base * processCapMul(state));
+    return Math.round(base * processCapMul(state) * (1 + 0.02 * equipmentLevel(state)));
   }
   const f = FOUNDRIES.find((x) => x.id === state.production.foundryId) || FOUNDRIES[0];
   return f.capacity;
@@ -232,6 +284,11 @@ export function tick(state) {
   // 5. 品牌 / 口碑（媒体渠道细分投放）
   const mktRes = stepMarketing(state, report);
   stepBrand(state, report, (mktRes.brandGain + (campRes.brandGain || 0)) * perkMul(state, 'brandGain'));
+  // 专利积累带来行业话语权：每项 +0.03 品牌/月，上限 +3
+  {
+    const ip = techIpStats(state);
+    if (ip.patent > 0) state.company.brand = clamp(state.company.brand + Math.min(3, ip.patent * 0.03), 0, 100);
+  }
   if (mktRes.awareGain > 0 || campRes.awareGain > 0) {
     for (const m of state.markets) m.awareness = clamp(m.awareness + (mktRes.awareGain * 0.12) + (campRes.awareGain * 0.08), 0, 100);
   }
@@ -314,6 +371,10 @@ function stepResearch(state, report) {
   const r = state.tech.researching;
   if (!r) return;
   const t = TECH_MAP[r.techId];
+  if (r.awaitingTrial) {
+    report.notes.push(`「${t.name}」已到试制阶段，需支付 ${fmtMoney(r.trialCost)} 才能掌握。`);
+    return;
+  }
   const country = COUNTRIES.find((c) => c.id === state.company.country) || COUNTRIES[0];
   const diff = DIFFICULTY[state.company.difficulty] || DIFFICULTY.normal;
   const budget = researchBudget(state);
@@ -321,18 +382,28 @@ function stepResearch(state, report) {
     report.notes.push('现金不足，研发停滞。');
     return;
   }
+  const costMul = r.costMul || 1;
+  const speedMul = r.speedMul || 1;
   const power = staffPower(state, 'rnd') * fRnd(state);
-  const budgetFactor = clamp(budget / (t.cost / 24), 0.25, 1.4);
+  const budgetFactor = clamp(budget / (t.cost / 24 * costMul), 0.25, 1.4);
   const campusSpeed = 1 + clamp(campusBonus(state, 'rndSpeed'), 0, 1.5);
   const progress = (Math.pow(Math.max(power, 0.15), 0.9) * 9600 * budgetFactor
-    * country.tech * diff.rnd * campusSpeed * activeMul(state, 'rndMul') * policyMul(state, 'rndMul') * perkMul(state, 'rndSpeed')) / t.cost * 100;
+    * country.tech * diff.rnd * campusSpeed * activeMul(state, 'rndMul') * policyMul(state, 'rndMul') * perkMul(state, 'rndSpeed'))
+    / t.cost * 100 * speedMul * (1 + Math.min(0.2, techIpStats(state).paper * 0.01));
   r.progress = clamp(r.progress + progress, 0, 100);
   r.spent += budget;
   state.company.cash -= budget;
   report.rnd += budget;
   if (r.progress >= 100) {
+    // 超前技术：研发完成不等于掌握，必须付一笔试制/流片费
+    if ((r.lead || 0) > 0) {
+      r.awaitingTrial = true;
+      report.notes.push(`「${t.name}」研发完成，进入试制阶段（需 ${fmtMoney(r.trialCost)}）`);
+      return;
+    }
     state.tech.unlocked.push(t.id);
     state.tech.completed.push({ id: t.id, date: { ...state.date } });
+    awardIp(state, t, 0);
     state.tech.researching = null;
     state.company.brand += 1.2;
     addLog(state, 'tech', `研发完成：${t.name}，${t.desc}`);
@@ -346,7 +417,7 @@ function stepProduction(state, report) {
   if (!models.length) return;
   let left = cap;
   // 生产部的管理方式决定实际良品水平：专注度越高，品质越稳，但装配费也越高
-  const qTarget = clamp(state.production.quality + fProdQuality(state) + processQualityBonus(state), 5, 100);
+  const qTarget = clamp(state.production.quality + fProdQuality(state) + processQualityBonus(state) + routeOf(state).quality, 5, 100);
   for (const model of models) {
     model.quality = clamp((model.quality ?? 65) + (qTarget - (model.quality ?? 65)) * 0.35, 5, 100);
   }
@@ -357,17 +428,24 @@ function stepProduction(state, report) {
     const asm = assemblyUnit(state);
     const planned = unitCost(state, model);
     const affordable = Math.floor(Math.max(0, state.company.cash * 0.55) / Math.max(planned, 1));
-    const qty = Math.min(target, affordable);
-    if (qty <= 0) { report.notes.push(`${model.name} 因现金不足停产。`); continue; }
+    const plannedQty = Math.min(target, affordable);
+    if (plannedQty <= 0) { report.notes.push(`${model.name} 因现金不足停产。`); continue; }
+    // 工程样品（年份超前零件）良率更差：物料按投产量消耗，但只有部分成为良品
+    const leadN = leadPartCount(model.design, state.date.year);
+    const yieldMul = Math.max(0.55, 1 - 0.12 * leadN);
+    const qty = Math.max(1, Math.round(plannedQty * yieldMul));
+    if (leadN > 0 && qty < plannedQty) {
+      report.notes.push(`${model.name} 使用 ${leadN} 件工程样品，本批良率下降，少产出 ${fmtNum(plannedQty - qty)} 台。`);
+    }
     // 元器件：库存覆盖部分按标准成本，缺口走现货市场溢价
-    const { covered, spot } = consumeComponents(state, model, qty);
+    const { covered, spot } = consumeComponents(state, model, plannedQty);
     const cost = covered * (base + asm) + spot * (base * (1 + SPOT_PREMIUM) + asm);
     model.inventory += qty;
     state.company.cash -= cost;
     report.cogs += cost;
     model.producedTotal = (model.producedTotal || 0) + qty;
-    left -= qty;
-    model.lastUnitCost = cost / qty;
+    left -= plannedQty;
+    model.lastUnitCost = cost / Math.max(1, qty);
     report.spotUnits = (report.spotUnits || 0) + spot;
     report.spotCost = (report.spotCost || 0) + spot * base * SPOT_PREMIUM;
     if (spot > 0) {
@@ -1040,37 +1118,61 @@ export function suggestTargets(state) {
   };
 }
 
-// ---------- 技术引进：直接购买竞品成熟技术（贵但即时），子公司转让另有折扣 ----------
+// ---------- 技术引进：补课通道 ----------
+// 与「研发」分工：研发要求前置齐全（从零到一），引进允许跳过前置（花钱补课），
+// 但只转让已经上市 2 年以上的成熟技术，且每缺一项前置都要额外加价。
+export const TECH_BUY_MARGIN = 2.4;
+export const TECH_BUY_GAP_RATIO = 0.6;
+// 成熟度常量定义在 data/tech.js（科技树页也要用），这里转出保持原有导出路径
+export { TECH_BUY_MIN_AGE };
+
+export function techMissingPrereq(state, techId) {
+  const t = TECH_MAP[techId];
+  if (!t) return [];
+  return (t.prereq || []).filter((p) => !state.tech.unlocked.includes(p));
+}
+
+export function techQuote(state, techId) {
+  const t = TECH_MAP[techId];
+  if (!t) return null;
+  const missing = techMissingPrereq(state, techId);
+  const readyAt = t.year + TECH_BUY_MIN_AGE;
+  const price = Math.round(t.cost * TECH_BUY_MARGIN * (1 + TECH_BUY_GAP_RATIO * missing.length));
+  return {
+    techId, name: t.name, year: t.year, desc: t.desc, missing, readyAt,
+    mature: state.date.year >= readyAt, price,
+  };
+}
+
 export function techOffers(state) {
-  const year = state.date.year;
-  const seed = year * 12 + state.date.month;
-  const pool = TECHS.filter((t) => t.year <= year && !state.tech.unlocked.includes(t.id) && t.prereq.every((p) => state.tech.unlocked.includes(p)));
+  const cands = TECHS
+    .filter((t) => !state.tech.unlocked.includes(t.id))
+    .map((t) => techQuote(state, t.id))
+    .filter((q) => q && q.mature);
+  // 缺口少的排前面：优先给玩家看到「只差一两代」的补课包，而不是一上来就卖远古全套
+  cands.sort((a, b) => a.missing.length - b.missing.length || a.price - b.price);
+  const seed = state.date.year * 12 + state.date.month;
   const picks = [];
   const used = new Set();
-  for (let i = 0; i < pool.length && picks.length < 3; i++) {
-    const idx = (seed * 7 + i * 13) % pool.length;
+  for (let i = 0; i < cands.length && picks.length < 3; i++) {
+    const idx = (seed * 7 + i * 13) % cands.length;
     if (used.has(idx)) continue;
     used.add(idx);
-    picks.push(pool[idx]);
+    picks.push(cands[idx]);
   }
   const seller = [...state.competitors].sort((a, b) => b.techLevel - a.techLevel)[0];
-  return picks.map((t) => ({
-    techId: t.id, name: t.name, year: t.year, desc: t.desc,
-    seller: seller ? seller.name : '国际技术供应商',
-    price: Math.round(t.cost * 2.4),
-  }));
+  return picks.map((q) => ({ ...q, seller: seller ? seller.name : '国际技术供应商' }));
 }
 
 export function buyTech(state, techId) {
-  const t = TECH_MAP[techId];
-  if (!t) return { ok: false, msg: '未知技术' };
+  const q = techQuote(state, techId);
+  if (!q) return { ok: false, msg: '未知技术' };
   if (state.tech.unlocked.includes(techId)) return { ok: false, msg: '已掌握该技术' };
-  if (t.prereq.some((p) => !state.tech.unlocked.includes(p))) return { ok: false, msg: '前置技术未满足，对方拒绝转让' };
-  const offer = techOffers(state).find((o) => o.techId === techId);
-  const price = offer ? offer.price : Math.round(t.cost * 2.4);
-  if (state.company.cash < price) return { ok: false, msg: '资金不足' };
-  state.company.cash -= price;
+  if (!q.mature) return { ok: false, msg: `${q.readyAt} 年后对方才愿意转让这项技术` };
+  if (state.company.cash < q.price) return { ok: false, msg: '资金不足' };
+  state.company.cash -= q.price;
   state.tech.unlocked.push(techId);
-  addLog(state, 'tech', `从 ${offer ? offer.seller : '外部供应商'} 引进技术「${t.name}」，支出 ${fmtMoney(price)}。`);
-  return { ok: true, msg: `技术「${t.name}」引进完成，立即生效` };
+  const gapNote = q.missing.length ? `（跳过 ${q.missing.length} 项前置：${q.missing.join('、')}）` : '';
+  addLog(state, 'tech', `引进技术「${q.name}」，支出 ${fmtMoney(q.price)}${gapNote}。`);
+  return { ok: true, msg: `技术「${q.name}」引进完成${gapNote}`, gap: q.missing };
 }

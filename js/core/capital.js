@@ -1,7 +1,7 @@
 // 资本运作：估值、融资轮次、IPO 上市、收购竞品
 import { clamp, rand, uid, chance, fmtMoney } from './util.js';
 import { addLog, generateEmployee } from './state.js';
-import { TECHS } from '../data/tech.js';
+import { TECHS, TECH_MAP } from '../data/tech.js';
 
 const SHARES = 1e8; // 上市后总股本
 
@@ -134,7 +134,38 @@ function willingness(comp, state) {
 // 谈判对象估值（比一键收购更便宜，但要谈）
 function askPrice(comp) {
   return Math.round((0.9e8 + Math.pow(Math.max(comp.brand, 10), 1.7) * 1.1e5)
-    * (0.85 + (comp.lineup?.length || 0) * 0.12));
+    * (0.85 + (comp.lineup?.length || 0) * 0.12) + techAssetValue(comp));
+}
+
+// 收购能拿到的技术资产：按未被掌握、且已经在当前年份出现的节点计
+export function compTechAssets(comp, year) {
+  return (comp?.techAssets || [])
+    .map((id) => TECH_MAP[id])
+    .filter((t) => t && t.year <= (year || 9999));
+}
+
+export function techAssetValue(comp) {
+  let v = 0;
+  for (const id of comp?.techAssets || []) {
+    const t = TECH_MAP[id];
+    if (t) v += t.cost * 0.35;
+  }
+  return Math.round(v);
+}
+
+// 整合期满把子公司掌握的技术并入母公司；敌意收购只留下 70%（人才与文档流失）
+function transferSubTech(state, sub) {
+  const year = state.date.year;
+  const list = (sub.techAssets || []).filter((id) => {
+    const t = TECH_MAP[id];
+    return t && t.year <= year && !state.tech.unlocked.includes(id);
+  });
+  if (!list.length) { sub.techAssets = []; return []; }
+  const keep = sub.hostile ? Math.ceil(list.length * 0.7) : list.length;
+  const got = list.slice(0, keep);
+  for (const id of got) state.tech.unlocked.push(id);
+  sub.techAssets = [];
+  return got.map((id) => (TECH_MAP[id] ? TECH_MAP[id].name : id));
 }
 
 export function openNegotiation(state, compId, opts = {}) {
@@ -345,6 +376,7 @@ function finalizeSubsidiary(state, comp, cost, note, terms = {}) {
     brand: comp.brand, source: 'acquired', cost, acquiredAt: { ...state.date },
     lineup: comp.lineup || [], techLevel: comp.techLevel || 0.8, style: comp.style || 'hardware',
     lastProfit: 0, payMode: mode, techShare: 0,
+    techAssets: (comp.techAssets || []).slice(), hostile,
     integration: { months: hostile ? 9 : 6, total: hostile ? 9 : 6, penalty: hostile ? 0.5 : 0.4 },
     payment: mode === 'installment'
       ? { total: cost, paid: firstPaid, monthsLeft: 12, perMonth: Math.round(cost * 0.65 * 1.06 / 12) }
@@ -474,6 +506,11 @@ export function stepSubsidiaries(state, report) {
         sub.integration = null;
         state.company.brand = clamp(state.company.brand + 0.3, 0, 100);
         report.notes.push(`${sub.name} 整合完成，协同效应开始释放（品牌 +0.3）。`);
+        const gotTech = transferSubTech(state, sub);
+        if (gotTech.length) {
+          report.notes.push(`${sub.name} 技术团队并入：获得 ${gotTech.length} 项技术`);
+          addLog(state, 'tech', `收购整合完成，获得技术：${gotTech.join('、')}`);
+        }
         addLog(state, 'finance', `${sub.name} 整合期结束，母子品牌协同生效。`);
         state.news = state.news || [];
         state.news.unshift({

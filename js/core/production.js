@@ -20,6 +20,15 @@ export const PROCESS_MAP = Object.fromEntries(PROCESS_LEVELS.map((p) => [p.lv, p
 export const MAX_AUTOMATION = 90;      // 最高 90%：留 10% 人工处理异常
 export const AUTO_STEP = 10;           // 每次投资提升 10 个百分点
 
+// 工艺路线：成本 / 均衡 / 品质，三选一
+export const ROUTES = [
+  { id: 'cost', name: '成本优先', costMul: 0.92, quality: -6, desc: '压缩加工费与辅料，故障率与退货率会上升。' },
+  { id: 'balanced', name: '均衡路线', costMul: 1, quality: 0, desc: '成本与品质折中，适合走量机型。' },
+  { id: 'quality', name: '品质优先', costMul: 1.1, quality: 6, desc: '增加检测与工序，售后成本与退货率下降。' },
+];
+
+export const ROUTE_MAP = Object.fromEntries(ROUTES.map((r) => [r.id, r]));
+
 export function ensureProduction(state) {
   const p = state.production;
   if (!p) return null;
@@ -28,7 +37,44 @@ export function ensureProduction(state) {
   if (!Number.isFinite(Number(p.automation))) p.automation = 0;
   p.automation = clamp(Math.round(p.automation), 0, MAX_AUTOMATION);
   if (!Number.isFinite(Number(p.autoInvested))) p.autoInvested = 0;
+  // 工艺路线与自研设备（1.27）：路线决定成本/品质取舍，设备是长期降本投资
+  if (!ROUTES.some((r) => r.id === p.route)) p.route = 'balanced';
+  if (!Number.isFinite(Number(p.equipment))) p.equipment = 0;
+  p.equipment = clamp(Math.round(p.equipment), 0, 3);
   return p;
+}
+
+export function routeOf(state) {
+  return ROUTE_MAP[state.production?.route] || ROUTES[1];
+}
+
+export function equipmentLevel(state) {
+  return clamp(Math.round(Number(state.production?.equipment) || 0), 0, 3);
+}
+
+export const EQUIPMENT_COSTS = [0, 8000000, 24000000, 60000000];
+
+export function equipmentUpgradeCost(state) {
+  const lv = equipmentLevel(state);
+  return lv >= 3 ? 0 : EQUIPMENT_COSTS[lv + 1];
+}
+
+export function buyEquipment(state) {
+  ensureProduction(state);
+  const lv = equipmentLevel(state);
+  if (lv >= 3) return { ok: false, msg: '自研设备已到最高等级' };
+  const cost = EQUIPMENT_COSTS[lv + 1];
+  if (state.company.cash < cost) return { ok: false, msg: '资金不足' };
+  state.company.cash -= cost;
+  state.production.equipment = lv + 1;
+  return { ok: true, msg: `自研设备升级到 Lv.${lv + 1}（装配成本 -3%/级，产能 +2%/级）` };
+}
+
+export function setRoute(state, id) {
+  if (!ROUTE_MAP[id]) return { ok: false, msg: '未知工艺路线' };
+  ensureProduction(state);
+  state.production.route = id;
+  return { ok: true, msg: `工艺路线切换为「${ROUTE_MAP[id].name}」` };
 }
 
 export function isOwnLine(state) {

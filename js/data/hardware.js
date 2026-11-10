@@ -79,6 +79,16 @@ export const DECO_SHAPES = [
 // ---------- 自研 SoC 设计数据（现实参照） ----------
 // CPU 核心架构：kind 决定定位（prime 超大核/big 大核/little 小核），year 门槛，ipc 相对性能系数
 export const CPU_CORES = [
+  // 早期 ARM 世代：让 1985–2015 的自研芯片有可用核心（自研部门不再被“没有架构”卡死）
+  { id: 'arm1', name: 'ARM1 核心', kind: 'big', year: 1985, ipc: 0.12, ghz: [0.006, 0.012] },
+  { id: 'arm7', name: 'ARM7TDMI', kind: 'big', year: 1994, ipc: 0.3, ghz: [0.02, 0.05] },
+  { id: 'arm9', name: 'ARM9E', kind: 'big', year: 1997, ipc: 0.45, ghz: [0.09, 0.2] },
+  { id: 'arm11', name: 'ARM11', kind: 'big', year: 2002, ipc: 0.6, ghz: [0.3, 0.5] },
+  { id: 'a8', name: 'Cortex-A8', kind: 'big', year: 2005, ipc: 0.8, ghz: [0.5, 1.0] },
+  { id: 'a9', name: 'Cortex-A9', kind: 'big', year: 2009, ipc: 1.0, ghz: [0.8, 1.4] },
+  { id: 'a7', name: 'Cortex-A7', kind: 'little', year: 2011, ipc: 0.9, ghz: [0.8, 1.3] },
+  { id: 'a15', name: 'Cortex-A15', kind: 'big', year: 2012, ipc: 1.3, ghz: [1.0, 1.8] },
+  { id: 'a53', name: 'Cortex-A53', kind: 'little', year: 2014, ipc: 1.0, ghz: [1.2, 1.8] },
   { id: 'a55', name: 'Cortex-A55', kind: 'little', year: 2017, ipc: 1.0, ghz: [1.6, 2.2] },
   { id: 'a77', name: 'Cortex-A77', kind: 'big', year: 2019, ipc: 1.7, ghz: [2.2, 2.9] },
   { id: 'a78', name: 'Cortex-A78', kind: 'big', year: 2020, ipc: 1.8, ghz: [2.0, 3.0] },
@@ -105,6 +115,13 @@ export const CPU_CORES = [
 
 // GPU 架构：perf 单核性能系数，slices 建议核数
 export const GPU_ARCHS = [
+  // 早期图形能力：功能机时代无 GPU，智能机初期是低规格 Mali
+  { id: 'gpu_none', name: '无 GPU（纯 CPU）', vendor: '—', year: 1980, perf: 0, maxCore: 1 },
+  { id: 'mali_200', name: 'Mali-200', vendor: 'ARM 公版', year: 2008, perf: 0.25, maxCore: 1 },
+  { id: 'mali_400', name: 'Mali-400 MP', vendor: 'ARM 公版', year: 2010, perf: 0.45, maxCore: 4 },
+  { id: 'mali_450', name: 'Mali-450 MP', vendor: 'ARM 公版', year: 2012, perf: 0.6, maxCore: 8 },
+  { id: 'mali_t760', name: 'Mali-T760', vendor: 'ARM 公版', year: 2016, perf: 0.9, maxCore: 16 },
+  { id: 'mali_g72', name: 'Mali-G72', vendor: 'ARM 公版', year: 2018, perf: 1.2, maxCore: 20 },
   { id: 'mali_g78', name: 'Mali-G78', vendor: 'ARM 公版', year: 2020, perf: 1.6, maxCore: 24 },
   { id: 'mali_g610', name: 'Mali-G610', vendor: 'ARM 公版', year: 2022, perf: 1.8, maxCore: 10 },
   { id: 'mali_g715', name: 'Mali-G715', vendor: 'ARM 公版', year: 2022, perf: 2.0, maxCore: 16 },

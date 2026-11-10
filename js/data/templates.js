@@ -13,7 +13,7 @@ export const PHONE_TEMPLATES = [
     body: { length: 118, width: 48, thickness: 19, corner: 4 },
     keypad: ['t9', 'qwerty'], keypadFrom: { t9: 1980, qwerty: 2004 },
     home: null, notch: ['none'], fold: false,
-    extras: ['x_wp'],
+    extras: ['x_wp', 'x_wifi', 'x_bt', 'x_gps', 'x_nfc', 'x_esim', 'x_wifi6', 'x_uwb', 'x_mm', 'x_satd'],
   },
   {
     id: 'touch_keypad', name: '触摸屏 + 按键', from: 2004,
@@ -22,7 +22,7 @@ export const PHONE_TEMPLATES = [
     body: { length: 112, width: 50, thickness: 14, corner: 5 },
     keypad: ['t9', 'qwerty', 'none'], keypadFrom: { t9: 1980, qwerty: 2004, none: 1980 },
     home: null, notch: ['none', 'punch'], fold: false,
-    extras: ['x_wp', 'x_wl'],
+    extras: ['x_wp', 'x_wl', 'x_wifi', 'x_bt', 'x_gps', 'x_nfc', 'x_esim', 'x_wifi6', 'x_uwb', 'x_mm', 'x_satd'],
   },
   {
     id: 'touch_full', name: '触摸屏 + 功能键', from: 2007,
@@ -30,7 +30,7 @@ export const PHONE_TEMPLATES = [
     screen: { maxInch: 7.0, presetInch: 4.0, presetBezel: 3, aspects: ['16:9', '3:2', '4:3'], frac: 0.84, cornerMax: 5 },
     body: { length: 124, width: 62, thickness: 10.5, corner: 6 },
     keypad: ['none'], home: ['circle', 'pill'], notch: ['none', 'punch'], fold: false,
-    extras: ['x_fp', 'x_face', 'x_wp', 'x_wl', 'x_fc', 'x_vc', 'x_sec'],
+    extras: ['x_fp', 'x_face', 'x_wp', 'x_wl', 'x_fc', 'x_vc', 'x_sec', 'x_wifi', 'x_bt', 'x_gps', 'x_nfc', 'x_esim', 'x_wifi6', 'x_uwb', 'x_mm', 'x_satd'],
   },
   {
     id: 'full_screen', name: '全面屏', from: 2017,
@@ -38,7 +38,7 @@ export const PHONE_TEMPLATES = [
     screen: { maxInch: 8.2, presetInch: 6.5, presetBezel: 1.8, aspects: ['19.5:9', '16:9', '21:9', '自由'], frac: 0.97, cornerMax: 14 },
     body: { length: 158, width: 73, thickness: 8.2, corner: 9 },
     keypad: ['none'], home: null, notch: ['none', 'punch', 'notch', 'waterdrop', 'popup'], fold: true,
-    extras: ['x_fp', 'x_face', 'x_wp', 'x_wl', 'x_fc', 'x_udc', 'x_vc', 'x_sat', 'x_sec'],
+    extras: ['x_fp', 'x_face', 'x_wp', 'x_wl', 'x_fc', 'x_udc', 'x_vc', 'x_sat', 'x_sec', 'x_wifi', 'x_bt', 'x_gps', 'x_nfc', 'x_esim', 'x_wifi6', 'x_uwb', 'x_mm', 'x_satd'],
   },
   {
     id: 'tablet', name: '平板', from: 2010,
@@ -46,7 +46,7 @@ export const PHONE_TEMPLATES = [
     screen: { maxInch: 15, presetInch: 11, presetBezel: 4, aspects: ['4:3', '3:2', '16:9'], frac: 0.9, cornerMax: 10 },
     body: { length: 250, width: 188, thickness: 7.6, corner: 8 },
     keypad: ['none'], home: null, notch: ['none', 'punch'], fold: false,
-    extras: ['x_fp', 'x_face', 'x_wp', 'x_wl', 'x_fc', 'x_vc', 'x_sec'],
+    extras: ['x_fp', 'x_face', 'x_wp', 'x_wl', 'x_fc', 'x_vc', 'x_sec', 'x_wifi', 'x_bt', 'x_gps', 'x_nfc', 'x_esim', 'x_wifi6', 'x_uwb', 'x_mm', 'x_satd'],
   },
   {
     id: 'watch_round', name: '智能手表（圆表）', from: 2015,

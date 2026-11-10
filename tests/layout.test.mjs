@@ -42,8 +42,10 @@ const layout2 = JSON.parse(JSON.stringify(layout));
 const hc2 = mkState({ rnd: 2 });
 const v1 = validateFurniturePlace(layout2, 'rnd', { type: 'plant', cx: 5, cy: 5, rot: 0 }, deptHeadcounts(hc2));
 ok(v1.ok, '空闲格放置家具合法');
-const v2 = validateFurniturePlace(layout2, 'rnd', { type: 'plant', cx: 0, cy: 0, rot: 0 }, deptHeadcounts(hc2));
-ok(!v2.ok, '与内置工位重叠被拒绝');
+// 取一个真实内置工位坐标（新岛式排布不一定占 0,0）
+  const bdHit = builtinDesks(layout2, deptHeadcounts(hc2)).find((d) => d.dept === 'rnd');
+  const v2 = validateFurniturePlace(layout2, 'rnd', { type: 'plant', cx: bdHit.lx, cy: bdHit.ly, rot: 0 }, deptHeadcounts(hc2));
+  ok(!v2.ok, '与内置工位重叠被拒绝');
 const v3 = validateFurniturePlace(layout2, 'rnd', { type: 'plant', cx: 2, cy: 5, rot: 0 }, deptHeadcounts(hc2));
 ok(!v3.ok, '堵在门口被拒绝');
 layout2.items.push({ uid: 't1', type: 'plant', dept: 'rnd', cx: 5, cy: 5, rot: 0 });
@@ -106,4 +108,17 @@ ok(Array.isArray(p) && p.length >= 2, '跨区寻路返回航点');
 ok(true, `FLOOR ${FLOOR_W}x${FLOOR_H} · 校验完成`);
 
 console.log(`\n结果: ${pass} 通过, ${fail} 失败`);
+// ---------- 公共空间（会议室/茶水间/机房/总经理办公室）----------
+{
+  const lf = normalizeLayout({ rooms: defaultRooms(), items: [], edges: [] });
+  ok(lf.facilities && lf.facilities.length === 4, '公共房间默认 4 间');
+  const clashF = lf.facilities.some((f) => Object.values(lf.rooms).some((r) => r
+    && f.cx < r.cx + r.w && r.cx < f.cx + f.w && f.cy < r.cy + r.h && r.cy < f.cy + f.h));
+  ok(!clashF, '公共房间不与部门房间重叠');
+  const blockCorridor = lf.facilities.some((f) => f.cy <= 13 && f.cy + f.h > 12);
+  ok(!blockCorridor, '公共房间不占用主走廊 cy12..13');
+  // 旧档没有 facilities 时自动补齐
+  const legacy = normalizeLayout({ v: 2, rooms: defaultRooms(), items: [], edges: [] });
+  ok(legacy.facilities.length === 4, '旧档迁移补齐公共房间');
+}
 process.exit(fail ? 1 : 0);

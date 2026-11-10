@@ -65,6 +65,46 @@ const inFloor = (cx, cy) => cx >= 0 && cy >= 0 && cx < FLOOR_W && cy < FLOOR_H;
 // ---------- 默认布局与迁移 ----------
 // 默认双排：北 5 间（cy=2），南 4 间（cy=15），中间 7 格走廊带（可整房拖放）；
 // 北排右侧留 2 格、南排两侧留 4 格松弛，保证初始布局就有可用的自由空间
+// ---------- 公共空间（不绑部门、不产生工位）----------
+// 默认位置落在南北房间带之间的中部走廊，保留 cy 12..13 两格主通道
+export const FACILITY_DEFS = [
+  { id: 'meeting', name: '会议室', type: 'meeting', cx: 8, cy: 8, w: 6, h: 4, door: { side: 'S', t: 3 } },
+  { id: 'pantry', name: '茶水间', type: 'pantry', cx: 15, cy: 8, w: 4, h: 3, door: { side: 'S', t: 2 } },
+  { id: 'server', name: '机房', type: 'server', cx: 20, cy: 8, w: 4, h: 3, door: { side: 'S', t: 2 } },
+  { id: 'exec', name: '总经理办公室', type: 'exec', cx: 26, cy: 8, w: 6, h: 4, door: { side: 'S', t: 3 } },
+];
+
+const FACILITY_MAP = Object.fromEntries(FACILITY_DEFS.map((f) => [f.id, f]));
+
+function normalizeFacilities(list, rooms) {
+  const byId = new Map((Array.isArray(list) ? list : []).map((f) => [f && f.id, f]));
+  const out = [];
+  for (const def of FACILITY_DEFS) {
+    const src = byId.get(def.id) || {};
+    const w = Math.max(3, Math.min(8, Math.round(src.w) || def.w));
+    const h = Math.max(3, Math.min(8, Math.round(src.h) || def.h));
+    let cx = Math.max(0, Math.min(FLOOR_W - w, Math.round(Number(src.cx)) || def.cx));
+    let cy = Math.max(0, Math.min(FLOOR_H - h, Math.round(Number(src.cy)) || def.cy));
+    const clashAt = (X, Y) => Object.values(rooms).some((r) => r && X < r.cx + r.w && r.cx < X + w && Y < r.cy + r.h && r.cy < Y + h)
+      || out.some((f) => X < f.cx + f.w && f.cx < X + w && Y < f.cy + f.h && f.cy < Y + h);
+    if (!clashAt(cx, cy)) {
+      out.push({ ...def, cx, cy, w, h, door: { ...def.door } });
+    } else {
+      // 与房间冲突（例如房间被拖到走廊）时回退默认位；默认位也被占则暂不放置
+      if (!clashAt(def.cx, def.cy)) out.push({ ...def, door: { ...def.door } });
+    }
+  }
+  return out;
+}
+
+export function facilityAt(layout, cx, cy) {
+  return (layout?.facilities || []).find((f) => cx >= f.cx && cx < f.cx + f.w && cy >= f.cy && cy < f.cy + f.h) || null;
+}
+
+export function facilityById(layout, id) {
+  return (layout?.facilities || []).find((f) => f.id === id) || null;
+}
+
 export function defaultRooms() {
   const rooms = {};
   DEPT_IDS.forEach((id, i) => {
@@ -118,6 +158,7 @@ export function normalizeLayout(layout) {
   const out = {
     v: 2,
     rooms: layout?.rooms && typeof layout.rooms === 'object' ? { ...layout.rooms } : defaultRooms(),
+    facilities: [],
     items: [],
     edges: [],
   };
@@ -131,6 +172,7 @@ export function normalizeLayout(layout) {
     if (!r.door || !['N', 'S', 'E', 'W'].includes(r.door.side)) autoDoor(out, id);
     else clampDoor(out, id);
   }
+  out.facilities = normalizeFacilities(layout?.facilities, out.rooms);
   const okType = new Set(['desk', 'plant', 'sofa', 'coffee', 'printer', 'rack']);
   let uid = 1;
   for (const it of layout?.items || []) {
@@ -351,7 +393,8 @@ export function deptHeadcounts(state) {
   for (const e of state.employees || []) if (out[e.deptId] !== undefined) out[e.deptId]++;
   return out;
 }
-// 内置工位：每部门 min(人数, 上限) 个，按房内行序落位在空闲格（rot=0，人坐南侧）
+// 内置工位：岛式排布（两排背靠背 + 中间过道），不再逐格铺满
+// 每 3 格一个「工位岛」：第 1、2 行为面对面两排，第 3 行为过道；靠墙留半格视觉间隙
 export function builtinDesks(layout, headcounts) {
   const out = [];
   for (const id of DEPT_IDS) {
@@ -360,15 +403,36 @@ export function builtinDesks(layout, headcounts) {
     const user = new Set();
     for (const it of layout.items) if (it.dept === id) user.add(it.cx + ',' + it.cy);
     const dc = doorCells(layout, id);
-    let placed = 0;
     const need = Math.min(headcounts[id] || 0, MAX_SEATS_PER_DEPT);
-    for (let ly = 0; ly < r.h && placed < need; ly++) {
+    const doorLx = dc ? dc.inner.cx - r.cx : -1;
+    const doorLy = dc ? dc.inner.cy - r.cy : -1;
+    let placed = 0;
+    // 工位岛：每 3 行一组（两排 + 一过道），首组从 ly=1 开始，留出靠墙边
+    const perRow = Math.max(1, Math.min(r.w, Math.floor(r.w * 0.75)));
+    const startX = Math.floor((r.w - perRow) / 2);
+    for (let base = 1; base < r.h && placed < need; base += 3) {
+      const bandRows = [base, base + 1].filter((ly) => ly < r.h);
+      for (let bi = 0; bi < bandRows.length && placed < need; bi++) {
+        const ly = bandRows[bi];
+        const rot = bi === 0 ? 0 : 2; // 背靠背
+        for (let i = 0; i < perRow && placed < need; i++) {
+          const lx = startX + i;
+          if (user.has(lx + ',' + ly)) continue;
+          if (lx === doorLx && ly === doorLy) continue;
+          out.push({ dept: id, lx, ly, rot, builtin: true });
+          placed++;
+        }
+      }
+    }
+    // 房间偏小/偏窄时补满剩余名额（沿同列向下延伸）
+    if (placed < need) {
       for (let lx = 0; lx < r.w && placed < need; lx++) {
-        if (user.has(lx + ',' + ly)) continue;
-        if (lx === dc.inner.cx - r.cx && ly === dc.inner.cy - r.cy) continue; // 让开门内格
-        // 避免完全堵门：门内格正后方一格也不放（保证进房第一步可走）
-        out.push({ dept: id, lx, ly, rot: 0, builtin: true });
-        placed++;
+        for (let ly = 0; ly < r.h && placed < need; ly++) {
+          if (user.has(lx + ',' + ly) || (lx === doorLx && ly === doorLy)) continue;
+          if (out.some((d) => d.dept === id && d.lx === lx && d.ly === ly)) continue;
+          out.push({ dept: id, lx, ly, rot: 0, builtin: true });
+          placed++;
+        }
       }
     }
   }
@@ -377,7 +441,7 @@ export function builtinDesks(layout, headcounts) {
 // desk 的工位（坐位）世界坐标与朝向：人坐在桌子背对显示器一侧
 export function seatForDesk(layout, deptId, lx, ly, rot) {
   const w = roomCellWorld(layout, deptId, lx, ly);
-  const off = [[0, 2.3], [2.3, 0], [0, -2.3], [-2.3, 0]][rot % 4];
+  const off = [[0, 1.65], [1.65, 0], [0, -1.65], [-1.65, 0]][rot % 4];
   const world = { x: w.x + off[0], z: w.z + off[1] };
   return { x: world.x, z: world.z, rot: Math.PI + rot * Math.PI / 2 };
 }

@@ -16,29 +16,29 @@ export const OS_TECH_BRANCHES = [
 
 export const OS_TECHS = [
   // ---- 流畅体验 ----
-  { id: 'ux_compositor', branch: 'ux', name: '图形合成器', year: 2008, cost: 30000000, months: 4, prereq: [], effect: { scoreBonus: 2 }, desc: '统一渲染合成架构，界面滑动不再掉帧。' },
-  { id: 'ux_scheduler', branch: 'ux', name: '高帧率调度', year: 2019, cost: 80000000, months: 5, prereq: ['ux_compositor'], effect: { popGrowth: 10 }, desc: '120Hz 智能调度，跟手性成为用户口碑。' },
+  { id: 'ux_compositor', branch: 'ux', name: '图形合成器', year: 2008, cost: 30000000, months: 4, prereq: [], requires: ['ui_touch'], effect: { scoreBonus: 2 }, desc: '统一渲染合成架构，界面滑动不再掉帧。' },
+  { id: 'ux_scheduler', branch: 'ux', name: '高帧率调度', year: 2019, cost: 80000000, months: 5, prereq: ['ux_compositor'], requires: ['high_refresh'], effect: { popGrowth: 10 }, desc: '120Hz 智能调度，跟手性成为用户口碑。' },
   { id: 'ux_gpu_render', branch: 'ux', name: 'GPU 渲染管线', year: 2022, cost: 150000000, months: 6, prereq: ['ux_scheduler'], effect: { scoreBonus: 4 }, desc: '重载界面与大型游戏稳定满帧。' },
 
   // ---- 智能服务 ----
-  { id: 'ai_voice', branch: 'ai', name: '语音助手', year: 2011, cost: 45000000, months: 4, prereq: [], effect: { appsBonus: 3 }, desc: '系统级语音入口，生态黏性的起点。' },
-  { id: 'ai_edge', branch: 'ai', name: '端侧 AI 框架', year: 2018, cost: 120000000, months: 6, prereq: ['ai_voice'], effect: { scoreBonus: 3 }, desc: '本地推理视觉/语音，隐私与时延双优。' },
-  { id: 'ai_agent', branch: 'ai', name: '系统级智能体', year: 2024, cost: 260000000, months: 8, prereq: ['ai_edge'], effect: { appsBonus: 5, popCap: 10 }, desc: '跨应用任务执行，系统从工具变成助理。' },
+  { id: 'ai_voice', branch: 'ai', name: '语音助手', year: 2011, cost: 45000000, months: 4, prereq: [], requires: ['os_smart'], effect: { appsBonus: 3 }, desc: '系统级语音入口，生态黏性的起点。' },
+  { id: 'ai_edge', branch: 'ai', name: '端侧 AI 框架', year: 2018, cost: 120000000, months: 6, prereq: ['ai_voice'], requires: ['soc'], effect: { scoreBonus: 3 }, desc: '本地推理视觉/语音，隐私与时延双优。' },
+  { id: 'ai_agent', branch: 'ai', name: '系统级智能体', year: 2024, cost: 260000000, months: 8, prereq: ['ai_edge'], requires: ['aicpu'], effect: { appsBonus: 5, popCap: 10 }, desc: '跨应用任务执行，系统从工具变成助理。' },
 
   // ---- 隐私安全 ----
-  { id: 'sec_perm', branch: 'sec', name: '权限管理中心', year: 2012, cost: 40000000, months: 4, prereq: [], effect: { scoreBonus: 2 }, desc: '细粒度权限授权，敏感行为可视可撤。' },
-  { id: 'sec_sandbox', branch: 'sec', name: '隐私沙盒', year: 2019, cost: 95000000, months: 5, prereq: ['sec_perm'], effect: { licRate: 10 }, desc: '广告与追踪隔离，授权厂商更放心。' },
+  { id: 'sec_perm', branch: 'sec', name: '权限管理中心', year: 2012, cost: 40000000, months: 4, prereq: [], requires: ['os_smart'], effect: { scoreBonus: 2 }, desc: '细粒度权限授权，敏感行为可视可撤。' },
+  { id: 'sec_sandbox', branch: 'sec', name: '隐私沙盒', year: 2019, cost: 95000000, months: 5, prereq: ['sec_perm'], requires: ['security_chip'], effect: { licRate: 10 }, desc: '广告与追踪隔离，授权厂商更放心。' },
   { id: 'sec_tee', branch: 'sec', name: '安全芯片协同', year: 2021, cost: 170000000, months: 6, prereq: ['sec_sandbox'], effect: { scoreBonus: 4 }, desc: '密钥/支付/生物特征硬件级隔离。' },
 
   // ---- 互联生态 ----
-  { id: 'eco_cloud', branch: 'eco', name: '云服务框架', year: 2013, cost: 55000000, months: 5, prereq: [], effect: { appsBonus: 2 }, desc: '云同步与查找设备，换机不留死角。' },
-  { id: 'eco_cross', branch: 'eco', name: '跨设备互联', year: 2019, cost: 130000000, months: 6, prereq: ['eco_cloud'], effect: { popGrowth: 15 }, desc: '手机/平板/手表/耳机一碰互传。' },
-  { id: 'eco_car', branch: 'eco', name: '车机互联协议', year: 2022, cost: 210000000, months: 7, prereq: ['eco_cross'], effect: { licRate: 20 }, desc: '手机-车机无缝流转，车企授权费可观。' },
+  { id: 'eco_cloud', branch: 'eco', name: '云服务框架', year: 2013, cost: 55000000, months: 5, prereq: [], requires: ['wifi'], effect: { appsBonus: 2 }, desc: '云同步与查找设备，换机不留死角。' },
+  { id: 'eco_cross', branch: 'eco', name: '跨设备互联', year: 2019, cost: 130000000, months: 6, prereq: ['eco_cloud'], requires: ['wifi6'], effect: { popGrowth: 15 }, desc: '手机/平板/手表/耳机一碰互传。' },
+  { id: 'eco_car', branch: 'eco', name: '车机互联协议', year: 2022, cost: 210000000, months: 7, prereq: ['eco_cross'], requires: ['mmwave'], effect: { licRate: 20 }, desc: '手机-车机无缝流转，车企授权费可观。' },
 
   // ---- 发行运营 ----
-  { id: 'dist_store', branch: 'dist', name: '应用商店', year: 2009, cost: 25000000, months: 3, prereq: [], effect: { licRate: 10 }, desc: '官方分发渠道，抽成与审核权在手。' },
-  { id: 'dist_dev', branch: 'dist', name: '开发者分成计划', year: 2014, cost: 70000000, months: 5, prereq: ['dist_store'], effect: { appsBonus: 3 }, desc: '让利开发者，优质应用优先适配。' },
-  { id: 'dist_global', branch: 'dist', name: '全场景发行', year: 2021, cost: 180000000, months: 7, prereq: ['dist_dev'], effect: { popCap: 15 }, desc: '一次开发多端部署，生态规模翻倍。' },
+  { id: 'dist_store', branch: 'dist', name: '应用商店', year: 2009, cost: 25000000, months: 3, prereq: [], requires: ['os_smart'], effect: { licRate: 10 }, desc: '官方分发渠道，抽成与审核权在手。' },
+  { id: 'dist_dev', branch: 'dist', name: '开发者分成计划', year: 2014, cost: 70000000, months: 5, prereq: ['dist_store'], requires: ['os_smart'], effect: { appsBonus: 3 }, desc: '让利开发者，优质应用优先适配。' },
+  { id: 'dist_global', branch: 'dist', name: '全场景发行', year: 2021, cost: 180000000, months: 7, prereq: ['dist_dev'], requires: ['esim'], effect: { popCap: 15 }, desc: '一次开发多端部署，生态规模翻倍。' },
 ];
 
 export const OS_TECH_MAP = Object.fromEntries(OS_TECHS.map((t) => [t.id, t]));
