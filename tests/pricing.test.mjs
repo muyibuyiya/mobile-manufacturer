@@ -1,0 +1,20 @@
+﻿import { createGame } from '../js/core/state.js';
+import { defaultDesign } from '../js/core/design.js';
+import { autoPriceModel, canAutoPrice } from '../js/core/pricing.js';
+import { TECHS } from '../js/data/tech.js';
+
+let bad = 0;
+const check = (name, ok, detail = '') => { if (!ok) bad += 1; console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? '  ' + detail : ''}`); };
+const s = createGame({ mode: 'sandbox', year: 2020, cash: 2e9 });
+const design = defaultDesign(2020, TECHS.filter((t) => t.year <= 2020).map((t) => t.id));
+const m = { id: 'm-price', name: '定价机', status: 'production', released: true, lineup: 'main', heat: 55, markets: ['cn', 'sea'], price: { cn: 1, sea: 1 }, design };
+design.variants = [{ ram: design.parts.ram, stg: design.parts.storage }];
+check('未任命销售负责人时不可一键定价', autoPriceModel(s, m).reason === 'no-head');
+s.org.heads.sales = s.employees[0].id;
+check('销售负责人可一键定价', canAutoPrice(s) === true);
+const r = autoPriceModel(s, m);
+check('覆盖全部已进入市场', r.ok && r.count === 2 && m.price.cn > 0 && m.price.sea > 0, JSON.stringify(m.price));
+check('配置版本同步定价', design.variants[0].price?.cn > 0 && design.variants[0].price?.sea > 0, JSON.stringify(design.variants[0].price));
+check('未进入市场不被写入', m.price.in === undefined);
+if (bad) process.exit(1);
+console.log('\nPRICING PASS');

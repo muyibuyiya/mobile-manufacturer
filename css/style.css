@@ -102,6 +102,11 @@ button, input, select, textarea { font-family: inherit; color: inherit; }
 .bar.warn > i { background: var(--warn); }
 .bar.bad > i { background: var(--bad); }
 
+.price-model + .price-model { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line); }
+.price-model-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 4px 0 8px; }
+.price-model-head .spacer { flex: 1; }
+.price-model.folded .price-model-head { padding-bottom: 4px; }
+
 table.tbl { width: 100%; border-collapse: collapse; font-size: 12.5px; }
 table.tbl th {
   text-align: left; font-weight: 500; color: var(--dim); font-size: 11.5px;

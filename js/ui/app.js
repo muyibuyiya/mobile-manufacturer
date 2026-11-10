@@ -4,6 +4,7 @@ import {
   startResearch, researchBudget, avgShare, bomUnit, assemblyUnit, ownFactoryCount,
   suggestTargets, techOffers, buyTech, poachFromRival,
 } from '../core/sim.js';
+import { autoPriceModel } from '../core/pricing.js';
 import {
   saveGame, loadGame, saveSlots, deleteSave, staffPower, deptCost, generateEmployee,
   ensureLayout, autoSave, queueAutoSave, flushAutoSave,
@@ -109,6 +110,9 @@ const PAGES = [
   { id: 'hq', name: '公司园区', icon: '⌂' },
   { id: 'news', name: '通知与新闻', icon: '🔔' },
 ];
+
+// 定价页按机型折叠的会话状态（不写入存档）
+const priceFolded = new Set();
 
 export function renderGame(root, state, opts = {}) {
   let tab = 'overview';
@@ -1054,6 +1058,23 @@ export function renderGame(root, state, opts = {}) {
         m.price[ds.market] = suggestedPrice(state, m, ds.market);
         render(); break;
       }
+      case 'toggle-price-fold': {
+        const id = ds.model;
+        if (priceFolded.has(id)) priceFolded.delete(id); else priceFolded.add(id);
+        render(); break;
+      }
+      case 'auto-price-all': {
+        const m = state.models.find((x) => x.id === ds.model);
+        if (!m) break;
+        const r = autoPriceModel(state, m);
+        if (!r.ok) {
+          opts.onToast?.(r.reason === 'no-head' ? '需要任命销售部负责人后才能一键定价' : '该机型还没有进入任何市场', 'warn');
+          break;
+        }
+        addLog(state, 'mkt', `${m.name} 完成一键定价：${r.count} 个已进入市场按建议价上架。`);
+        opts.onToast?.('已按建议价完成全部市场定价', 'good');
+        render(); break;
+      }
       case 'v-auto-price': {
         const m = state.models.find((x) => x.id === ds.model);
         const vv = m && (m.design?.variants || [])[Number(ds.vi)];
@@ -1993,59 +2014,69 @@ export function renderGame(root, state, opts = {}) {
       </div>
 
       ${models.length ? `<div class="card">
-        <div class="card-title">定价与渠道 <span class="right">价格按当地货币等值人民币计</span></div>
-        <table class="tbl">
-          <thead><tr><th>机型</th><th>市场</th><th class="num">建议价</th><th class="num">我的定价</th><th class="num">毛利率</th><th></th></tr></thead>
-          <tbody>
-            ${models.flatMap((m) => {
-              const variants = (m.design?.variants || []).filter((v) => v && v.ram && v.stg);
-              const gb = (g) => g >= 1 ? `${Math.round(g * 10) / 10}G` : `${Math.round(g * 1024)}M`;
-              const vLabel = (v) => {
-                const r = RAMS.find((x) => x.id === v.ram), st = STORAGES.find((x) => x.id === v.stg);
-                return `${gb(r?.gb || 0)}+${gb(st?.gb || 0)}`;
-              };
-              return MARKETS.map((mk) => {
-                const on = m.markets.includes(mk.id);
-                // 基础款价格缺失（老档/新进市场）时用建议价兜底并写回，避免显示 0 与 0% 毛利
-                if (on && !(m.price[mk.id] > 0)) m.price[mk.id] = suggestedPrice(state, m, mk.id);
-                const p = m.price[mk.id] || 0;
-                const cost = unitCost(state, m);
-                const margin = p > 0 ? (p - cost) / p : 0;
-                const rows = [];
-                rows.push(`<tr>
-                  <td>${mk === MARKETS[0] ? `<b>${esc(m.name)}</b>` : ''}</td>
-                  <td>${mk.name}${variants.length ? ' <span class="tiny dim">（基础款）</span>' : ''}</td>
-                  <td class="num">¥${fmtNum(suggestedPrice(state, m, mk.id))}</td>
-                  <td class="num" style="width:130px">
-                    ${on ? `<input type="number" value="${Math.round(p)}" step="50" data-field="price" data-model="${m.id}" data-market="${mk.id}" />` : '<span class="dim tiny">未进入</span>'}
-                  </td>
-                  <td class="num ${margin > 0.15 ? 'good' : margin > 0 ? 'warn' : 'bad'}">${on ? (margin * 100).toFixed(0) + '%' : '—'}</td>
-                  <td class="num">
-                    <button class="btn small ${on ? 'ghost' : ''}" data-act="toggle-market" data-model="${m.id}" data-market="${mk.id}">${on ? '退出' : '进入 ¥80万'}</button>
-                    ${on ? `<button class="btn small ghost" data-act="auto-price" data-model="${m.id}" data-market="${mk.id}">建议价</button>` : ''}
-                  </td>
-                </tr>`);
-                // 每个配置版本单独一行定价（价格存 v.price[market]，缺省跟随机型基准价）
-                variants.forEach((v, vi) => {
-                  const vp = (v.price && (v.price[mk.id] ?? v.price.cn)) || p;
-                  const vCost = cost + (v.ram === m.design.parts.ram && v.stg === m.design.parts.storage ? 0 : 0);
-                  const vMargin = vp > 0 ? (vp - vCost) / vp : 0;
-                  rows.push(`<tr class="vrow">
-                    <td></td>
-                    <td class="tiny dim">└ ${vLabel(v)}</td>
-                    <td class="num tiny dim">¥${fmtNum(Math.round(suggestedPrice(state, m, mk.id)))}</td>
-                    <td class="num" style="width:130px">
-                      ${on ? `<input type="number" value="${Math.round(vp)}" step="50" data-field="vprice" data-model="${m.id}" data-market="${mk.id}" data-vi="${vi}" />` : '<span class="dim tiny">—</span>'}
-                    </td>
-                    <td class="num ${vMargin > 0.15 ? 'good' : vMargin > 0 ? 'warn' : 'bad'}">${on ? (vMargin * 100).toFixed(0) + '%' : '—'}</td>
-                    <td class="num">${on ? `<button class="btn tiny ghost" data-act="v-auto-price" data-model="${m.id}" data-market="${mk.id}" data-vi="${vi}">建议价</button>` : ''}</td>
-                  </tr>`);
-                });
-                return rows.join('');
-              });
-            }).join('')}
-          </tbody>
-        </table>
+        <div class="card-title">定价与渠道 <span class="right">价格按当地货币等值人民币计 · 可按机型折叠</span></div>
+        ${models.map((m) => {
+          const variants = (m.design?.variants || []).filter((v) => v && v.ram && v.stg);
+          const gb = (g) => g >= 1 ? `${Math.round(g * 10) / 10}G` : `${Math.round(g * 1024)}M`;
+          const vLabel = (v) => {
+            const r = RAMS.find((x) => x.id === v.ram), st = STORAGES.find((x) => x.id === v.stg);
+            return `${gb(r?.gb || 0)}+${gb(st?.gb || 0)}`;
+          };
+          const folded = priceFolded.has(m.id);
+          const head = headOf(state, 'sales');
+          const cells = MARKETS.map((mk) => {
+            const on = m.markets.includes(mk.id);
+            // 基础款价格缺失（老档/新进市场）时用建议价兜底并写回，避免显示 0 与 0% 毛利
+            if (on && !(m.price[mk.id] > 0)) m.price[mk.id] = suggestedPrice(state, m, mk.id);
+            const p = m.price[mk.id] || 0;
+            const cost = unitCost(state, m);
+            const margin = p > 0 ? (p - cost) / p : 0;
+            const rows = [];
+            rows.push(`<tr>
+              <td>${mk.name}${variants.length ? ' <span class="tiny dim">（基础款）</span>' : ''}</td>
+              <td class="num">¥${fmtNum(suggestedPrice(state, m, mk.id))}</td>
+              <td class="num" style="width:130px">
+                ${on ? `<input type="number" value="${Math.round(p)}" step="50" data-field="price" data-model="${m.id}" data-market="${mk.id}" />` : '<span class="dim tiny">未进入</span>'}
+              </td>
+              <td class="num ${margin > 0.15 ? 'good' : margin > 0 ? 'warn' : 'bad'}">${on ? (margin * 100).toFixed(0) + '%' : '—'}</td>
+              <td class="num">
+                <button class="btn small ${on ? 'ghost' : ''}" data-act="toggle-market" data-model="${m.id}" data-market="${mk.id}">${on ? '退出' : '进入 ¥80万'}</button>
+                ${on ? `<button class="btn small ghost" data-act="auto-price" data-model="${m.id}" data-market="${mk.id}">建议价</button>` : ''}
+              </td>
+            </tr>`);
+            // 每个配置版本单独一行定价（价格存 v.price[market]，缺省跟随机型基准价）
+            variants.forEach((v, vi) => {
+              const vp = (v.price && (v.price[mk.id] ?? v.price.cn)) || p;
+              const vCost = cost;
+              const vMargin = vp > 0 ? (vp - vCost) / vp : 0;
+              rows.push(`<tr class="vrow">
+                <td class="tiny dim">└ ${vLabel(v)}</td>
+                <td class="num tiny dim">¥${fmtNum(Math.round(suggestedPrice(state, m, mk.id)))}</td>
+                <td class="num" style="width:130px">
+                  ${on ? `<input type="number" value="${Math.round(vp)}" step="50" data-field="vprice" data-model="${m.id}" data-market="${mk.id}" data-vi="${vi}" />` : '<span class="dim tiny">—</span>'}
+                </td>
+                <td class="num ${vMargin > 0.15 ? 'good' : vMargin > 0 ? 'warn' : 'bad'}">${on ? (vMargin * 100).toFixed(0) + '%' : '—'}</td>
+                <td class="num">${on ? `<button class="btn tiny ghost" data-act="v-auto-price" data-model="${m.id}" data-market="${mk.id}" data-vi="${vi}">建议价</button>` : ''}</td>
+              </tr>`);
+            });
+            return rows.join('');
+          }).join('');
+          return `<div class="price-model ${folded ? 'folded' : ''}">
+            <div class="price-model-head">
+              <button type="button" class="btn tiny ghost" data-act="toggle-price-fold" data-model="${m.id}" title="${folded ? '展开' : '折叠'}">${folded ? '▸' : '▾'}</button>
+              <b>${esc(m.name)}</b>
+              <span class="chip">${m.markets.length} 个市场</span>
+              <span class="tiny dim">基准价 ¥${fmtNum(suggestedPrice(state, m, 'cn'))}</span>
+              <span class="spacer"></span>
+              ${head ? `<span class="tiny dim">销售负责人 ${esc(head.name)}</span>` : '<span class="tiny warn">需销售部负责人</span>'}
+              <button class="btn small primary" data-act="auto-price-all" data-model="${m.id}" ${head && m.markets.length ? '' : 'disabled'} title="${head ? '按建议价填充全部已进入市场' : '需要任命销售部负责人'}">一键定价</button>
+            </div>
+            ${folded ? '' : `<table class="tbl">
+              <thead><tr><th>市场</th><th class="num">建议价</th><th class="num">我的定价</th><th class="num">毛利率</th><th></th></tr></thead>
+              <tbody>${cells}</tbody>
+            </table>`}
+          </div>`;
+        }).join('')}
       </div>` : `<div class="card"><div class="empty">还没有在售机型，先去设计并量产一款手机。<br/><button class="btn small primary" data-act="goto" data-tab="product">去设计</button></div></div>`}`;
   }
 
