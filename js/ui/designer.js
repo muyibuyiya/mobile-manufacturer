@@ -253,6 +253,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
         </div>
       </div>
       <div class="dz-panel" id="dz-right"></div>
+      <button class="dz-assess-tab" id="dz-assess-tab" title="打开「评估与检查」面板">📊 评估</button>
     </div>`;
 
   const left = container.querySelector('#dz-left');
@@ -311,6 +312,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
   if (savedLeftW >= 220 && savedLeftW <= 460) dzRoot.style.setProperty('--dz-left-w', savedLeftW + 'px');
   const savedAssess = localStorage.getItem(DZ_ASSESS_KEY);
   let assessCollapsed = savedAssess === '1' || (savedAssess == null && window.innerWidth < 1400);
+  if (localStorage.getItem('mm_dz_lock_left') === '1') dzRoot.classList.add('lock-left');
   const catSnapKey = `mm_cat_snaps_${model.id || 'new'}`;
   const catSnapshots = (() => {
     try { return JSON.parse(localStorage.getItem(catSnapKey) || '{}'); } catch (e) { return {}; }
@@ -375,23 +377,25 @@ export function renderDesigner(container, state, model, hooks = {}) {
   window.addEventListener('keydown', onUndoKey);
   function applyAssessCollapsed() {
     dzRoot.classList.toggle('assess-collapsed', assessCollapsed);
-    assessToggle.textContent = assessCollapsed ? '展开评估' : '收起评估';
+    assessToggle.textContent = assessCollapsed ? '📊 展开评估' : '收起评估';
     assessToggle.classList.toggle('primary', assessCollapsed);
   }
   applyAssessCollapsed();
+  function setAssessCollapsed(v) {
+    assessCollapsed = v;
+    try { localStorage.setItem(DZ_ASSESS_KEY, v ? '1' : '0'); } catch (e) { /* 忽略 */ }
+    applyAssessCollapsed();
+    renderAssessment();
+    if (!v && viewMode === '3d') setTimeout(() => buildPhone(), 30);
+  }
+  container.querySelector('#dz-assess-tab')?.addEventListener('click', () => setAssessCollapsed(false));
   // 手机横屏：画布优先，控件栏默认收起为抽屉
   if (window.matchMedia('(max-height: 480px) and (orientation: landscape)').matches && !dzRoot.classList.contains('controls-hidden')) {
     dzRoot.classList.add('controls-hidden');
     panelToggle.textContent = '展开控件';
     panelToggle.classList.add('primary');
   }
-  assessToggle.addEventListener('click', () => {
-    assessCollapsed = !assessCollapsed;
-    try { localStorage.setItem(DZ_ASSESS_KEY, assessCollapsed ? '1' : '0'); } catch (e) { /* 忽略 */ }
-    applyAssessCollapsed();
-    renderAssessment();
-    if (!assessCollapsed && viewMode === '3d') setTimeout(() => buildPhone(), 30);
-  });
+  assessToggle.addEventListener('click', () => setAssessCollapsed(!assessCollapsed));
   // 左栏宽度拖拽（记忆到 localStorage，范围 220–460px）
   resizer.addEventListener('pointerdown', (e) => {
     e.preventDefault();
@@ -3865,11 +3869,14 @@ export function renderDesigner(container, state, model, hooks = {}) {
   }
   function renderAssessment() {
     const st = right.scrollTop;
-    right.innerHTML = assessment();
+    right.innerHTML = `<div class="dz-assess-head"><span>评估与检查</span><button class="btn small ghost" data-assess-close title="收起面板">✕</button></div>${assessment()}`;
     right.scrollTop = st;
     if (assessCollapsed) {
       const sc = categoryScore(model.design, year, sandboxAll ? { ignoreEra: true, unlocked } : { unlocked }).total;
-      assessToggle.textContent = `评估 ${Math.round(sc)}`;
+      const label = `📊 评估 ${Math.round(sc)}`;
+      assessToggle.textContent = label;
+      const tab = container.querySelector('#dz-assess-tab');
+      if (tab) tab.textContent = label;
     }
   }
   function gotoSection(key) {
@@ -3884,6 +3891,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
   }
   // 点击装配检查项/评分卡：展开对应分区并定位高亮
   right.addEventListener('click', (e) => {
+    if (e.target.closest('[data-assess-close]')) { setAssessCollapsed(true); return; }
     const it = e.target.closest('[data-issue-target]');
     if (it) { gotoSection(it.dataset.issueTarget); return; }
     const jp = e.target.closest('[data-jump]');

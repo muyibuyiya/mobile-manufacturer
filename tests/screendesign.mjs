@@ -53,9 +53,8 @@ async function main() {
   await sleep(1600);
   errors.length = 0;
 
-  // 找入口：产品页屏幕设计按钮
-  await ev(`[...document.querySelectorAll('[data-act=speed]')].find(b => b.dataset.v === '2')?.click()`);
-  await sleep(150);
+  // 找入口：产品页屏幕设计按钮（v1.29.0 起时间只手动推进，无需先设速度）
+  const dateBefore = await ev(`document.querySelector('.tb-time .stat-inline .v')?.textContent || ''`);
   await ev(`document.querySelector('[data-tab=product]')?.click()`);
   await sleep(300);
   const entry = await ev(`(() => {
@@ -77,7 +76,7 @@ async function main() {
   })()`);
   check('三个退出/保存按钮', ui.ok && ui.btns.join(',') === '不保存退出,保存,完成', JSON.stringify(ui.btns));
   check('画布已渲染', ui.ok && ui.w > 0 && ui.h > 0, `${ui.w}x${ui.h}`);
-  check('打开时暂停时间', await ev(`!document.querySelector('[data-act=speed][data-v="2"]')?.classList.contains('on')`));
+  check('顶栏无自动推进按钮（时间完全手动）', await ev(`document.querySelectorAll('[data-act=speed]').length === 0`));
 
   // 切到三大键 + 反向
   await ev(`document.querySelector('[data-sd=nav][data-v=buttons]').click()`);
@@ -243,7 +242,8 @@ async function main() {
   await sleep(300);
   const closed = await ev(`!document.querySelector('[data-pause-game]')`);
   check('不保存退出可关闭', closed === true);
-  check('退出后恢复时间速度', await ev(`document.querySelector('[data-act=speed][data-v="2"]')?.classList.contains('on')`));
+  const dateAfter = await ev(`document.querySelector('.tb-time .stat-inline .v')?.textContent || ''`);
+  check('设计页期间时间未自行推进', !!dateBefore && dateBefore === dateAfter, `${dateBefore} -> ${dateAfter}`);
   await ev(`(() => { const b = [...document.querySelectorAll('button,[data-act]')].find(x => /屏幕设计/.test(x.textContent || '') || x.dataset.act === 'open-screendesign'); b?.click(); })()`);
   await sleep(400);
   const discardCheck = await ev(`(() => ({

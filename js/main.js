@@ -93,6 +93,7 @@ function settingsPanel() {
   document.querySelector('.modal-mask')?.remove();
   const q = readQualityPref();
   const on = audioEnabled();
+  const lockL = localStorage.getItem('mm_dz_lock_left') === '1';
   const QUALS = [['auto', '自动'], ['high', '高'], ['standard', '标准'], ['low', '流畅']];
   const QN = { auto: '自动', high: '高', standard: '标准', low: '流畅' };
   const mask = document.createElement('div');
@@ -122,6 +123,14 @@ function settingsPanel() {
             <button class="btn small" data-set="export">⬇ 导出存档文件</button>
             <button class="btn small" data-set="import">⬆ 导入存档文件</button>
             <input type="file" id="set-import-file" accept=".json,application/json" style="display:none" />
+          </div>
+        </div>
+        <div class="list-item" style="display:block">
+          <b>设计器侧栏</b>
+          <div class="tiny dim" style="margin:4px 0">锁定后左侧控件栏宽度固定，拖动分隔条不再生效，避免误触改宽</div>
+          <div class="row">
+            <button class="btn small ${lockL ? 'primary' : 'ghost'}" data-set="lock-left">${lockL ? '已锁定' : '未锁定'}</button>
+            <button class="btn small ghost" data-set="reset-left">恢复默认宽度</button>
           </div>
         </div>
         <div class="list-item" style="opacity:.55">
@@ -157,6 +166,18 @@ function settingsPanel() {
       });
     };
   });
+  const lockBtn = mask.querySelector('[data-set="lock-left"]');
+  lockBtn.onclick = () => {
+    const next = localStorage.getItem('mm_dz_lock_left') !== '1';
+    try { localStorage.setItem('mm_dz_lock_left', next ? '1' : '0'); } catch (e) { /* 忽略 */ }
+    lockBtn.textContent = next ? '已锁定' : '未锁定';
+    lockBtn.className = 'btn small ' + (next ? 'primary' : 'ghost');
+    toast(next ? '侧栏宽度已锁定' : '侧栏宽度已解锁', 'good');
+  };
+  mask.querySelector('[data-set="reset-left"]').onclick = () => {
+    try { localStorage.removeItem('dz_left_w'); } catch (e) { /* 忽略 */ }
+    toast('下次进入设计器恢复默认宽度', 'good');
+  };
   mask.querySelector('[data-set="export"]').onclick = () => {
     try {
       const st = loadGame('auto');

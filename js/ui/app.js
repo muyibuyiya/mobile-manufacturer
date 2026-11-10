@@ -149,8 +149,6 @@ function priceHealth(price, comp) {
 export function renderGame(root, state, opts = {}) {
   let tab = 'overview';
   let prevTab = null; // 上一次渲染的页面：同页刷新保持滚动位置，切页才回顶部
-  let speed = 0;
-  let timer = null;
   let designer = null;
   let scene = null;
   let lastReport = null;
@@ -166,10 +164,8 @@ export function renderGame(root, state, opts = {}) {
   let renameTargetId = null;
 
   const app = {
-    destroy() { stop(); modalObserver.disconnect(); if (designer) designer.destroy(); if (scene) scene.destroy(); },
+    destroy() { modalObserver.disconnect(); if (designer) designer.destroy(); if (scene) scene.destroy(); },
     handleKey(e) {
-      if (e.code === 'Space') { e.preventDefault(); setSpeed(speed === 0 ? 1 : 0); }
-      if (['1', '2', '3', '4'].includes(e.key)) setSpeed([1, 2, 4, 8][Number(e.key) - 1]);
       if (e.key === 'Escape') {
         // 优先关闭最上层弹窗（走它自己的关闭按钮，保留原有关闭语义）
         const masks = document.querySelectorAll('.modal-mask');
@@ -181,22 +177,18 @@ export function renderGame(root, state, opts = {}) {
     tickOnce, app: null,
   };
 
-  function setSpeed(v) {
-    speed = v;
-    if (timer) clearInterval(timer);
-    timer = null;
-    if (v > 0) {
-      const ms = { 1: 2200, 2: 1100, 4: 550, 8: 260 }[v] || 2200;
-      timer = setInterval(() => tickOnce(true), ms);
+  // 时间推进完全手动：只由玩家点击「下个月 / 推进一年」触发，不存在自动连播
+  function advanceMonths(n = 1) {
+    let done = 0;
+    for (let i = 0; i < n; i++) {
+      if (!tickOnce(true, i < n - 1)) break;
+      done++;
     }
-    paintTopbar();
+    render();
+    if (done) opts.onToast?.(`已推进 ${done} 个月`, 'good');
   }
 
-  function stop() { if (timer) clearInterval(timer); timer = null; }
-
-  // 任意 .modal-mask 弹窗 / 全屏编辑页（data-pause-game）打开时暂停时间，关闭后恢复原速度
-  let modalPausedSpeed = 0;
-  let modalPaused = false;
+  // 任意 .modal-mask 弹窗 / 全屏编辑页（data-pause-game）打开时，游戏不再需要暂停时间（推进只靠手动点击）
   let lastFocusOutside = null;
   document.addEventListener('focusin', (e) => {
     if (!e.target.closest?.('.modal-mask')) lastFocusOutside = e.target;
@@ -226,32 +218,20 @@ export function renderGame(root, state, opts = {}) {
       });
     }
     if (removedMasks.length && lastFocusOutside?.isConnected) lastFocusOutside.focus?.();
-    const open = !!(document.querySelector('.modal-mask') || document.querySelector('[data-pause-game]'));
-    if (open && !modalPaused) {
-      modalPaused = true;
-      modalPausedSpeed = speed;
-      if (speed) setSpeed(0);
-    } else if (!open && modalPaused) {
-      modalPaused = false;
-      const resume = modalPausedSpeed;
-      modalPausedSpeed = 0;
-      if (resume) setSpeed(resume);
-    }
   });
   modalObserver.observe(document.body, { childList: true, subtree: true });
 
-  function tickOnce(silent) {
-    if (designer) return;
+  function tickOnce(silent, defer = false) {
+    if (designer) return false;
     const r = tick(state);
     lastReport = r;
     if (r.bankrupt) {
-      setSpeed(0);
       sfx('bad');
       setTimeout(() => gameOver(r), 300);
-      return;
+      return false;
     }
-    queueAutoSave(state); // 月度推进合并写盘（2 秒防抖），避免 8× 速度下反复全量序列化
-    // 月度推进的底鼓：静默推进（自动连播）时不响，避免刷屏
+    queueAutoSave(state); // 月度推进合并写盘（2 秒防抖），避免批量推进时反复全量序列化
+    // 月度推进的底鼓：静默推进（批量 12 个月）时不响，避免刷屏
     if (!silent) sfx('month');
     // 重要事件提示
     for (const n of (r.notes || []).slice(0, 3)) {
@@ -272,7 +252,8 @@ export function renderGame(root, state, opts = {}) {
         opts.onToast?.('有市场出现缺货，去「生产供应链」提高产量。', 'warn');
       }
     }
-    render();
+    if (!defer) render();
+    return true;
   }
 
   function gameOver(r) {
@@ -373,11 +354,10 @@ export function renderGame(root, state, opts = {}) {
       const act = ev.target.closest('[data-act]')?.dataset.act;
       if (act === 'exit-cancel') { mask.remove(); }
       else if (act === 'exit-save') {
-        stop();
         try { autoSave(state); opts.onToast?.('已保存', 'good'); } catch (err) { /* 静默 */ }
         mask.remove(); opts.onExit?.();
       } else if (act === 'exit-nosave') {
-        stop(); mask.remove(); opts.onExit?.();
+        mask.remove(); opts.onExit?.();
       } else if (ev.target === mask) { mask.remove(); }
     });
   }
@@ -403,14 +383,8 @@ export function renderGame(root, state, opts = {}) {
       <div class="spacer"></div>
       <div class="tb-group tb-time">
         <div class="stat-inline"><span class="k">日期</span><span class="v">${fmtDate(state.date)}</span></div>
-        <div class="speed-group">
-          <button data-act="speed" data-v="0" class="${speed === 0 ? 'on' : ''}">❚❚</button>
-          <button data-act="speed" data-v="1" class="${speed === 1 ? 'on' : ''}">1×</button>
-          <button data-act="speed" data-v="2" class="${speed === 2 ? 'on' : ''}">2×</button>
-          <button data-act="speed" data-v="4" class="${speed === 4 ? 'on' : ''}">4×</button>
-          <button data-act="speed" data-v="8" class="${speed === 8 ? 'on' : ''}">8×</button>
-        </div>
-        <button class="btn small" data-act="advance">下个月 ▸</button>
+        <button class="btn small primary" data-act="advance" title="推进 1 个月（手动）">下个月 ▸</button>
+        <button class="btn small ghost" data-act="advance-year" title="连续结算 12 个月，中途出现破产会立即停止">推进一年 ▸▸</button>
       </div>
       <button class="btn small ghost" data-act="open-news" title="通知与新闻">🔔${unreadNews ? ` <b style="color:#f56b6b">${unreadNews}</b>` : ''}</button>
       <button class="btn small ghost" data-act="open-gamemenu" title="菜单">☰</button>`;
@@ -419,8 +393,8 @@ export function renderGame(root, state, opts = {}) {
   topbar.addEventListener('click', (e) => {
     const el = e.target.closest('[data-act]');
     if (!el) return;
-    if (el.dataset.act === 'speed') { setSpeed(Number(el.dataset.v)); return; }
-    if (el.dataset.act === 'advance') { if (speed > 0) setSpeed(0); tickOnce(false); return; }
+    if (el.dataset.act === 'advance') { tickOnce(false); return; }
+    if (el.dataset.act === 'advance-year') { advanceMonths(12); return; }
     if (el.dataset.act === 'save') {
       saveToSlot(Number(el.dataset.slot), '到槽位 ' + el.dataset.slot);
     }
@@ -476,7 +450,8 @@ export function renderGame(root, state, opts = {}) {
     const id = ds.id;
     switch (name) {
       case 'goto': tab = ds.tab; render(); break;
-      case 'advance': setSpeed(0); tickOnce(false); break;
+      case 'advance': tickOnce(false); break;
+      case 'advance-year': advanceMonths(12); break;
       case 'create-model': {
         const name = suggestModelName(state, state.models.map((x) => x.name));
         const m = newModel(state.date.year, state.tech.unlocked, name);
@@ -1183,7 +1158,6 @@ export function renderGame(root, state, opts = {}) {
       case 'load': {
         const s = loadGame(Number(ds.slot));
         if (!s) { opts.onToast?.('槽位为空', 'warn'); break; }
-        stop();
         if (designer) { designer.destroy(); designer = null; }
         opts.onLoad?.(s);
         break;
@@ -4284,7 +4258,6 @@ export function renderGame(root, state, opts = {}) {
           } else if (b.dataset.sp === 'load') {
             const s2 = loadGame(n);
             if (!s2) { opts.onToast?.('槽位为空', 'warn'); return; }
-            stop();
             if (designer) { designer.destroy(); designer = null; }
             mask.remove();
             opts.onLoad?.(s2);

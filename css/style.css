@@ -392,9 +392,26 @@ div.field > span:first-child { display: block; font-size: var(--fs-sm); color: v
 .tech-node .prog { position: absolute; left: 0; bottom: 0; height: 2px; background: var(--accent); border-radius: 0 0 0 9px; }
 
 /* 设计师 */
-.designer { display: grid; grid-template-columns: var(--dz-left-w, 260px) 1fr 300px; gap: 12px; height: calc(100vh - 52px - 32px); min-height: 520px; position: relative; }
-.designer.assess-collapsed { grid-template-columns: var(--dz-left-w, 260px) 1fr 0; }
-.designer.assess-collapsed #dz-right { display: none; padding: 0; border: 0; }
+.designer { display: grid; grid-template-columns: var(--dz-left-w, 260px) 1fr; gap: 12px; height: calc(100vh - 52px - 32px); min-height: 520px; position: relative; }
+/* 评估面板：浮层覆盖在画布上，展开/收起都不改变画布宽度 */
+#dz-right {
+  position: absolute; top: 56px; right: 0; bottom: 0; width: min(320px, 86vw); z-index: 20;
+  border-radius: 10px; transform: translateX(calc(100% + 18px)); opacity: 0; pointer-events: none;
+  transition: transform .18s ease, opacity .18s ease;
+}
+.designer:not(.assess-collapsed) #dz-right { transform: none; opacity: 1; pointer-events: auto; }
+/* 收起时贴在画布右缘的悬浮把手 */
+.dz-assess-tab {
+  position: absolute; right: 0; top: 56px; z-index: 21; display: none;
+  padding: 10px 6px; border-radius: 10px 0 0 10px; border: 1px solid var(--line-2); border-right: 0;
+  background: var(--panel-2); color: var(--text); cursor: pointer;
+  font-size: var(--fs-sm); letter-spacing: 1px; writing-mode: vertical-rl;
+  box-shadow: -6px 0 18px rgba(0, 0, 0, .4);
+}
+.dz-assess-tab:hover { background: var(--panel-3); color: var(--accent); }
+.designer.assess-collapsed .dz-assess-tab { display: block; }
+.dz-assess-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; font-weight: 600; }
+.designer.lock-left #dz-resizer { display: none; }
 .dz-resizer {
   position: absolute; top: 0; bottom: 0; left: calc(var(--dz-left-w, 260px) + 5px); width: 8px;
   cursor: col-resize; z-index: 6; border-radius: 4px;
@@ -872,7 +889,6 @@ div.field > span:first-child { display: block; font-size: var(--fs-sm); color: v
   .sidebar { padding: 4px; }
   .nav-item { min-height: 38px; padding: 6px 0; }
   .designer { grid-template-columns: 1fr !important; grid-template-rows: 1fr; height: calc(100vh - 48px); min-height: 0; gap: 0; }
-  .designer.assess-collapsed { grid-template-columns: 1fr !important; }
   .dz-resizer { display: none; }
   .dz-stage { grid-row: 1; min-height: 0; }
   #dz-left, #dz-right {
@@ -883,7 +899,6 @@ div.field > span:first-child { display: block; font-size: var(--fs-sm); color: v
   #dz-left { left: 0; }
   #dz-right { right: 0; box-shadow: -8px 0 30px rgba(0, 0, 0, .55); }
   .designer.controls-hidden #dz-left { display: none; }
-  .designer.assess-collapsed #dz-right { display: none; }
   .dz-toolbar { position: sticky; top: 0; z-index: 13; background: var(--bg-0); }
   .modal { max-height: 94vh; overflow-y: auto; }
   .modal-wide { width: 96vw !important; }

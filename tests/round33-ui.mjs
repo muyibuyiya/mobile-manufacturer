@@ -74,22 +74,19 @@ async function main() {
   await sleep(300);
   const empBtns = await ev("document.querySelectorAll('[data-act=open-emp]').length");
   check('名册有「详情」入口', empBtns > 0, `按钮 ${empBtns} 个`);
-  await ev("[...document.querySelectorAll('[data-act=speed]')].find(b=>b.dataset.v==='8').click()");
-  await sleep(300);
-  const date0 = await ev("document.querySelector('.stat-inline .v').textContent");
+  check('顶栏为手动推进（无速度按钮）', (await ev("document.querySelectorAll('[data-act=speed]').length")) === 0);
+  check('顶栏有下个月与推进一年', (await ev("!!document.querySelector('[data-act=advance]') && !!document.querySelector('[data-act=advance-year]')")) === true);
+  const date0 = await ev("document.querySelector('.tb-time .stat-inline .v').textContent");
   await ev("document.querySelector('[data-act=open-emp]').click()");
   await sleep(1300);
-  const date1 = await ev("document.querySelector('.stat-inline .v').textContent");
-  check('弹窗期间时间暂停', date0 === date1, `${date0} -> ${date1}`);
-  check('弹窗时速度自动归零', (await ev("(()=>{const b=[...document.querySelectorAll('[data-act=speed]')].find(x=>x.dataset.v==='8');return !!b&&b.classList.contains('on')})()")) === false);
+  const date1 = await ev("document.querySelector('.tb-time .stat-inline .v').textContent");
+  check('弹窗期间时间不流逝', date0 === date1, `${date0} -> ${date1}`);
   check('员工档案弹窗打开', !!(await ev("document.querySelector('#emp-raise')")));
   check('档案显示流失风险', (await ev("document.body.textContent.includes('月流失风险')")) === true);
   await shot('01-employee');
   await closeModal();
   await sleep(250);
-  check('关闭弹窗恢复速度', (await ev("(()=>{const b=[...document.querySelectorAll('[data-act=speed]')].find(x=>x.dataset.v==='8');return !!b&&b.classList.contains('on')})()")) === true);
-  await ev("[...document.querySelectorAll('[data-act=speed]')].find(b=>b.dataset.v==='0').click()");
-  await sleep(150);
+  check('关闭弹窗后时间仍未推进', (await ev("document.querySelector('.tb-time .stat-inline .v').textContent")) === date0);
 
   // 2. 竞品财报
   await ev("document.querySelector('[data-tab=rivals]').click()");
