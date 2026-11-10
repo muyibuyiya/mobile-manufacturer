@@ -1,5 +1,6 @@
 // 供应链：元器件品类、供应商比价、交期、在途订单、库存覆盖、急采溢价与断供
 import { clamp, uid } from './util.js';
+import { stakeDiscountByCat } from './equity.js';
 import { CAMERAS } from '../data/parts.js';
 import { SUPPLIER_MAP, suppliersFor, defaultSupplier } from '../data/suppliers.js';
 
@@ -99,15 +100,16 @@ export function supplierBoard(state, catId, supplyPower = 0) {
 export function supplyCostMul(state) {
   ensureSupply(state);
   const s = state.supply;
+  const disc = stakeDiscountByCat(state);
   let num = 0, den = 0;
   for (const c of COMPONENTS) {
     const w = s.monthConsumed[c.id] || 0;
-    const m = s.priceMul[c.id] ?? 1;
+    const m = (s.priceMul[c.id] ?? 1) * (1 - (disc[c.id] || 0));
     if (w > 0) { num += m * w; den += w; }
   }
   if (den > 0) return clamp(num / den, 0.8, 1.3);
   // 还没消耗过：按品类简单平均
-  const vals = COMPONENTS.map((c) => s.priceMul[c.id] ?? 1);
+  const vals = COMPONENTS.map((c) => (s.priceMul[c.id] ?? 1) * (1 - (disc[c.id] || 0)));
   return clamp(vals.reduce((a, b) => a + b, 0) / Math.max(1, vals.length), 0.8, 1.3);
 }
 

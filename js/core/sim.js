@@ -23,6 +23,7 @@ import { marketShare as layeredShare, utilityFor, marketPotential, salesScores }
 import { stepReviews, wordOfMouth } from './reviews.js';
 import { fRnd, fProdCost, fProdQuality, fSupply, fBrand, fReach, fInterest, fMorale, fDesign } from './org.js';
 import { stepCapital } from './capital.js';
+import { stakeDividends, maybeGovernmentInvestment } from './equity.js';
 import {
   processCapMul, processCostMul, processQualityBonus, automationUpkeep, automationLaborCut, ensureProduction, routeOf, equipmentLevel,
 } from './production.js';
@@ -314,6 +315,28 @@ export function tick(state) {
   stepPolicies(state, report);
   // 8.2 资本市场：上市后的股价波动
   stepCapital(state, report);
+  // 股权分红：每季度结算一次（竞品按利润比例、供应商按估值固定分红）
+  if (state.date.month % 3 === 0) {
+    const div = stakeDividends(state);
+    if (div > 0) {
+      state.company.cash += div;
+      report.otherIncome = (report.otherIncome || 0) + div;
+      report.notes.push(`股权分红 +${fmtMoney(div)}`);
+    }
+    // 政府产业基金：早期现金紧张时可能主动入股（一次性）
+    const gov = maybeGovernmentInvestment(state);
+    if (gov) {
+      report.notes.push(`政府产业基金入股 ${gov.pct}%，注资 ${fmtMoney(gov.amount)}`);
+      state.news = state.news || [];
+      state.news.unshift({
+        time: `${state.date.year}/${state.date.month + 1}`, type: 'group',
+        title: '政府产业基金入股',
+        text: `${gov.name} 以 ${fmtMoney(gov.amount)} 认购 ${gov.pct}% 股份，并要求本地建厂与就业承诺。`, read: false,
+      });
+      if (state.news.length > 100) state.news.length = 100;
+      addLog(state, 'finance', `政府产业基金入股 ${gov.pct}%，获得 ${fmtMoney(gov.amount)} 注资。`);
+    }
+  }
   if (state.hype && state.hype.months > 0) {
     state.hype.months -= 1;
     if (state.hype.months === 0) state.hype = null;

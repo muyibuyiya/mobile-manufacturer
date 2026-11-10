@@ -7,6 +7,8 @@ import {
 import { autoPriceModel, variantCost, variantPriceMul, priceCurve } from '../core/pricing.js';
 import { assetRows, cashFlowSnapshot } from '../core/finance.js';
 import { ROUTES, routeOf, equipmentLevel, equipmentUpgradeCost, buyEquipment, setRoute } from '../core/production.js';
+import { buyStake, sellStake, stakePct, holdingsSummary, issueQuote, issueShares, negotiateStake } from '../core/equity.js';
+import { SUPPLIER_MAP } from '../data/suppliers.js';
 import {
   saveGame, loadGame, saveSlots, deleteSave, staffPower, deptCost, generateEmployee,
   ensureLayout, autoSave, queueAutoSave, flushAutoSave, storageUsage,
@@ -1077,6 +1079,34 @@ export function renderGame(root, state, opts = {}) {
         opts.onToast?.(re.msg, re.ok ? 'good' : 'bad');
         if (re.ok) sfx('build');
         render(); break;
+      }
+      case 'equity-modal': openEquityModal(); break;
+      case 'issue-shares': {
+        const ri = issueShares(state, 10);
+        opts.onToast?.(ri.msg, ri.ok ? 'good' : 'bad');
+        closeModal(); render(); openEquityModal();
+        break;
+      }
+      case 'negotiate-stake': {
+        const rn = negotiateStake(state, ds.id, stakePct(state, ds.id) + 5);
+        opts.onToast?.(rn.msg, rn.ok ? 'good' : 'bad');
+        closeModal(); render(); openEquityModal();
+        break;
+      }
+      case 'buy-stake': {
+        const cur = stakePct(state, ds.id);
+        const rs = buyStake(state, ds.id, ds.kind, cur + Number(ds.pct || 5));
+        opts.onToast?.(rs.msg, rs.ok ? 'good' : 'bad');
+        if (rs.ok) sfx('good');
+        closeModal(); render(); openEquityModal();
+        break;
+      }
+      case 'sell-stake': {
+        const hs = holdingsSummary(state).find((h) => h.targetId === ds.id);
+        const rv = sellStake(state, ds.id, (hs ? hs.pct : 0) - Number(ds.pct || 5));
+        opts.onToast?.(rv.msg, rv.ok ? 'good' : 'bad');
+        closeModal(); render(); openEquityModal();
+        break;
       }
       case 'fin-bs': openBalanceSheet(); break;
       case 'fin-cf': openCashFlow(); break;
@@ -2865,6 +2895,64 @@ export function renderGame(root, state, opts = {}) {
 
 
   // ---------- 财务三表：资产负债表 / 现金流量表 ----------
+  // ---------- 股权投资：持股竞品 / 供应商 ----------
+  function openEquityModal() {
+    const list = holdingsSummary(state);
+    const rivals = [...state.competitors].sort((a, b) => b.brand - a.brand);
+    const sups = Object.values(SUPPLIER_MAP).slice(0, 14);
+    const btn = (id, kind, pct, cur) => {
+      const cap = kind === 'rival' ? 30 : 49;
+      return cur + pct <= cap
+        ? `<button class="btn tiny" data-act="buy-stake" data-id="${id}" data-kind="${kind}" data-pct="${pct}">+${pct}%</button>`
+        : '';
+    };
+    const row = (h) => `<div class="list-item" style="padding:6px 8px">
+        <div style="flex:1"><b class="tiny">${esc(h.name)}</b> <span class="tiny dim">${h.kind === 'supplier' ? '供应商' : '竞品'} · ${h.pct}%${h.kind === 'supplier' ? ` · 采购 -${Math.round(h.discount * 100)}%` : ''}</span>
+          <div class="tiny dim">估值 ${fmtMoney(h.value)} · 持有 ${h.held} 个月</div></div>
+        <button class="btn tiny ghost danger" data-act="sell-stake" data-id="${h.targetId}" data-pct="5">-5%</button>
+      </div>`;
+    modalShell('股权投资', '持股可换采购折扣、收购折价与季度分红；买卖有 12 个月锁定期', `
+      ${(() => {
+        const q = issueQuote(state, 10);
+        const issued = state.equity.issued.pct;
+        const gov = state.equity.govt;
+        return `<div class="card" style="margin-bottom:10px">
+          <div class="between" style="gap:10px">
+            <div><b>增发新股</b> <span class="tiny dim">已出让 ${issued}% / 上限 40%${gov ? ` · 政府基金持股 ${gov.pct}%` : ''}</span>
+              <div class="tiny dim" style="margin-top:3px">单次最多 10%，价格按品牌折价 5–15%，会稀释创始人持股。</div></div>
+            <button class="btn small" data-act="issue-shares" ${q.amount > 0 ? '' : 'disabled'}>
+              ${q.amount > 0 ? `增发 ${q.amount}%（${fmtMoney(q.price)}）` : '已达出让上限'}
+            </button>
+          </div>
+        </div>`;
+      })()}
+      <div class="card">
+        <div class="card-title">我的持股</div>
+        <div class="list">${list.length ? list.map(row).join('') : '<div class="empty">还没有任何持股</div>'}</div>
+      </div>
+      <div class="two-col" style="margin-top:10px">
+        <div class="card">
+          <div class="card-title">竞品（上限 30%）</div>
+          <div class="list" style="max-height:260px;overflow:auto">
+            ${rivals.map((c) => `<div class="list-item" style="padding:5px 7px">
+              <div style="flex:1"><b class="tiny">${esc(c.name)}</b> <span class="tiny dim">持股 ${stakePct(state, c.id)}%</span></div>
+              <div class="row" style="gap:4px">${btn(c.id, 'rival', 5, stakePct(state, c.id))}${btn(c.id, 'rival', 10, stakePct(state, c.id))}<button class="btn tiny ghost" data-act="negotiate-stake" data-id="${c.id}" title="与对方协商入股（约 95 折，可能被拒）">协商</button></div>
+            </div>`).join('')}
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-title">供应商（上限 49%）</div>
+          <div class="list" style="max-height:260px;overflow:auto">
+            ${sups.map((sup) => `<div class="list-item" style="padding:5px 7px">
+              <div style="flex:1"><b class="tiny">${esc(sup.name)}</b> <span class="tiny dim">${esc(sup.cat)} · 持股 ${stakePct(state, sup.id)}%</span></div>
+              <div class="row" style="gap:4px">${btn(sup.id, 'supplier', 5, stakePct(state, sup.id))}${btn(sup.id, 'supplier', 10, stakePct(state, sup.id))}</div>
+            </div>`).join('')}
+          </div>
+        </div>
+      </div>
+      <div class="tiny dim" style="margin-top:8px">持股 5%/15%/30% 分别对应采购 −2%/−5%/−8%；收购要价 ≥15% −5%、≥20% −10%、≥30% −15%。</div>`);
+  }
+
   function openBalanceSheet() {
     const { current, fixed, intangible, liability, f } = assetRows(state);
     const row = ([k, v]) => `<div class="between"><span class="dim">${esc(k)}</span><b class="mono">${fmtMoney(v)}</b></div>`;
@@ -2931,6 +3019,7 @@ export function renderGame(root, state, opts = {}) {
     return `
       ${head('财务中心', `现金 ${fmtMoney(state.company.cash)} · 负债 ${fmtMoney(debt)}`,
         `<button class="btn small primary" data-act="loan-modal">银行贷款 / 还款</button>
+         <button class="btn small" data-act="equity-modal">股权投资</button>
          <button class="btn small" data-act="fin-bs">资产负债表</button>
          <button class="btn small" data-act="fin-cf">现金流量表</button>
          <span class="chip">信用 ${Math.round((state.credit?.score || 600))}</span>`)}

@@ -2,6 +2,7 @@
 import { clamp, rand, uid, chance, fmtMoney } from './util.js';
 import { addLog, generateEmployee } from './state.js';
 import { TECHS, TECH_MAP } from '../data/tech.js';
+import { acquisitionStakeDiscount } from './equity.js';
 
 const SHARES = 1e8; // 上市后总股本
 
@@ -175,7 +176,7 @@ export function openNegotiation(state, compId, opts = {}) {
   if (comp.sub) return { ok: false, msg: '这已经是你的子公司' };
   const def = compDefense(comp);
   // 反收购防御：品牌越强、产品线越健康，对方开价越高、越难谈
-  const base = Math.round(askPrice(comp) * (1 + def * 0.18));
+  const base = Math.round(askPrice(comp) * (1 + def * 0.18) * acquisitionStakeDiscount(state, comp.id));
   const n = {
     compId, rounds: 0,
     ask: Math.round(base * 1.18),          // 首轮要价上浮

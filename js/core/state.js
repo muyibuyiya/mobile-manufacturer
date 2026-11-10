@@ -1,5 +1,6 @@
 // 游戏状态：初始化、员工生成、部门结构、竞争对手、存读档
 import { clamp, rand, randInt, pick, uid, gauss, chance } from './util.js';
+import { ensureEquity } from './equity.js';
 import { MARKETS, COMPETITORS, COUNTRIES, ERAS, SURNAMES, GIVEN, FOREIGN, FIELDS, EDUS, makeCompetitorPhone, RIVAL_SIGNATURE_MAP } from '../data/world.js';
 import { TECHS } from '../data/tech.js';
 import { newModel, ensureBranding, ensureTemplate } from './design.js';
@@ -23,7 +24,7 @@ import { compactAll } from './history.js';
 
 export { DEPT_DEFS, ROLE_BY_DEPT };
 
-export const GAME_VERSION = '1.27.0'; // 全局唯一版本号（启动页/关于/存档兼容判断）
+export const GAME_VERSION = '1.28.0'; // 全局唯一版本号（启动页/关于/存档兼容判断）
 
 // 室内布局（v2）：房间可拖放/调尺寸 + 家具/隔墙单数据源。
 // 旧档（v1：仅 items/edges，房间位置硬编码）经 migrateV1 迁移：rooms 取默认双排布局，items/edges 原样保留
@@ -477,6 +478,7 @@ export function sanitizeState(s) {
   ensureDivisions(s);
   ensureOverseas(s);
   ensureLayout(s);
+  ensureEquity(s);
   ensureMarketing(s);
   ensureWarranty(s);
   ensureGuide(s);
