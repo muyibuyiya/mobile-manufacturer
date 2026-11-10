@@ -1,6 +1,6 @@
 // 手机设计器：参数化 2D 六视图 + three.js 3D 模型 + 合理性校验
 import * as THREE from '../../vendor/three.module.js';
-import { derive, validate, bomCost, screenSize, SCREEN_ASPECTS, defaultDesign, maxScreenInch, cameraModuleRect, lensSpecs, ensureLenses, ensureBranding, ensurePackaging, ensureDeviceExtras, ensureTemplate, packageScore, PACKAGE_MATERIALS, speakerRowSpec, PORT_OPENINGS, layoutPos, makeLens, arrangeLenses, allowedExtras } from '../core/design.js';
+import { derive, validate, bomCost, screenSize, SCREEN_ASPECTS, defaultDesign, maxScreenInch, cameraModuleRect, lensSpecs, ensureLenses, ensureBranding, ensurePackaging, ensureDeviceExtras, ensureTemplate, packageScore, PACKAGE_MATERIALS, speakerRowSpec, PORT_OPENINGS, layoutPos, makeLens, arrangeLenses, allowedExtras, categoryScore } from '../core/design.js';
 import { CPUS, RAMS, STORAGES, SCREENS, CAMERAS, BATTERIES, SYSTEMS, EXTRAS, MATERIALS, FINISHES, CHARGERS, BODY_COLORS } from '../data/parts.js';
 import { PHONE_TEMPLATES, PHONE_TPL_MAP, tplCaps, DEVICE_CATEGORIES, templatesForCategory, defaultTemplateForCategory } from '../data/templates.js';
 import { IMAGE_SENSORS, LENS_TYPES, DECO_SHAPES, PANEL_VENDORS, RES_TIERS, lensTypeById, sensorById, lensRadiusMm } from '../data/hardware.js';
@@ -9,6 +9,7 @@ import { composeScreenUI } from './screendesign.js';
 import { ownCpuSpec, ownCmrSpec, ownOsSpec, ownPanelSpec } from '../core/divisions.js';
 import { fmtNum, fmtMoney, clamp, esc } from '../core/util.js';
 import { suggestedPrice } from '../core/sim.js';
+import { variantPriceMul } from '../core/pricing.js';
 
 const VIEWS = [
   { id: 'front', name: '正视图' }, { id: 'back', name: '后视图' },
@@ -340,6 +341,12 @@ export function renderDesigner(container, state, model, hooks = {}) {
     assessToggle.classList.toggle('primary', assessCollapsed);
   }
   applyAssessCollapsed();
+  // 手机横屏：画布优先，控件栏默认收起为抽屉
+  if (window.matchMedia('(max-height: 480px) and (orientation: landscape)').matches && !dzRoot.classList.contains('controls-hidden')) {
+    dzRoot.classList.add('controls-hidden');
+    panelToggle.textContent = '展开控件';
+    panelToggle.classList.add('primary');
+  }
   assessToggle.addEventListener('click', () => {
     assessCollapsed = !assessCollapsed;
     try { localStorage.setItem(DZ_ASSESS_KEY, assessCollapsed ? '1' : '0'); } catch (e) { /* 忽略 */ }
@@ -852,7 +859,9 @@ export function renderDesigner(container, state, model, hooks = {}) {
       <div class="tiny dim" style="margin:8px 0 2px">存储配置（同一机型不同内存/存储，如 12+256 / 12+512 / 12+1T；库存共用，各自定价）</div>
       <div class="tiny dim" style="margin:0 0 6px">Pro / Pro Max / Ultra 属于<b>同系列的不同机型</b>（尺寸规格可完全不同），请在产品页用「复制为新机型」派生，而不是配置</div>
       ${(d.variants || []).map((v, i) => variantCard(v, i)).join('')}
-      ${(d.variants || []).length < 6 ? `<button type="button" class="btn small" data-variant-add style="margin:4px 0 8px">＋ 添加配置版本</button>` : ''}`)
+      ${(d.variants || []).length < 6 ? `<button type="button" class="btn small" data-variant-add style="margin:4px 0 8px">＋ 添加配置版本</button>` : ''}
+      <button type="button" class="btn small ghost" data-variant-presets style="margin:4px 0 8px">⚡ 常用组合</button>
+      <div class="tiny dim" style="margin:-2px 0 8px">按现实常见配置一键补齐（8+128 / 12+256 / 16+512 等），超过 6 条自动截断</div>`)
       + section('charge', '充电', `
       <label class="field"><span>有线快充</span>
         <select data-k="parts.charge.wired">
@@ -1167,24 +1176,35 @@ export function renderDesigner(container, state, model, hooks = {}) {
   }
 
   function assessment() {
-    const v = validate(model.design, year, sandboxAll ? { ignoreEra: true, unlocked } : { unlocked });
+    const evalOpts = sandboxAll ? { ignoreEra: true, unlocked } : { unlocked };
+    const v = validate(model.design, year, evalOpts);
     const d = v.derived;
     const cost = bomCost(model.design, year);
     const price = suggestedPrice(state, { design: model.design }, 'cn');
+    const cs = categoryScore(model.design, year, evalOpts);
+    const devName = { phone: '手机', tablet: '平板', watch: '手表' }[cs.deviceType] || '手机';
+    const weightText = Object.entries(cs.weights)
+      .map(([k, w]) => `${({ perf: '性能', camera: '影像', battery: '续航', design: '设计', screen: '屏幕', era: '时代' })[k]} ${Math.round(w * 100)}%`)
+      .join(' · ');
     const peers = (state.models || []).filter((m) => m.id !== model.id && m.status !== 'draft' && m.design?.deviceType === model.design.deviceType);
-    const peerScores = peers.map((m) => { try { return validate(m.design, year, { unlocked }).derived.designScore; } catch (e) { return null; } }).filter((x) => x != null);
+    const peerScores = peers.map((m) => { try { return categoryScore(m.design, year, { unlocked }).total; } catch (e) { return null; } }).filter((x) => x != null);
     const peerAvg = peerScores.length ? Math.round(peerScores.reduce((a, b) => a + b, 0) / peerScores.length) : null;
-    const gap = peerAvg == null ? null : Math.round(d.designScore - peerAvg);
+    const gap = peerAvg == null ? null : Math.round(cs.total - peerAvg);
     const errors = v.issues.filter((i) => i.level === 'error');
     const warns = v.issues.filter((i) => i.level !== 'error');
+    const bars = cs.deviceType === 'tablet'
+      ? [['屏幕', cs.dims.screen, 'screen'], ['性能', d.perf, 'hw'], ['续航', d.battery, 'hw']]
+      : cs.deviceType === 'watch'
+        ? [['续航', d.battery, 'hw'], ['屏幕', cs.dims.screen, 'screen'], ['性能', d.perf, 'hw']]
+        : [['性能', d.perf, 'hw'], ['影像', d.camera, 'camera'], ['续航', d.battery, 'hw'], ['散热', d.thermal, 'hw']];
     return `
       <div class="card-title" style="margin-bottom:10px">设计评估</div>
-      <div class="score-ring"><div class="ring ${d.designScore > 70 ? 'good' : d.designScore > 45 ? '' : 'warn'}" style="--v:${d.designScore};width:52px;height:52px"><span>${Math.round(d.designScore)}</span></div>
-        <div><div style="font-weight:600">外观设计</div><div class="tiny dim">时代契合度 ${Math.round(d.eraFit)} · 屏占比 ${d.screenRatio}%</div>
+      <div class="score-ring"><div class="ring ${cs.total > 70 ? 'good' : cs.total > 45 ? '' : 'warn'}" style="--v:${cs.total};width:52px;height:52px"><span>${Math.round(cs.total)}</span></div>
+        <div><div style="font-weight:600">${devName}综合评分</div><div class="tiny dim">${weightText}</div>
           ${peerAvg == null ? '' : `<div class="tiny ${gap >= 0 ? 'good' : 'warn'}">同类均值 ${peerAvg} · ${gap >= 0 ? '+' : ''}${gap}</div>`}</div>
       </div>
       <div class="grid" style="grid-template-columns:1fr 1fr;gap:8px;margin:10px 0">
-        ${[['性能', d.perf, 'hw'], ['影像', d.camera, 'camera'], ['续航', d.battery, 'hw'], ['散热', d.thermal, 'hw']].map(([k, val, jump]) => `
+        ${bars.map(([k, val, jump]) => `
           <div data-jump="${jump}" title="点击定位" style="background:#121821;border-radius:8px;padding:8px;cursor:pointer">
             <div class="between tiny"><span class="dim">${k}</span><b class="mono">${Math.round(val)}</b></div>
             <div class="bar" style="margin-top:5px"><i style="width:${val}%;background:${val > 65 ? 'var(--good)' : val > 40 ? 'var(--accent)' : 'var(--warn)'}"></i></div>
@@ -3802,7 +3822,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
     right.innerHTML = assessment();
     right.scrollTop = st;
     if (assessCollapsed) {
-      const sc = validate(model.design, year, sandboxAll ? { ignoreEra: true, unlocked } : { unlocked }).derived.designScore;
+      const sc = categoryScore(model.design, year, sandboxAll ? { ignoreEra: true, unlocked } : { unlocked }).total;
       assessToggle.textContent = `评估 ${Math.round(sc)}`;
     }
   }
@@ -4333,6 +4353,38 @@ export function renderDesigner(container, state, model, hooks = {}) {
         renderControls();
         renderAssessment();
       }
+      return;
+    }
+    const vPreset = e.target.closest('[data-variant-presets]');
+    if (vPreset) {
+      e.preventDefault();
+      const d = model.design;
+      d.variants = d.variants || [];
+      pushUndo();
+      const dt = d.deviceType || 'phone';
+      const presets = dt === 'watch'
+        ? [[2, 32], [2, 64], [4, 64]]
+        : dt === 'tablet'
+          ? [[8, 128], [8, 256], [12, 256], [12, 512], [16, 512]]
+          : [[8, 128], [8, 256], [12, 256], [12, 512], [16, 512], [16, 1024]];
+      const pickRam = (gb) => RAMS.filter((x) => x.gb <= gb && (x.year || 0) <= availYear).sort((a, b) => b.gb - a.gb)[0];
+      const pickStg = (gb) => STORAGES.filter((x) => x.gb <= gb && (x.year || 0) <= availYear).sort((a, b) => b.gb - a.gb)[0];
+      let baseP = 0;
+      try { baseP = Math.round(suggestedPrice(state, { design: d }, 'cn')); } catch (e2) { baseP = 0; }
+      const has = (r, s2) => d.variants.some((v) => v.ram === r.id && v.stg === s2.id);
+      for (const [gb, sg] of presets) {
+        if (d.variants.length >= 6) break;
+        const r = pickRam(gb), s2 = pickStg(sg);
+        if (!r || !s2 || has(r, s2)) continue;
+        const mul = variantPriceMul({ design: d }, { ram: r.id, stg: s2.id });
+        d.variants.push({
+          uid: 'v' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
+          ram: r.id, stg: s2.id,
+          price: { cn: Math.round(baseP * mul / 10) * 10 },
+        });
+      }
+      renderControls();
+      renderAssessment();
       return;
     }
     const vDel = e.target.closest('[data-variant-del]');

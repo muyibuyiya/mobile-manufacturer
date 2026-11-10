@@ -4,7 +4,7 @@ import {
   startResearch, researchBudget, avgShare, bomUnit, assemblyUnit, ownFactoryCount,
   suggestTargets, techOffers, buyTech, poachFromRival,
 } from '../core/sim.js';
-import { autoPriceModel, variantCost, variantPriceMul } from '../core/pricing.js';
+import { autoPriceModel, variantCost, variantPriceMul, priceCurve } from '../core/pricing.js';
 import {
   saveGame, loadGame, saveSlots, deleteSave, staffPower, deptCost, generateEmployee,
   ensureLayout, autoSave, queueAutoSave, flushAutoSave,
@@ -17,7 +17,7 @@ import { openFloorplanPlanner } from './floorplan2d.js';
 import { openScreenDesign } from './screendesign.js';
 import { openPosterStudio } from './poster.js';
 import { TECHS, TECH_MAP, TECH_CATS, techState } from '../data/tech.js';
-import { MARKETS, MARKET_MAP, COUNTRIES, eraFactor, expectedPrice, SEGMENTS, SEGMENT_MAP, LINEUPS, LINEUP_MAP, marketMix, suggestModelName, signatureOf } from '../data/world.js';
+import { MARKETS, MARKET_MAP, COUNTRIES, eraFactor, expectedPrice, SEGMENTS, SEGMENT_MAP, LINEUPS, LINEUP_MAP, marketMix, suggestModelName, signatureOf, phonePriceInMarket } from '../data/world.js';
 import { DIVISION_DEFS, DIVISION_IDS, buildDivision, startUpgrade, upgradeCost, computeCustomSpec, ownCpuSpec, ownCmrSpec, ownOsSpec, ownPanelSpec, releaseOsVersion, toggleOsLicense, osReleaseCost, startOsTech, osTechBonuses, chooseOsRoute } from '../core/divisions.js';
 import { OS_TECHS, OS_TECH_BRANCHES, osTechState, OS_ROUTES } from '../data/os-tech.js';
 import { CPU_CORES, GPU_ARCHS, OS_BASES, RES_TIERS, LENS_TYPES } from '../data/hardware.js';
@@ -122,16 +122,12 @@ let priceUndo = null;
 const priceHistory = [];
 
 function competitorAvgPrice(state, marketId) {
-  const mk = MARKET_MAP[marketId];
-  const cn = MARKET_MAP.cn;
-  if (!mk || !cn) return 0;
-  const factor = (0.55 + mk.wealth * 0.9) / (0.55 + cn.wealth * 0.9);
   const prices = [];
   for (const c of state.competitors || []) {
     for (const p of c.lineup || []) {
       if (!(p.price > 0)) continue;
       if (Array.isArray(p.markets) && p.markets.length && !p.markets.includes(marketId)) continue;
-      prices.push(p.price * factor);
+      prices.push(phonePriceInMarket(p, marketId));
     }
   }
   return prices.length ? Math.round(prices.reduce((a, b) => a + b, 0) / prices.length) : 0;
@@ -195,7 +191,35 @@ export function renderGame(root, state, opts = {}) {
   // 任意 .modal-mask 弹窗 / 全屏编辑页（data-pause-game）打开时暂停时间，关闭后恢复原速度
   let modalPausedSpeed = 0;
   let modalPaused = false;
-  const modalObserver = new MutationObserver(() => {
+  let lastFocusOutside = null;
+  document.addEventListener('focusin', (e) => {
+    if (!e.target.closest?.('.modal-mask')) lastFocusOutside = e.target;
+  });
+  const modalObserver = new MutationObserver((muts) => {
+    // 弹窗可访问性：role/aria、焦点进入与还原、Tab 循环（对所有 .modal-mask 生效）
+    const removedMasks = [];
+    for (const mu of muts) for (const n of mu.removedNodes) if (n.nodeType === 1) { if (n.matches?.('.modal-mask')) removedMasks.push(n); else if (n.querySelectorAll) removedMasks.push(...n.querySelectorAll('.modal-mask')); }
+    for (const mask of document.querySelectorAll('.modal-mask')) {
+      if (mask.dataset.a11y) continue;
+      mask.dataset.a11y = '1';
+      mask.setAttribute('role', 'dialog');
+      mask.setAttribute('aria-modal', 'true');
+      const modal = mask.querySelector('.modal') || mask;
+      const title = modal.querySelector('h2')?.textContent?.trim();
+      if (title) mask.setAttribute('aria-label', title);
+      const focusables = () => [...mask.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')].filter((el) => !el.disabled && el.offsetParent !== null);
+      const list = focusables();
+      (list.find((el) => !el.matches('[data-close]')) || list[0] || mask).focus?.();
+      mask.addEventListener('keydown', (e) => {
+        if (e.key !== 'Tab') return;
+        const els = focusables();
+        if (!els.length) { e.preventDefault(); return; }
+        const first = els[0], last = els[els.length - 1];
+        if (e.shiftKey && (document.activeElement === first || !mask.contains(document.activeElement))) { e.preventDefault(); last.focus(); }
+        else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+      });
+    }
+    if (removedMasks.length && lastFocusOutside?.isConnected) lastFocusOutside.focus?.();
     const open = !!(document.querySelector('.modal-mask') || document.querySelector('[data-pause-game]'));
     if (open && !modalPaused) {
       modalPaused = true;
@@ -1242,6 +1266,44 @@ export function renderGame(root, state, opts = {}) {
         }
         render(); break;
       }
+      case 'price-forecast': {
+        const m = state.models.find((x) => x.id === ds.model);
+        const mk = MARKET_MAP[ds.market];
+        if (!m || !mk) break;
+        const rows = priceCurve(state, m, ds.market, 5, 0.3);
+        if (!rows.length) { opts.onToast?.('暂时无法预测：检查生产状态与市场进入情况', 'warn'); break; }
+        const cur = m.price?.[ds.market] || 0;
+        const best = rows.find((r) => r.best);
+        const body = `<div class="tiny dim" style="margin-bottom:8px">${esc(mk.name)} · 基于当前渠道、热度与竞品当地成交价的基准预测（不含当月活动与政策加成）</div>
+          <table class="tbl"><thead><tr><th>定价</th><th class="num">预计月销</th><th class="num">毛利率</th><th class="num">月毛利</th><th></th></tr></thead><tbody>
+          ${rows.map((r) => `<tr${r.price === cur ? ' style="background:rgba(74,163,255,.10)"' : ''}>
+            <td class="mono">¥${fmtNum(r.price)}${r.price === cur ? ' <span class="chip">当前</span>' : ''}${r.best ? ' <span class="chip good">毛利最优</span>' : ''}</td>
+            <td class="num">${fmtNum(r.units)}</td>
+            <td class="num ${r.margin > 0.15 ? 'good' : r.margin > 0 ? 'warn' : 'bad'}">${(r.margin * 100).toFixed(0)}%</td>
+            <td class="num ${r.profit > 0 ? 'good' : 'bad'}">¥${fmtNum(r.profit)}</td>
+            <td class="num">${r.price !== cur ? `<button class="btn tiny ghost" data-act="apply-price" data-model="${m.id}" data-market="${ds.market}" data-price="${r.price}">采用</button>` : ''}</td>
+          </tr>`).join('')}
+          </tbody></table>
+          <div class="tiny dim" style="margin-top:8px">成本 ¥${fmtNum(rows[0].cost)} / 台${best ? ` · 毛利最优价位 ¥${fmtNum(best.price)}（月毛利 ¥${fmtNum(best.profit)}）` : ''}</div>`;
+        modalShell('价格—销量预测', `${esc(m.name)} · ${esc(mk.name)}`, body, 'wide');
+        break;
+      }
+      case 'apply-price': {
+        const m = state.models.find((x) => x.id === ds.model);
+        const price = Math.max(1, Math.round(Number(ds.price) || 0));
+        if (m && price) {
+          const old = m.price[ds.market];
+          if (Number.isFinite(old) && old !== price) {
+            priceHistory.push({ kind: 'price', modelId: m.id, market: ds.market, old });
+            if (priceHistory.length > 50) priceHistory.shift();
+          }
+          m.price[ds.market] = price;
+          queueAutoSave(state);
+        }
+        document.querySelectorAll('.modal-mask').forEach((x) => x.remove());
+        render();
+        break;
+      }
       case 'toggle-mode': {
         if (ds.mode === 'own' && !state.factories.length) {
           opts.onToast?.('还没有工厂，请先购地建厂', 'warn');
@@ -2214,6 +2276,7 @@ export function renderGame(root, state, opts = {}) {
               <td class="num">
                 <button class="btn small ${on ? 'ghost' : ''}" data-act="toggle-market" data-model="${m.id}" data-market="${mk.id}">${on ? '退出' : '进入 ¥80万'}</button>
                 ${on ? `<button class="btn small ghost" data-act="auto-price" data-model="${m.id}" data-market="${mk.id}">建议价</button>` : ''}
+                ${on ? `<button class="btn small ghost" data-act="price-forecast" data-model="${m.id}" data-market="${mk.id}">预测</button>` : ''}
               </td>
             </tr>`);
             // 每个配置版本单独一行定价（价格存 v.price[market]，缺省跟随机型基准价）

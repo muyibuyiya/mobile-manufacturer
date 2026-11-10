@@ -1,6 +1,6 @@
 {
   "name": "mobile-manufacturer",
-  "version": "1.18.0",
+  "version": "1.19.0",
   "private": true,
   "type": "module",
   "description": "《手机开发商》浏览器原型：3D 手机设计与深度经营模拟",
@@ -30,6 +30,8 @@
     "test:p1:core": "node tests/p1-p2.test.mjs",
     "test:pricing": "node tests/pricing.test.mjs",
     "test:devices": "node tests/devices-ui.mjs http://127.0.0.1:8124/index.html",
-    "test:cat": "node tests/category-hardware.test.mjs"
+    "test:cat": "node tests/category-hardware.test.mjs",
+    "test:visual": "node tests/visual.mjs http://127.0.0.1:8124/index.html",
+    "test:landscape": "node tests/landscape.mjs http://127.0.0.1:8124/index.html"
   }
 }

@@ -257,6 +257,17 @@ export function makeCompetitorPhone(c, year) {
     battery: bump(40 + t * 38, (bias === 'value' || bias === 'rugged' ? 7 : 0) + tierBias),
     design: bump(36 + t * 46, (bias === 'design' || bias === 'ecosystem' ? 8 : 0) + tierBias),
   };
+  const versionMul = rand(0.94, 1.08);
+  // 真实定价：按成本与定位毛利倒推（性价比薄利、生态旗舰厚利），再按市场财富/关税折算当地成交价
+  const costCny = base * (0.40 + t * 0.14) * tierMul;
+  const margin = STYLE_MARGIN[bias] ?? 0.22;
+  const cnPrice = Math.max(10, Math.round(costCny / (1 - margin) * versionMul / 10) * 10);
+  const priceByMarket = {};
+  const cnWealth = MARKET_MAP.cn?.wealth || 0.5;
+  for (const mk of MARKETS) {
+    const factor = (0.55 + mk.wealth * 0.9) / (0.55 + cnWealth * 0.9);
+    priceByMarket[mk.id] = Math.max(10, Math.round(cnPrice * factor / 10) * 10);
+  }
   return {
     id: 'cp_' + Math.random().toString(36).slice(2, 8),
     name: `${series.name} ${gen}${versions[verIdx] ? ' ' + versions[verIdx] : ''}`,
@@ -264,7 +275,10 @@ export function makeCompetitorPhone(c, year) {
     gen,
     version: versions[verIdx] || '标准版',
     scores,
-    price: Math.round(base * priceTier * rand(0.82, 1.25) / 10) * 10,
+    price: cnPrice,
+    cost: Math.round(costCny),
+    margin,
+    priceByMarket,
     age: 0,
     markets: (() => {
       const list = MARKETS.filter(() => chance(0.62)).map((m) => m.id);
@@ -272,6 +286,36 @@ export function makeCompetitorPhone(c, year) {
     })(),
   };
 }
+
+// 竞品调价（清仓/价格战/折叠溢价）：同步按比例更新各市场成交价
+export function scaleCompetitorPrice(phone, mul) {
+  const old = phone.price || 0;
+  const next = Math.max(10, Math.round(old * mul / 10) * 10);
+  phone.price = next;
+  if (phone.priceByMarket && old > 0) {
+    for (const k of Object.keys(phone.priceByMarket)) {
+      phone.priceByMarket[k] = Math.max(10, Math.round(phone.priceByMarket[k] * next / old / 10) * 10);
+    }
+  }
+  return next;
+}
+
+// 某市场的竞品成交价（旧档无 priceByMarket 时按财富系数回退）
+export function phonePriceInMarket(phone, marketId) {
+  const direct = phone?.priceByMarket?.[marketId];
+  if (direct > 0) return direct;
+  const mk = MARKET_MAP[marketId];
+  const cn = MARKET_MAP.cn;
+  const p = phone?.price || 0;
+  if (!mk || !cn) return p;
+  return Math.round(p * ((0.55 + mk.wealth * 0.9) / (0.55 + cn.wealth * 0.9)));
+}
+
+// 竞品目标毛利率（按人设定价：性价比薄利、生态旗舰厚利）
+const STYLE_MARGIN = {
+  value: 0.12, rugged: 0.18, supply: 0.20, hardware: 0.22,
+  business: 0.25, camera: 0.28, design: 0.30, tech: 0.30, ecosystem: 0.35,
+};
 
 export const STYLE_LABEL = {
   rugged: '耐用路线', supply: '供应链垂直整合', ecosystem: '生态与品牌', business: '商务安全',

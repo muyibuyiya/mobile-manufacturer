@@ -43,6 +43,7 @@ async function main() {
   await ev(`document.querySelector('[data-tab=finance]')?.click()`); await sleep(250);
   await ev(`document.querySelector('[data-act="loan-modal"]')?.click()`); await sleep(250);
   check('银行贷款弹窗有 3 档方案', await ev(`document.querySelectorAll('[data-act="loan-take"]').length === 3`));
+  check('弹窗可访问性（role/aria/焦点）', await ev(`(() => { const m = document.querySelector('.modal-mask'); if (!m) return false; const focused = document.activeElement; return m.getAttribute('role') === 'dialog' && m.getAttribute('aria-modal') === 'true' && !!m.getAttribute('aria-label') && m.contains(focused); })()`));
   await ev(`document.querySelector('.modal-mask [data-close]')?.click()`); await sleep(200);
   await ev(`document.querySelector('[data-tab=market]')?.click()`); await sleep(250);
 
@@ -89,6 +90,12 @@ async function main() {
   check('区域营销活动可启动', !!start && active === true, start);
   await ev(`document.querySelector('[data-act="campaign-cancel"]')?.click()`); await sleep(350);
   check('区域营销活动可提前结束', await ev(`document.querySelector('[data-act="campaign-cancel"]') === null`));
+
+  // 价格—销量预测弹窗
+  await ev(`document.querySelector('[data-act="price-forecast"]')?.click()`); await sleep(400);
+  const fc = await ev(`(() => { const m = document.querySelector('.modal-mask'); if (!m) return null; const rows = m.querySelectorAll('tbody tr').length; return { rows, role: m.getAttribute('role'), aria: m.getAttribute('aria-modal'), label: m.getAttribute('aria-label'), hasAdopt: !!m.querySelector('[data-act="apply-price"]') }; })()`);
+  check('定价页可打开销量预测', fc && fc.rows >= 3 && fc.hasAdopt === true, JSON.stringify(fc));
+  check('预测弹窗可访问性', fc && fc.role === 'dialog' && fc.aria === 'true' && !!fc.label, JSON.stringify(fc));
 
   check('无运行时报错', errors.length === 0, errors.slice(0, 2).join(' | '));
 

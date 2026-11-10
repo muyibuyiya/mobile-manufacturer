@@ -1,6 +1,6 @@
 // 月度模拟核心
 import { clamp, rand, randInt, pick, chance, fmtMoney, fmtNum, fmtUnit, sum } from './util.js';
-import { MARKETS, MARKET_MAP, eraFactor, EVENTS, COUNTRIES, expectedPrice, makeCompetitorPhone, LINEUP_MAP, COMPETITORS } from '../data/world.js';
+import { MARKETS, MARKET_MAP, eraFactor, EVENTS, COUNTRIES, expectedPrice, makeCompetitorPhone, LINEUP_MAP, COMPETITORS, phonePriceInMarket, scaleCompetitorPrice } from '../data/world.js';
 import { derive, validate, eraBaseline, eraRel } from './design.js';
 import { TECHS, TECH_MAP } from '../data/tech.js';
 import { addLog, staffPower, deptById, DIFFICULTY, makeCompetitors, generateEmployee } from './state.js';
@@ -414,13 +414,13 @@ function stepSales(state, report) {
       const units = Math.min(demand, stock);
       if (Number.isFinite(stock)) c.inventory = Math.max(0, stock - units);
       c.lastSold = (c.lastSold || 0) + units;
-      c.revenueEst = (c.revenueEst || 0) + units * (rv.phone.price || 0);
+      c.revenueEst = (c.revenueEst || 0) + units * phonePriceInMarket(rv.phone, market.id);
       if (demand > units * 1.15 + 1 && !c._shortNoted) {
         c._shortNoted = true;
         report.notes.push(`${c.name} 产能不足，${rv.phone.name} 出现缺货，部分需求外溢。`);
       }
       // 竞品旗舰发布会：推送新闻 + 同价位自家产品热度 -8（每家每月至多一次）
-      if (rv.phone.price > expectedPrice(year) * 1.1 && !rv.competitor._launchedNoted) {
+      if (phonePriceInMarket(rv.phone, market.id) > expectedPrice(year) * 1.1 && !rv.competitor._launchedNoted) {
         rv.competitor._launchedNoted = true;
         state.news = state.news || [];
         state.news.unshift({
@@ -432,7 +432,8 @@ function stepSales(state, report) {
         for (const p of state.models) {
           if (p.status !== 'production') continue;
           const myPrice = p.price[market.id] || p.price.cn || 0;
-          if (myPrice > rv.phone.price * 0.8 && myPrice < rv.phone.price * 1.2) {
+          const rivalPrice = phonePriceInMarket(rv.phone, market.id);
+          if (myPrice > rivalPrice * 0.8 && myPrice < rivalPrice * 1.2) {
             p.heat = clamp((p.heat === undefined ? 100 : p.heat) - 8, 0, 100);
           }
         }
@@ -684,10 +685,15 @@ function stepCompetitors(state, report) {
       const phone = makeCompetitorPhone(c, year);
       // AI 定价对标：不再闭眼随机——参考玩家中位价，性价比厂压价、旗舰厂溢价
       if (playerMedian > 0) {
-        if (c.style === 'value') phone.price = Math.round(playerMedian * rand(0.72, 0.9));
-        else if (c.style === 'ecosystem' || c.style === 'tech') phone.price = Math.round(playerMedian * rand(1.05, 1.35));
-        else phone.price = Math.round(((phone.price + playerMedian) / 2) * rand(0.92, 1.08));
-        phone.price = Math.max(Math.round(phone.price / 10) * 10, 1);
+        let target;
+        if (c.style === 'value') target = Math.round(playerMedian * rand(0.72, 0.9));
+        else if (c.style === 'ecosystem' || c.style === 'tech') target = Math.round(playerMedian * rand(1.05, 1.35));
+        else target = Math.round(((phone.price + playerMedian) / 2) * rand(0.92, 1.08));
+        target = Math.max(Math.round(target / 10) * 10, 1);
+        // 成本线兜底：对标价低于成本×1.05 时按成本定价，避免竞品长期亏本卖
+        scaleCompetitorPrice(phone, target / Math.max(1, phone.price));
+        phone.price = Math.max(phone.price, Math.round((phone.cost || 0) * 1.05 / 10) * 10);
+        for (const k of Object.keys(phone.priceByMarket || {})) phone.priceByMarket[k] = Math.max(10, Math.round(phone.price * ((0.55 + (MARKET_MAP[k]?.wealth || 0.5) * 0.9) / (0.55 + (MARKET_MAP.cn?.wealth || 0.5) * 0.9)) / 10) * 10);
       }
       c.lineup.push(phone);
       if (c.lineup.length > 3) c.lineup.shift();
@@ -705,7 +711,7 @@ function stepCompetitors(state, report) {
     // 1) 清库存：老机型没人买就主动降价，换现金与曝光
     for (const p of c.lineup) {
       if (p.age >= 7 && !p.clearance && chance(0.32)) {
-        p.price = Math.round(p.price * rand(0.76, 0.88));
+        p.price = scaleCompetitorPrice(p, rand(0.76, 0.88));
         p.clearance = true;
         if (c.brand > 40) addLog(state, 'rival', `${c.name} 对上市半年的 ${p.name} 降价促销，现售 ${fmtMoney(p.price)}。`);
       }
@@ -714,7 +720,7 @@ function stepCompetitors(state, report) {
     if (shareGrowth > 0.008 && c.brand > 45 && chance(0.45)) {
       if (c.style === 'value') {
         // 性价比厂打价格战：全线砍价，伤敌一千自损八百
-        for (const p of c.lineup) p.price = Math.round(p.price * rand(0.8, 0.88));
+        for (const p of c.lineup) scaleCompetitorPrice(p, rand(0.8, 0.88));
         addLog(state, 'rival', `${c.name} 发起价格战：全系机型直降，正面刚 ${state.company.name}。`);
         report.notes.push(`${c.name} 发起价格战，同价位机型竞争加剧。`);
         pushNews(`${c.name} 发起价格战`, '对方全系直降，同价位机型竞争加剧，考虑跟进降价或强调差异点。');
@@ -742,7 +748,7 @@ function stepCompetitors(state, report) {
     // 4) 潮流跟随：蹭行业事件的东风（爆款事件已经抬过品牌，这里补机型卖点）
     if (state.events.some((e) => e.id === 'trend-fold') && !c.lineup.some((p) => p.foldable) && c.brand > 50 && chance(0.25)) {
       const p = c.lineup[0];
-      if (p) { p.foldable = true; p.price = Math.round(p.price * 1.25); addLog(state, 'rival', `${c.name} 跟进折叠屏形态，${p.name} 折叠版曝光。`); }
+      if (p) { p.foldable = true; scaleCompetitorPrice(p, 1.25); addLog(state, 'rival', `${c.name} 跟进折叠屏形态，${p.name} 折叠版曝光。`); }
     }
     // 5) 策略性挖人：强势对手挖角你的高技能员工（HR 人力 / 满意度 / 忠诚度是防御）
     if (c.brand > 50 && chance(clamp(0.045 + Math.min(0.05, Math.max(0, shareGrowth) * 2), 0, 0.09))) {
@@ -883,7 +889,7 @@ function stepEvents(state, report) {
         let n = 0;
         for (const c of state.competitors) {
           if (c.sub) continue;
-          for (const p of c.lineup) { p.price = Math.round(p.price * 0.92); n++; }
+          for (const p of c.lineup) { scaleCompetitorPrice(p, 0.92); n++; }
         }
         if (n > 0) inst.text += ' 竞品机型全线跟跌约 8%。';
       }

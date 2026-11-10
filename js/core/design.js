@@ -825,6 +825,43 @@ export function eraBaseline(year) {
   return v;
 }
 
+// ---------- 分品类综合评分 ----------
+// 手机看性能/影像/续航/设计；平板看屏幕/性能/续航/设计；手表看续航/设计/屏幕/性能。
+export const CAT_SCORE_WEIGHTS = {
+  phone: { perf: 0.25, camera: 0.20, battery: 0.20, design: 0.25, era: 0.10 },
+  tablet: { screen: 0.30, perf: 0.25, battery: 0.25, design: 0.20 },
+  watch: { battery: 0.35, design: 0.30, screen: 0.20, perf: 0.15 },
+};
+
+// 屏幕维度：清晰度为主，高刷/大屏/窄边框加成（相对该年代上限收敛）
+function screenDimScore(design) {
+  const panel = resolvePanel(design);
+  const hz = design.screen.hz || 60;
+  const res = clamp(panel.resLevel * 62, 0, 65);
+  const hzBonus = clamp((hz - 60) * 0.5, 0, 12);
+  const inchBonus = clamp((design.screen.inch - 3) * 3.2, 0, 16);
+  const bezelBonus = clamp(14 - design.screen.bezel * 2.2, 0, 14);
+  return clamp(res + hzBonus + inchBonus + bezelBonus, 0, 100);
+}
+
+// 品类综合分：返回 { total, weights, dims }
+export function categoryScore(design, year, opts = {}) {
+  const d = derive(design, year, opts);
+  const dev = deviceTypeOf(design);
+  const weights = CAT_SCORE_WEIGHTS[dev] || CAT_SCORE_WEIGHTS.phone;
+  const dims = {
+    perf: d.perf,
+    camera: dev === 'phone' ? d.camera : 0,
+    battery: d.battery,
+    screen: screenDimScore(design),
+    design: d.designScore,
+    era: d.eraFit,
+  };
+  let total = 0;
+  for (const [k, w] of Object.entries(weights)) total += (dims[k] || 0) * w;
+  return { total: clamp(total, 0, 100), weights, dims, deviceType: dev, derived: d };
+}
+
 // 与同代主流机的倍率：1.0 = 持平，1.5 = 明显更强
 export function eraRel(value, base) {
   // 基准几乎为 0 的维度（1980 年的摄像头）：有就是优势，没有就算持平
@@ -985,8 +1022,23 @@ export function validate(design, year, opts = {}) {
       }
     }
   }
-  if (design.screen.inch > 9) issues.push({ level: 'warn', text: '屏幕尺寸超过 9 英寸，便携性极差。' });
-  if (design.camera.count > 1 && year < 2016) issues.push({ level: 'warn', text: '多摄系统在当前年代成本过高、收益有限。' });
+  // 品类专属提示：阈值与话术按品类区分，避免手机规则误伤平板/手表
+  if (design.deviceType === 'tablet') {
+    if (design.screen.inch < 7) issues.push({ level: 'warn', text: `平板屏幕仅 ${design.screen.inch}″，低于 7″ 更像大号手机，影音与分屏体验受限。` });
+    if (b.thickness > 11) issues.push({ level: 'warn', text: `平板厚度 ${b.thickness}mm，握持与散热尚可但便携性一般。` });
+    if (d.weight > 900) issues.push({ level: 'warn', text: `整机 ${d.weight}g，长时间单手握持偏重。` });
+    if (!design.camera.lenses.length && CAMERAS.some((x) => (x.year || 0) <= year)) issues.push({ level: 'warn', text: '平板未配置后置摄像头，扫码与文档拍摄会受限。' });
+  } else if (design.deviceType === 'watch') {
+    if (design.screen.inch > 2.4) issues.push({ level: 'warn', text: `表盘 ${design.screen.inch}″ 偏大，手腕佩戴舒适度下降。` });
+    if (b.thickness > 14) issues.push({ level: 'warn', text: `表体厚度 ${b.thickness}mm，佩戴会明显顶手腕。` });
+    if (d.weight > 70) issues.push({ level: 'warn', text: `表体 ${d.weight}g 偏重，运动佩戴负担较大。` });
+    if ((design.watch?.crown || 'none') === 'none' && !design.watch?.button) {
+      issues.push({ level: 'warn', text: '没有表冠也没有侧键，系统交互只能依赖触屏。' });
+    }
+  } else {
+    if (design.screen.inch > 9) issues.push({ level: 'warn', text: '屏幕尺寸超过 9 英寸，便携性极差。' });
+    if (design.camera.count > 1 && year < 2016) issues.push({ level: 'warn', text: '多摄系统在当前年代成本过高、收益有限。' });
+  }
   if (d.thermal < 35) issues.push({ level: 'warn', text: `散热评分 ${d.thermal}，高负载下会明显降频。` });
   // 背部智窗：机身内 + 与摄像头模组避让
   if (design.backWindow?.on) {

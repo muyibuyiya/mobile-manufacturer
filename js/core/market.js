@@ -1,6 +1,6 @@
 // 市场分层：把每个市场拆成 7 类消费者人群，各自用混合偏好决定选择
 import { clamp } from './util.js';
-import { MARKET_MAP, SEGMENT_MAP, SEGMENTS, LINEUP_MAP, marketMix, eraFactor, expectedPrice, signatureOf } from '../data/world.js';
+import { MARKET_MAP, SEGMENT_MAP, SEGMENTS, LINEUP_MAP, marketMix, eraFactor, expectedPrice, signatureOf, phonePriceInMarket } from '../data/world.js';
 import { derive } from './design.js';
 import { staffPower } from './state.js';
 import { fReach, fDesign } from './org.js';
@@ -109,7 +109,7 @@ export function marketShare(state, marketId, opts = {}) {
     }
     return {
       ...r, sig, scores,
-      effPrice: (r.phone.price || 0) * (1 - (sig?.priceCut || 0)),
+      effPrice: phonePriceInMarket(r.phone, marketId) * (1 - (sig?.priceCut || 0)),
       val: 0, ratio: 0,
     };
   });

@@ -1,6 +1,6 @@
 ﻿import { createGame } from '../js/core/state.js';
 import { defaultDesign } from '../js/core/design.js';
-import { autoPriceModel, canAutoPrice, variantPriceMul, variantCost } from '../js/core/pricing.js';
+import { autoPriceModel, canAutoPrice, variantPriceMul, variantCost, priceCurve, priceForecast } from '../js/core/pricing.js';
 import { RAMS, STORAGES } from '../js/data/parts.js';
 import { TECHS } from '../js/data/tech.js';
 
@@ -34,5 +34,17 @@ design.variants[0].ram = bigRam.id;
 design.variants[0].stg = bigStg.id;
 autoPriceModel(s, m);
 check('高配版本价格高于标配', design.variants[0].price.cn > m.price.cn, `${design.variants[0].price.cn} > ${m.price.cn}`);
+// 价格—销量预测：5 档、价格递增、必有一个毛利最优；模拟不能污染当前定价
+m.price.cn = std;
+s.models.push(m);
+m.heat = 70; m.inventory = 5000;
+const curve = priceCurve(s, m, 'cn', 5, 0.3);
+check('预测返回 5 档', curve.length === 5, String(curve.length));
+check('预测价格递增', curve.every((r, i) => i === 0 || r.price > curve[i - 1].price), curve.map((r) => r.price).join(','));
+check('预测含毛利最优', curve.filter((r) => r.best).length === 1, curve.map((r) => r.best).join(','));
+check('预测不改变当前定价', m.price.cn === std, String(m.price.cn));
+check('预测销量随价格下降', curve[curve.length - 1].units <= curve[0].units, `${curve[0].units} → ${curve[curve.length - 1].units}`);
+const one = priceForecast(s, m, 'cn', std);
+check('单点预测与曲线中心一致', one && one.price === std, JSON.stringify(one && { price: one.price, units: one.units }));
 if (bad) process.exit(1);
 console.log('\nPRICING PASS');

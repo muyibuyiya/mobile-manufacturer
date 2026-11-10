@@ -113,6 +113,8 @@ async function main() {
   const exWatch = await ev(`(() => { const opts = [...document.querySelectorAll('[data-x]')].map(x => x.dataset.x); return { opts, n: opts.length, t: document.body.textContent.includes('屏下摄像头') }; })()`);
   check('手表附加功能按品类过滤', exWatch.n === 3 && !exWatch.opts.includes('x_udc') && !exWatch.opts.includes('x_fp'), JSON.stringify(exWatch));
   await pickCat('tablet');
+  const presetV = await ev(`(() => { const before = document.querySelectorAll('[data-variant-del]').length; document.querySelector('[data-variant-presets]')?.click(); return { before, after: document.querySelectorAll('[data-variant-del]').length }; })()`);
+  check('配置矩阵一键补齐常用组合', presetV.after > presetV.before && presetV.after <= 6, JSON.stringify(presetV));
   const pkg = await ev(`(() => { const s = document.querySelector('[data-k="packaging.material"]'); s.value = 'premium'; s.dispatchEvent(new Event('input', { bubbles: true })); s.dispatchEvent(new Event('change', { bubbles: true })); return s.value; })()`);
   await sleep(250);
   check('包装材质可切换', pkg === 'premium' && await ev(`/包装评分 [56]/.test(document.body.textContent)`), pkg);

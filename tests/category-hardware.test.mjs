@@ -1,6 +1,6 @@
 // 品类硬件过滤 / 外围配件不入图（P0/P1/P2）回归
 import { createGame } from '../js/core/state.js';
-import { defaultDesign, ensureDeviceExtras, allowedExtras, CAT_EXTRAS } from '../js/core/design.js';
+import { defaultDesign, ensureDeviceExtras, allowedExtras, CAT_EXTRAS, categoryScore } from '../js/core/design.js';
 import { TECHS } from '../js/data/tech.js';
 import { RAMS, STORAGES, BATTERIES, CHARGERS, EXTRAS } from '../js/data/parts.js';
 
@@ -40,6 +40,16 @@ const phone = defaultDesign(2024, techs);
 phone.parts.extras = ['x_udc', 'x_sat'];
 ensureDeviceExtras(phone);
 check('手机保留屏下摄像头/卫星通信', phone.parts.extras.includes('x_udc') && allowedExtras(phone) === null);
+
+// 分品类综合评分：权重不同、影像对手表/平板不计分
+const phoneScore = categoryScore(phone, 2024);
+const tabScore = categoryScore(tablet, 2024);
+const watchScore = categoryScore(watch, 2024);
+check('手机权重含影像/时代', !!phoneScore.weights.camera && !!phoneScore.weights.era, JSON.stringify(phoneScore.weights));
+check('平板权重无影像/时代', !tabScore.weights.camera && !tabScore.weights.era && tabScore.weights.screen === 0.3, JSON.stringify(tabScore.weights));
+check('手表续航权重最高', watchScore.weights.battery === 0.35 && !watchScore.weights.camera, JSON.stringify(watchScore.weights));
+check('平板/手表影像维度为 0', tabScore.dims.camera === 0 && watchScore.dims.camera === 0);
+check('综合分在 0~100', [phoneScore, tabScore, watchScore].every((x) => x.total >= 0 && x.total <= 100), [phoneScore, tabScore, watchScore].map((x) => Math.round(x.total)).join(','));
 
 // P2：档位过滤表与 UI 一致（手表低功耗、平板大电池/大存储/高功率）
 check('手表无 >5W 有线档', CHARGERS.wired.filter((x) => x.watt <= 5).length >= 1 && !CHARGERS.wired.some((x) => x.id === 'w120' && x.watt <= 5));
