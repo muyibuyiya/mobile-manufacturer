@@ -1,6 +1,7 @@
 ﻿import { createGame } from '../js/core/state.js';
 import { defaultDesign } from '../js/core/design.js';
-import { autoPriceModel, canAutoPrice } from '../js/core/pricing.js';
+import { autoPriceModel, canAutoPrice, variantPriceMul, variantCost } from '../js/core/pricing.js';
+import { RAMS, STORAGES } from '../js/data/parts.js';
 import { TECHS } from '../js/data/tech.js';
 
 let bad = 0;
@@ -21,5 +22,17 @@ autoPriceModel(s, m, 'penetration');
 check('渗透策略价格更低', m.price.cn < std, `${m.price.cn} < ${std}`);
 autoPriceModel(s, m, 'premium');
 check('溢价策略价格更高', m.price.cn > std, `${m.price.cn} > ${std}`);
+const same = { ram: design.parts.ram, stg: design.parts.storage };
+check('同配置版本系数为 1', variantPriceMul(m, same) === 1, String(variantPriceMul(m, same)));
+const bigRam = RAMS[RAMS.length - 1];
+const bigStg = STORAGES[STORAGES.length - 1];
+const up = { ram: bigRam.id, stg: bigStg.id };
+const upMul = variantPriceMul(m, up);
+check('高配版本系数 > 1 且有上限', upMul > 1 && upMul <= 2.2, String(upMul));
+check('高配版本成本更高', variantCost(s, m, up) >= variantCost(s, m, same), `${variantCost(s, m, up)} >= ${variantCost(s, m, same)}`);
+design.variants[0].ram = bigRam.id;
+design.variants[0].stg = bigStg.id;
+autoPriceModel(s, m);
+check('高配版本价格高于标配', design.variants[0].price.cn > m.price.cn, `${design.variants[0].price.cn} > ${m.price.cn}`);
 if (bad) process.exit(1);
 console.log('\nPRICING PASS');

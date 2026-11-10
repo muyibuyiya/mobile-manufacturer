@@ -4,7 +4,7 @@ import {
   startResearch, researchBudget, avgShare, bomUnit, assemblyUnit, ownFactoryCount,
   suggestTargets, techOffers, buyTech, poachFromRival,
 } from '../core/sim.js';
-import { autoPriceModel, variantCost } from '../core/pricing.js';
+import { autoPriceModel, variantCost, variantPriceMul } from '../core/pricing.js';
 import {
   saveGame, loadGame, saveSlots, deleteSave, staffPower, deptCost, generateEmployee,
   ensureLayout, autoSave, queueAutoSave, flushAutoSave,
@@ -119,6 +119,7 @@ function savePriceFolded() {
   try { localStorage.setItem('mm_price_folded', JSON.stringify([...priceFolded])); } catch (e) { /* 忽略 */ }
 }
 let priceUndo = null;
+const priceHistory = [];
 
 function competitorAvgPrice(state, marketId) {
   const mk = MARKET_MAP[marketId];
@@ -167,7 +168,13 @@ export function renderGame(root, state, opts = {}) {
     handleKey(e) {
       if (e.code === 'Space') { e.preventDefault(); setSpeed(speed === 0 ? 1 : 0); }
       if (['1', '2', '3', '4'].includes(e.key)) setSpeed([1, 2, 4, 8][Number(e.key) - 1]);
-      if (e.key === 'Escape' && designer) { designer.destroy(); designer = null; render(); }
+      if (e.key === 'Escape') {
+        // 优先关闭最上层弹窗（走它自己的关闭按钮，保留原有关闭语义）
+        const masks = document.querySelectorAll('.modal-mask');
+        const top = masks[masks.length - 1];
+        if (top) { top.querySelector('[data-close]')?.click(); return; }
+        if (designer) { designer.destroy(); designer = null; render(); }
+      }
     },
     tickOnce, app: null,
   };
@@ -1120,10 +1127,17 @@ export function renderGame(root, state, opts = {}) {
           const mk = MARKET_MAP[id];
           const old = m.price[id] || 0;
           const next = suggestedPrice(state, m, id);
-          return `<tr><td>${mk.name}</td><td class="num">¥${fmtNum(old)}</td><td class="num">→</td><td class="num">¥${fmtNum(next)}</td></tr>`;
+          const gb = (g) => g >= 1 ? `${Math.round(g * 10) / 10}G` : `${Math.round(g * 1024)}M`;
+          const variantRows = (m.design?.variants || []).map((v) => {
+            const r = RAMS.find((x) => x.id === v.ram), s = STORAGES.find((x) => x.id === v.stg);
+            const vOld = (v.price && (v.price[id] ?? v.price.cn)) || old;
+            const vNext = Math.round(next * variantPriceMul(m, v) / 10) * 10;
+            return `<tr class="vrow"><td class="tiny dim">└ ${gb(r?.gb || 0)}+${gb(s?.gb || 0)}</td><td class="num tiny dim">¥${fmtNum(vOld)}</td><td class="num tiny dim">→</td><td class="num tiny dim">¥${fmtNum(vNext)}</td></tr>`;
+          }).join('');
+          return `<tr><td>${mk.name}</td><td class="num">¥${fmtNum(old)}</td><td class="num">→</td><td class="num">¥${fmtNum(next)}</td></tr>${variantRows}`;
         }).join('');
         modalShell('一键定价', `将覆盖 ${m.markets.length} 个已进入市场，配置版本按容量溢价同步。`, `
-          <table class="tbl"><thead><tr><th>市场</th><th class="num">当前价</th><th></th><th class="num">标准建议价</th></tr></thead><tbody>${rows}</tbody></table>
+          <div style="max-height:52vh;overflow:auto"><table class="tbl"><thead><tr><th>市场 / 版本</th><th class="num">当前价</th><th></th><th class="num">标准建议价</th></tr></thead><tbody>${rows}</tbody></table></div>
           <div class="row" style="gap:8px;margin-top:14px;flex-wrap:wrap">
             <button class="btn primary" data-act="auto-price-confirm" data-model="${m.id}" data-strategy="standard">标准定价</button>
             <button class="btn" data-act="auto-price-confirm" data-model="${m.id}" data-strategy="penetration">渗透定价 ×0.92</button>
@@ -1157,26 +1171,45 @@ export function renderGame(root, state, opts = {}) {
         opts.onToast?.('已撤销本次一键定价', 'warn');
         render(); break;
       }
+      case 'undo-price-change': {
+        const idx = (() => { for (let i = priceHistory.length - 1; i >= 0; i--) if (priceHistory[i].modelId === ds.model) return i; return -1; })();
+        if (idx < 0) { opts.onToast?.('没有可撤销的改价', 'warn'); break; }
+        const h = priceHistory.splice(idx, 1)[0];
+        const m = state.models.find((x) => x.id === h.modelId);
+        if (!m) break;
+        if (h.kind === 'price') m.price[h.market] = h.old;
+        else {
+          const v = (m.design?.variants || [])[h.vi];
+          if (v) { v.price = v.price || {}; v.price[h.market] = h.old; }
+        }
+        queueAutoSave(state);
+        opts.onToast?.('已撤销上一步改价', 'warn');
+        render(); break;
+      }
       case 'batch-enter-preview': {
         const m = state.models.find((x) => x.id === ds.model);
         if (!m) break;
         const rest = MARKETS.filter((mk) => !m.markets.includes(mk.id));
         if (!rest.length) { opts.onToast?.('已进入全部市场', 'good'); break; }
         const cost = rest.length * 800000;
-        modalShell('批量进入市场', `共 ${rest.length} 个市场，铺设费用 ¥${fmtNum(cost)}。`, `
-          <div class="tiny dim" style="line-height:1.9">${rest.map((mk) => mk.name).join('、')}</div>
-          <div class="row" style="gap:8px;margin-top:14px">
-            <button class="btn primary" data-act="batch-enter-confirm" data-model="${m.id}" ${state.company.cash >= cost ? '' : 'disabled'}>确认进入（¥${fmtNum(cost)}）</button>
-            <button class="btn ghost" data-close>取消</button>
+        modalShell('批量进入市场', `勾选要进入的市场，单个市场铺设费 ¥80万。`, `
+          <div class="grid" style="grid-template-columns:1fr 1fr;gap:6px;max-height:46vh;overflow:auto">
+            ${rest.map((mk) => `<label class="opt on" style="display:flex;gap:6px;align-items:center;padding:7px 9px"><input type="checkbox" class="batch-market" value="${mk.id}" checked /><span>${mk.name}</span></label>`).join('')}
           </div>
-          ${state.company.cash < cost ? '<div class="tiny bad" style="margin-top:8px">现金不足，无法批量进入。</div>' : ''}`);
+          <div class="row" style="gap:8px;margin-top:14px">
+            <button class="btn primary" data-act="batch-enter-confirm" data-model="${m.id}">确认进入选中市场</button>
+            <button class="btn ghost" data-close>取消</button>
+            <span class="tiny dim">最多 ¥${fmtNum(cost)}（${rest.length} 个）</span>
+          </div>`);
         break;
       }
       case 'batch-enter-confirm': {
         const m = state.models.find((x) => x.id === ds.model);
         if (!m) break;
         if (!headOf(state, 'sales')) { opts.onToast?.('需要销售部负责人后才能批量进入市场', 'warn'); break; }
-        const rest = MARKETS.filter((mk) => !m.markets.includes(mk.id));
+        const ids = activeModal ? [...activeModal.mask.querySelectorAll('.batch-market:checked')].map((x) => x.value) : [];
+        if (!ids.length) { opts.onToast?.('请至少选择一个市场', 'warn'); break; }
+        const rest = MARKETS.filter((mk) => ids.includes(mk.id) && !m.markets.includes(mk.id));
         const cost = rest.length * 800000;
         if (state.company.cash < cost) { opts.onToast?.('现金不足', 'bad'); break; }
         state.company.cash -= cost;
@@ -1184,6 +1217,7 @@ export function renderGame(root, state, opts = {}) {
           m.markets.push(mk.id);
           if (!m.price[mk.id]) m.price[mk.id] = suggestedPrice(state, m, mk.id);
         }
+        queueAutoSave(state);
         closeModal();
         opts.onToast?.(`已进入 ${rest.length} 个市场`, 'good');
         render(); break;
@@ -1246,8 +1280,14 @@ export function renderGame(root, state, opts = {}) {
       const m = state.models.find((x) => x.id === el.dataset.model);
       const price = Math.max(1, Math.round(v));
       if (m) {
+        const old = m.price[el.dataset.market];
+        if (Number.isFinite(old) && old !== price) {
+          priceHistory.push({ kind: 'price', modelId: m.id, market: el.dataset.market, old });
+          if (priceHistory.length > 50) priceHistory.shift();
+        }
         m.price[el.dataset.market] = price;
         updatePriceRow(el, price, unitCost(state, m));
+        queueAutoSave(state);
       }
     }
     if (name === 'vprice') {
@@ -1256,8 +1296,14 @@ export function renderGame(root, state, opts = {}) {
       const price = Math.max(1, Math.round(v));
       if (vv) {
         vv.price = vv.price || {};
+        const old = vv.price[el.dataset.market];
+        if (Number.isFinite(old) && old !== price) {
+          priceHistory.push({ kind: 'vprice', modelId: m.id, market: el.dataset.market, vi: Number(el.dataset.vi), old });
+          if (priceHistory.length > 50) priceHistory.shift();
+        }
         vv.price[el.dataset.market] = price;
         updatePriceRow(el, price, variantCost(state, m, vv));
+        queueAutoSave(state);
       }
     }
     if (name === 'sandbox-cash') { state.company.cash = v; render(); }
@@ -2199,6 +2245,7 @@ export function renderGame(root, state, opts = {}) {
               <span class="spacer"></span>
               ${head ? `<span class="tiny dim">销售负责人 ${esc(head.name)}</span>` : '<button class="btn tiny warn" data-act="goto-head">去任命负责人 →</button>'}
               ${priceUndo?.modelId === m.id ? `<button class="btn small ghost" data-act="undo-auto-price" data-model="${m.id}">撤销定价</button>` : ''}
+              ${priceHistory.some((h) => h.modelId === m.id) ? `<button class="btn small ghost" data-act="undo-price-change" data-model="${m.id}">撤销改价</button>` : ''}
               ${m.markets.length < MARKETS.length ? `<button class="btn small ghost" data-act="batch-enter-preview" data-model="${m.id}">批量进入</button>` : ''}
               <button class="btn small primary" data-act="auto-price-all" data-model="${m.id}" ${head && m.markets.length ? '' : 'disabled'} title="${head ? '按建议价填充全部已进入市场' : '需要任命销售部负责人'}">一键定价</button>
             </div>

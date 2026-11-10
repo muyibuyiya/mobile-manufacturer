@@ -272,7 +272,13 @@ export function renderDesigner(container, state, model, hooks = {}) {
   if (savedLeftW >= 220 && savedLeftW <= 460) dzRoot.style.setProperty('--dz-left-w', savedLeftW + 'px');
   const savedAssess = localStorage.getItem(DZ_ASSESS_KEY);
   let assessCollapsed = savedAssess === '1' || (savedAssess == null && window.innerWidth < 1400);
-  const catSnapshots = {};
+  const catSnapKey = `mm_cat_snaps_${model.id || 'new'}`;
+  const catSnapshots = (() => {
+    try { return JSON.parse(localStorage.getItem(catSnapKey) || '{}'); } catch (e) { return {}; }
+  })();
+  function saveCatSnapshots() {
+    try { localStorage.setItem(catSnapKey, JSON.stringify(catSnapshots)); } catch (e) { /* 忽略 */ }
+  }
   const undoStack = [];
   const redoStack = [];
   let dirty = false;
@@ -396,7 +402,10 @@ export function renderDesigner(container, state, model, hooks = {}) {
     const batChoices = (category === 'watch'
       ? BATTERIES.filter((x) => x.mah <= 800)
       : category === 'tablet' ? BATTERIES.filter((x) => x.mah >= 5000) : BATTERIES);
-    const wiredChoices = (category === 'watch' ? CHARGERS.wired.filter((x) => x.watt <= 5) : CHARGERS.wired);
+    const wiredChoices = (category === 'watch' ? CHARGERS.wired.filter((x) => x.watt <= 5) : category === 'tablet' ? CHARGERS.wired.filter((x) => x.watt >= 10) : CHARGERS.wired);
+    const ramChoices = (category === 'watch' ? RAMS.filter((x) => x.gb <= 4) : category === 'tablet' ? RAMS.filter((x) => x.gb >= 4) : RAMS);
+    const storageChoices = (category === 'watch' ? STORAGES.filter((x) => x.gb <= 64) : category === 'tablet' ? STORAGES.filter((x) => x.gb >= 64) : STORAGES);
+    const protoChoices = (category === 'watch' ? CHARGERS.proto.filter((x) => x.id === 'p_std' || x.tech === 'nicd') : CHARGERS.proto);
     const bodyLMin = isWatch ? 30 : isTablet ? 120 : 70, bodyLMax = isTablet ? 360 : 200;
     const bodyWMin = isWatch ? 30 : isTablet ? 80 : 35, bodyWMax = isTablet ? 260 : 100;
     const ports = body.ports || {};
@@ -834,8 +843,8 @@ export function renderDesigner(container, state, model, hooks = {}) {
       })())) 
       + section('hw', '硬件配置', `
       ${selectRow('处理器', 'parts.cpu', cpuChoices.length ? cpuChoices : CPUS, (x) => `${x.name} · 性能 ${Math.round(x.perf)}`, 'tech', divs)}
-      ${selectRow('内存', 'parts.ram', RAMS, (x) => `${x.name}${x.gb >= 0.1 ? ` · ${x.gb}GB` : ''}`, 'tech', divs)}
-      ${selectRow('存储', 'parts.storage', STORAGES, (x) => x.name, 'tech', divs)}
+      ${selectRow('内存', 'parts.ram', ramChoices.length ? ramChoices : RAMS, (x) => `${x.name}${x.gb >= 0.1 ? ` · ${x.gb}GB` : ''}`, 'tech', divs)}
+      ${selectRow('存储', 'parts.storage', storageChoices.length ? storageChoices : STORAGES, (x) => x.name, 'tech', divs)}
       ${selectRow('电池', 'parts.battery', batChoices.length ? batChoices : BATTERIES, (x) => `${x.name} · ${x.mah}mAh`, 'tech', divs)}
       ${selectRow('操作系统', 'parts.os', SYSTEMS, (x) => `${x.name} · ${x.kind === 'open' ? '开源' : x.kind === 'third' ? '三方' : x.kind === 'own' ? '自研' : '内置'}`, 'tech', divs)}
       <div class="tiny dim" style="margin:8px 0 2px">存储配置（同一机型不同内存/存储，如 12+256 / 12+512 / 12+1T；库存共用，各自定价）</div>
@@ -853,7 +862,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
       </label>
       <label class="field"><span>快充协议</span>
         <select data-k="parts.charge.proto">
-          ${CHARGERS.proto.map((x) => {
+          ${protoChoices.map((x) => {
             const ok = unlocked.includes(x.tech) && x.year <= availYear;
             return `<option value="${x.id}" ${(d.parts.charge?.proto) === x.id ? 'selected' : ''} ${ok ? '' : 'disabled'}>${x.name}${ok ? '' : '（未解锁）'}</option>`;
           }).join('')}
@@ -2230,9 +2239,16 @@ export function renderDesigner(container, state, model, hooks = {}) {
     const t = d.tablet || {};
     if (isFront || isBack) {
       if (t.stylus) {
-        ctx.fillStyle = '#e8e8e8';
-        roundRect(ctx, x + W * 0.24, y - 1.1 * scale, W * 0.52, 0.9 * scale, 0.45 * scale);
+        // 只画手写笔磁吸凹槽，不画笔本体
+        ctx.fillStyle = 'rgba(12,17,24,.55)';
+        roundRect(ctx, x + W * 0.24, y + 0.35 * scale, W * 0.52, 0.55 * scale, 0.28 * scale);
         ctx.fill();
+        ctx.strokeStyle = 'rgba(255,255,255,.18)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(x + W * 0.26, y + 0.62 * scale);
+        ctx.lineTo(x + W * 0.74, y + 0.62 * scale);
+        ctx.stroke();
       }
       if (t.keyboard) {
         ctx.fillStyle = '#d8b25a';
@@ -2247,22 +2263,6 @@ export function renderDesigner(container, state, model, hooks = {}) {
         roundRect(ctx, x + W - 0.9 * scale, y + H * 0.16, 0.8 * scale, H * 0.32, 0.4 * scale);
         ctx.fill();
       }
-      if (isBack && t.stand) {
-        ctx.fillStyle = 'rgba(255,255,255,.06)';
-        roundRect(ctx, x + W * 0.25, y + H * 0.34, W * 0.5, H * 0.3, 1.2 * scale);
-        ctx.fill();
-        ctx.strokeStyle = 'rgba(255,255,255,.32)';
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(x + W * 0.3, y + H * 0.36);
-        ctx.lineTo(x + W * 0.7, y + H * 0.36);
-        ctx.stroke();
-      }
-    }
-    if (isSide && t.stand) {
-      ctx.fillStyle = 'rgba(40,50,62,.85)';
-      roundRect(ctx, x + W * 0.12, y + H * 0.38, W * 0.72, 1.1 * scale, 0.5 * scale);
-      ctx.fill();
     }
   }
 
@@ -2425,6 +2425,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
     // 手动轨道
     const orbit = { theta: Math.PI * 0.14, phi: Math.PI * 0.47, radius: 240, target: new THREE.Vector3(0, 0, 0) };
     let dragging = false, panning = false, lx = 0, ly = 0;
+    let renderDirty = true;
     const dom = renderer.domElement;
     dom.style.cursor = 'grab';
     dom.style.touchAction = 'none'; // 触摸设备：拖动只旋转视角，不带动页面
@@ -2454,11 +2455,13 @@ export function renderDesigner(container, state, model, hooks = {}) {
       }
       lx = e.clientX; ly = e.clientY;
       autoRotate = false;
+      renderDirty = true;
       container.querySelector('#btn-rotate')?.classList.remove('primary');
     });
     dom.addEventListener('wheel', (e) => {
       e.preventDefault();
       orbit.radius = clamp(orbit.radius * (1 + Math.sign(e.deltaY) * 0.08), 130, 760);
+      renderDirty = true;
     }, { passive: false });
 
     function resize() {
@@ -2466,6 +2469,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
       renderer.setSize(w, h, false);
       camera.aspect = w / Math.max(1, h);
       camera.updateProjectionMatrix();
+      renderDirty = true;
     }
     const ro = new ResizeObserver(resize);
     ro.observe(stageBody);
@@ -2489,15 +2493,19 @@ export function renderDesigner(container, state, model, hooks = {}) {
         }
       }
       applyExplode(ex, group);
+      const animating = autoRotate || camAnim || Math.abs(explodeTarget - explodeVal) > 0.001;
+      if (animating) renderDirty = true;
+      if (!renderDirty) return;
       const sph = new THREE.Spherical(orbit.radius, orbit.phi, orbit.theta);
       camera.position.setFromSpherical(sph).add(orbit.target);
       camera.lookAt(orbit.target);
       renderer.render(scene, camera);
       t++;
+      renderDirty = false;
     }
     loop();
 
-    three = { renderer, scene, camera, group, orbit, resize, destroy() {
+    three = { renderer, scene, camera, group, orbit, resize, markDirty() { renderDirty = true; }, destroy() {
       cancelAnimationFrame(raf); ro.disconnect(); renderer.dispose(); renderer.domElement.remove();
     } };
     container.__dz3d = three; // 测试/自动化句柄
@@ -2617,14 +2625,6 @@ export function renderDesigner(container, state, model, hooks = {}) {
     }
     if (dt === 'tablet') {
       const t = d.tablet || {};
-      if (t.stand) {
-        const standMat = new THREE.MeshStandardMaterial({ color: frameColor.clone().offsetHSL(0, 0, -0.03), metalness: 0.55, roughness: 0.4 });
-        const plate = new THREE.Mesh(new THREE.BoxGeometry(W * 0.5, L * 0.3, 0.7), standMat);
-        plate.userData.part = 'body';
-        plate.position.set(0, 0, -FACE - 1.2);
-        plate.rotation.x = 0.5;
-        g.add(plate);
-      }
       if (t.keyboard) {
         for (let i = -1; i <= 1; i++) {
           const pin = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.28, 0.5, 10), new THREE.MeshStandardMaterial({ color: 0xd8b25a, metalness: 0.95, roughness: 0.25 }));
@@ -2634,11 +2634,14 @@ export function renderDesigner(container, state, model, hooks = {}) {
         }
       }
       if (t.stylus) {
-        const pen = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, L * 0.55, 14), new THREE.MeshStandardMaterial({ color: 0xe8e8e8, metalness: 0.7, roughness: 0.25 }));
-        pen.userData.part = 'body';
-        pen.rotation.z = Math.PI / 2;
-        pen.position.set(0, L / 2 + 0.55, -FACE - 0.2);
-        g.add(pen);
+        // 手写笔磁吸凹槽（不画笔本体）
+        const groove = new THREE.Mesh(
+          new THREE.BoxGeometry(W * 0.5, 0.5, 0.22),
+          new THREE.MeshStandardMaterial({ color: 0x1b232d, metalness: 0.4, roughness: 0.6 })
+        );
+        groove.userData.part = 'body';
+        groove.position.set(0, L / 2 - 0.35, -FACE - 0.06);
+        g.add(groove);
       }
       if (t.cellular) {
         const strip = new THREE.Mesh(new THREE.BoxGeometry(0.8, L * 0.32, 0.25), new THREE.MeshStandardMaterial({ color: 0x2a3139, metalness: 0.1, roughness: 0.7 }));
@@ -2651,6 +2654,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
   function buildPhone() {
     if (!three) return;
     const g = three.group;
+    three.markDirty?.();
     while (g.children.length) {
       const c = g.children.pop();
       c.geometry?.dispose();
@@ -4119,6 +4123,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
       pushUndo(true);
       // 切换前保存当前品类快照；切回时原样恢复，避免重置用户已调好的设计
       try { catSnapshots[cur] = JSON.parse(JSON.stringify(model.design)); } catch (err) { /* 忽略 */ }
+      saveCatSnapshots();
       if (catSnapshots[cat]) {
         const snap = JSON.parse(JSON.stringify(catSnapshots[cat]));
         for (const k of Object.keys(model.design)) delete model.design[k];
@@ -4149,6 +4154,18 @@ export function renderDesigner(container, state, model, hooks = {}) {
       if (cat === 'watch') {
         const pick = CPUS.filter((x) => x.perf <= 55 && x.year <= year).slice(-1)[0];
         if (pick) model.design.parts.cpu = pick.id;
+        const ramOk = RAMS.find((x) => x.id === model.design.parts.ram && x.gb <= 4);
+        if (!ramOk) {
+          const rp = RAMS.filter((x) => x.gb <= 4 && x.year <= year).slice(-1)[0];
+          if (rp) model.design.parts.ram = rp.id;
+        }
+        const stOk = STORAGES.find((x) => x.id === model.design.parts.storage && x.gb <= 64);
+        if (!stOk) {
+          const sp = STORAGES.filter((x) => x.gb <= 64 && x.year <= year).slice(-1)[0];
+          if (sp) model.design.parts.storage = sp.id;
+        }
+        const wiredOk = CHARGERS.wired.find((x) => x.id === model.design.parts.charge?.wired && x.watt <= 5);
+        if (!wiredOk) model.design.parts.charge = { ...(model.design.parts.charge || {}), wired: 'w5', proto: 'p_std' };
         model.design.parts.battery = 'bw1';
       }
       renderControls(); renderAssessment();

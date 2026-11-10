@@ -9,6 +9,7 @@ const ICON_THEMES = {
   warm: ['#e0533d', '#f2b134', '#e8548a', '#f08a3c', '#d94f5c', '#f5a623'],
 };
 function iconColorAt(i, active) {
+  if (active?.iconOverrides && active.iconOverrides[i]) return active.iconOverrides[i];
   const theme = active?.iconTheme || 'cycle';
   if (theme === 'mono') return active.iconColor || '#3a7bd5';
   const pal = ICON_THEMES[theme] || ICON_COLORS;
@@ -43,6 +44,7 @@ function normalizeDesign(d) {
   if (d.iconTheme === undefined) d.iconTheme = 'cycle';
   if (d.iconColor === undefined) d.iconColor = '#3a7bd5';
   if (d.selectedIcon === undefined) d.selectedIcon = -1;
+  if (!d.iconOverrides || typeof d.iconOverrides !== 'object') d.iconOverrides = {};
   if (d.homePages === undefined) d.homePages = 1;
   if (d.wallpaperDim === undefined) d.wallpaperDim = 0;
   if (d.wallpaperBlur === undefined) d.wallpaperBlur = 0;
@@ -163,7 +165,7 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
       carrier: '5G', showTime: true, showBattery: true, showSignal: true,
       navStyle: 'gesture', navDir: 'ltr', gestureW: 28, gestureH: 2.4, batteryDY: 0.9,
       dockCount: 4, cols: 4, rows: 5,
-      iconScale: 1, iconRadius: 22, iconTheme: 'cycle', iconColor: '#3a7bd5', selectedIcon: -1, homePages: 1, wallpaperDim: 0, wallpaperBlur: 0,
+      iconScale: 1, iconRadius: 22, iconTheme: 'cycle', iconColor: '#3a7bd5', selectedIcon: -1, iconOverrides: {}, homePages: 1, wallpaperDim: 0, wallpaperBlur: 0,
       lockNotifCount: 1, lockNotifStyle: 'card',
       canvasW: 1080, canvasH: 2340, lockAspect: true,
       lockWallpaper: '', lockWallColor: '#141c33', lockShowTime: true, lockShowDate: true, lockShowNotif: true,
@@ -372,6 +374,11 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
         ${(active.iconTheme || 'cycle') === 'mono' ? `<input type="color" data-sd="iconColor" value="${active.iconColor || '#3a7bd5'}" style="width:32px;height:26px;padding:1px" />` : ''}
       </div>
       <div class="tiny dim" data-sd="selected-label" style="margin-bottom:6px">${active.selectedIcon >= 0 ? `已选中图标 #${active.selectedIcon + 1}（可继续调主题/圆角）` : '点击画布上的图标可选中'}</div>
+      ${active.selectedIcon >= 0 ? `<div class="row" style="gap:6px;align-items:center;margin-bottom:6px">
+        <span class="tiny dim">该图标颜色</span>
+        <input type="color" data-sd="iconSelectedColor" value="${active.iconOverrides?.[active.selectedIcon] || active.iconColor || '#3a7bd5'}" style="width:36px;height:26px;padding:1px" />
+        <button class="btn tiny ghost" data-sd="iconColorClear">恢复主题</button>
+      </div>` : ''}
       <div class="row" style="gap:5px;align-items:center;margin-bottom:6px">
         <span class="tiny dim">桌面页数</span>
         ${[1, 2, 3].map((n) => `<button class="btn tiny ${(active.homePages || 1) === n ? 'primary' : ''}" data-sd="homePages" data-v="${n}">${n}</button>`).join('')}
@@ -533,7 +540,11 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
     else if (k === 'lock-import') { controlsEl.querySelector('[data-sd=lock-file]').click(); return; }
     else if (k === 'clear-wp') { active.wallpaper = ''; markDirty(); }
     else if (k === 'lock-clear') { active.lockWallpaper = ''; markDirty(); }
-    else if (k === 'tab') {
+    else if (k === 'iconColorClear') {
+      if (active.selectedIcon >= 0 && active.iconOverrides) delete active.iconOverrides[active.selectedIcon];
+      markDirty(); renderControls(); draw(); return;
+    }
+    if (k === 'tab') {
       sdTab = act.dataset.v;
       controlsEl.querySelectorAll('[data-sdt]').forEach((el) => el.classList.toggle('on', el.dataset.sdt === sdTab));
       controlsEl.querySelectorAll('[data-sd="tab"]').forEach((el) => el.classList.toggle('primary', el.dataset.v === sdTab));
@@ -609,6 +620,12 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
     else if (k === 'iconScale') active.iconScale = Number(e.target.value);
     else if (k === 'iconRadius') active.iconRadius = Number(e.target.value);
     else if (k === 'iconColor') active.iconColor = e.target.value;
+    else if (k === 'iconSelectedColor') {
+      if (active.selectedIcon >= 0) {
+        active.iconOverrides = active.iconOverrides || {};
+        active.iconOverrides[active.selectedIcon] = e.target.value;
+      }
+    }
     else if (k === 'wallpaperDim') active.wallpaperDim = Number(e.target.value);
     else if (k === 'wallpaperBlur') active.wallpaperBlur = Number(e.target.value);
     else if (k === 'gestureW') active.gestureW = Number(e.target.value);
