@@ -219,6 +219,23 @@ div.field > span:first-child { display: block; font-size: var(--fs-sm); color: v
   mask-image: radial-gradient(circle at 50% 40%, #000, transparent 78%);
 }
 .menu-inner { position: relative; z-index: 1; margin: auto; width: min(1040px, 92vw); padding: 40px 0; }
+/* 长表单菜单（开局设置）：内容高于视口时可整页滚动，平板横屏不再被裁切 */
+.menu-screen.scrollable {
+  overflow: hidden auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+.menu-screen.scrollable .menu-inner { margin: 0 auto; padding: 24px 0 28px; }
+@supports (justify-content: safe center) {
+  .menu-screen.scrollable { justify-content: safe center; }
+}
+/* 矮视口（平板横屏 / 小窗）压缩间距，让设置页尽量一屏放下 */
+@media (max-height: 820px) {
+  .menu-screen.scrollable .menu-inner { padding: 14px 0 16px; }
+  .menu-screen.scrollable .form-grid { gap: 6px 12px; }
+  .menu-screen.scrollable .field { margin-bottom: 6px; }
+  .menu-screen.scrollable .card { padding: 12px 14px; }
+}
 .logo-mark {
   width: 54px; height: 54px; border-radius: 14px; overflow: hidden;
   box-shadow: 0 8px 24px rgba(74,163,255,.35);

@@ -110,7 +110,7 @@ const unlocked2010 = TECHS.filter((t) => t.year <= 2010).map((t) => t.id);
 const techIssues = eraAvailability(d2020, 2020, unlocked2010);
 check('硬锁拦截未解锁科技', techIssues.length > 0, techIssues.slice(0, 2).map((i) => i.text).join(' / '));
 
-const sandboxIssues = validate(futureDesign, 2020, { ignoreEra: true, unlocked: TECHS.map((t) => t.id) });
+const sandboxIssues = validate(farDesign, 2020, { ignoreEra: true, unlocked: TECHS.map((t) => t.id) });
 check('ignoreEra 沙盒跳过年代硬锁', sandboxIssues.issues.every((i) => !i.text.includes('年才可用')));
 
 console.log(`\n${bad ? `FAILED: ${bad} 项` : 'ALL PASS'}`);

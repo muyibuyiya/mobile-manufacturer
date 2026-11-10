@@ -51,7 +51,7 @@ async function main() {
   check('触控按钮命中区 ≥32px', await ev(`(() => { const b = document.querySelector('#dz-panel-toggle'); const r = b.getBoundingClientRect(); return r.height >= 32; })()`), await ev(`document.querySelector('#dz-panel-toggle')?.getBoundingClientRect().height`));
   check('无运行时报错', errors.length === 0, errors.slice(0, 2).join(' | '));
 
-  console.log(`\n${bad ? 0 : 1} suite, ${bad} failed`);
+  console.log(`\n1 suite, ${bad} failed`);
   ws.close();
   process.exit(bad ? 1 : 0);
 }

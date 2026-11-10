@@ -2,7 +2,7 @@
 
 把《手机开发商设计方案》（GDD）里的核心系统做成一个**能真正玩的浏览器原型**：从年代科技树起步，亲手设计手机（2D 六视图 + 3D 模型同源联动），排产、定价、进入全球 12 个市场，和**十六家**按史实入场、衰退、退出的 AI 竞争对手抢份额。
 
-纯前端，无构建步骤，原生 ES Module + three.js（已本地化到 `vendor/`）。当前版本 **1.28.0**。
+纯前端，无构建步骤，原生 ES Module + three.js（已本地化到 `vendor/`）。当前版本 **1.28.1**。
 
 ## 运行
 
@@ -151,6 +151,8 @@ npm run test:r34        # 历史降采样、存档防抖、竞品招牌、收购
 npm run test:layout     # 园区网格/家具碰撞/寻路（30 用例）
 npm run test:tech       # 科技图结构：无环/无悬空前置/年代单调/树形度/无孤立节点
 npm run test:lead       # 超前研发阻力曲线 / 试制费 / 部门软门槛 / 工程样品 / 并购技术
+npm run test:fin        # 财务报表：流动/非流动资产、现金流快照、工艺路线
+npm run test:equity     # 股权投资：持股上限、折扣阶梯、锁定期、分红、增发、政府基金
 
 # 浏览器回归（前置：npm start 起 8124 + 无头 Chrome 起 CDP 9222）
 npm run test:devices     # 品类切换/硬件过滤/快照/撤销/分品类评分/二级折叠/TOC 拖动
@@ -158,6 +160,7 @@ npm run test:screendesign# 屏幕设计保存/锁屏/导航/Dock/图标/方案�
 npm run test:p1          # 门店/活动/发布会 UI + 弹窗可访问性 + 价格预测
 npm run test:p2          # 主题商店评分/切换/预览
 npm run test:landscape   # 844×390 横屏：溢出/顶栏/画布/抽屉/命中区
+npm run test:setup       # 开局设置页：平板横屏不被裁切、矮视口可滚动、竖屏居中
 npm run test:visual      # 2D 六视图 + 3D 正视像素差（基线 tests/baselines）
 npm run test:r33:ui      # 员工档案/竞品财报/谈判/子品牌发品/发布会 mini-game
 npm run test:r34:ui      # 历史趋势/竞品招牌/状态筛选/存档占用/推进时 DOM 复用

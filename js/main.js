@@ -353,7 +353,7 @@ function paintModal(current, onDone) {
 function config(mode) {
   const isSandbox = mode === 'sandbox';
   root.innerHTML = `
-    <div class="menu-screen">
+    <div class="menu-screen scrollable">
       <div class="menu-inner" style="width:min(680px,92vw)">
         <div class="row" style="margin-bottom:18px;gap:12px">
           <button class="btn small" id="back">← 返回</button>
@@ -376,11 +376,12 @@ function config(mode) {
                 <button class="btn small" id="btn-rand-name-en" title="随机英文名">🎲 随机</button>
               </div>
             </div>
-            <label class="field">
+            <label class="field" style="grid-column: span 2">
               <span>总部所在地</span>
               <select id="f-country">
-                ${COUNTRIES.map((c) => `<option value="${c.id}">${c.name} · ${c.desc}</option>`).join('')}
+                ${COUNTRIES.map((c) => `<option value="${c.id}">${c.name}</option>`).join('')}
               </select>
+              <span class="tiny dim" id="country-desc" style="display:block;margin-top:4px"></span>
             </label>
             <label class="field">
               <span>开局年代</span>
@@ -391,9 +392,9 @@ function config(mode) {
             <label class="field">
               <span>难度</span>
               <select id="f-diff">
-                <option value="easy">轻松 — 资金宽松，容错高</option>
+                <option value="easy">轻松 — 资金宽松</option>
                 <option value="normal" selected>标准 — 真实压力</option>
-                <option value="hard">硬核 — 供应链与现金双重挤压</option>
+                <option value="hard">硬核 — 双重挤压</option>
               </select>
             </label>
             <label class="field" style="grid-column: span 2">
@@ -406,20 +407,21 @@ function config(mode) {
             <label class="field">
               <span>初始资金（元，0 = 不限）</span>
               <input type="number" id="f-cash" value="500000000" step="1000000" />
+              <span class="tiny dim" id="cash-hint" style="display:block;margin-top:4px"></span>
             </label>
-        ${isSandbox ? `<div class="field"><span>沙盒加速</span>
-          <div class="row" style="gap:14px;flex-wrap:wrap">
-            <label style="display:inline-flex;gap:5px;align-items:center;cursor:pointer"><input type="checkbox" id="sb-instant-r" style="width:auto" /> 研究瞬间完成</label>
-            <label style="display:inline-flex;gap:5px;align-items:center;cursor:pointer"><input type="checkbox" id="sb-instant-b" style="width:auto" /> 建设瞬间完成</label>
-          </div>
-        </div>` : ''}
             <label class="field">
               <span>科技解锁</span>
               <select id="f-tech">
                 <option value="no">仅该年代技术</option>
                 <option value="yes">全部科技解锁</option>
               </select>
-            </label>` : `
+            </label>
+            <div class="field" style="grid-column: span 2"><span>沙盒加速</span>
+              <div class="row" style="gap:14px;flex-wrap:wrap">
+                <label style="display:inline-flex;gap:5px;align-items:center;cursor:pointer"><input type="checkbox" id="sb-instant-r" style="width:auto" /> 研究瞬间完成</label>
+                <label style="display:inline-flex;gap:5px;align-items:center;cursor:pointer"><input type="checkbox" id="sb-instant-b" style="width:auto" /> 建设瞬间完成</label>
+              </div>
+            </div>` : `
             <div class="field" style="grid-column: span 2">
               <span class="tiny muted" id="era-desc"></span>
             </div>`}
@@ -527,6 +529,21 @@ function config(mode) {
     sfx('click');
   };
   refreshPresets(); refreshPreview();
+  const countrySel = document.getElementById('f-country');
+  const updCountry = () => {
+    const c = COUNTRIES.find((x) => x.id === countrySel.value);
+    document.getElementById('country-desc').textContent = c ? c.desc : '';
+  };
+  countrySel.onchange = updCountry; updCountry();
+  const cashEl = document.getElementById('f-cash');
+  if (cashEl) {
+    const updCash = () => {
+      const v = Number(cashEl.value) || 0;
+      document.getElementById('cash-hint').textContent = v <= 0 ? '0 = 不限制资金（默认 50 亿元）'
+        : `≈ ${(v / 1e8).toFixed(2)} 亿元`;
+    };
+    cashEl.oninput = updCash; updCash();
+  }
   const yearSel = document.getElementById('f-year');
   if (!isSandbox) {
     const upd = () => {
