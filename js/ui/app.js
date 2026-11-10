@@ -323,20 +323,24 @@ export function renderGame(root, state, opts = {}) {
       : `<i style="background:${c.logoColor}"></i>`;
     topbar.innerHTML = `
       <div class="brand">${logoMark}${esc(c.name)}${c.nameEn ? `<span class="tiny dim" style="margin-left:6px;font-weight:400">${esc(c.nameEn)}</span>` : ''}</div>
-      <div class="stat-inline"><span class="k">日期</span><span class="v">${fmtDate(state.date)}</span></div>
-      <div class="stat-inline"><span class="k">现金</span><span class="v ${c.cash < 0 ? 'bad' : ''}">${fmtMoney(c.cash)}</span></div>
-      <div class="stat-inline"><span class="k">份额</span><span class="v">${(share * 100).toFixed(2)}%</span></div>
-      <div class="stat-inline"><span class="k">品牌</span><span class="v">${c.brand.toFixed(0)}</span></div>
-      ${rep ? `<div class="stat-inline"><span class="k">上月净利</span><span class="v ${rep.net >= 0 ? 'good' : 'bad'}">${fmtMoney(rep.net)}</span></div>` : ''}
-      <div class="spacer"></div>
-      <div class="speed-group">
-        <button data-act="speed" data-v="0" class="${speed === 0 ? 'on' : ''}">❚❚</button>
-        <button data-act="speed" data-v="1" class="${speed === 1 ? 'on' : ''}">1×</button>
-        <button data-act="speed" data-v="2" class="${speed === 2 ? 'on' : ''}">2×</button>
-        <button data-act="speed" data-v="4" class="${speed === 4 ? 'on' : ''}">4×</button>
-        <button data-act="speed" data-v="8" class="${speed === 8 ? 'on' : ''}">8×</button>
+      <div class="tb-group tb-fin">
+        <div class="stat-inline"><span class="k">现金</span><span class="v ${c.cash < 0 ? 'bad' : ''}">${fmtMoney(c.cash)}</span></div>
+        <div class="stat-inline tb-opt"><span class="k">份额</span><span class="v">${(share * 100).toFixed(2)}%</span></div>
+        <div class="stat-inline tb-opt"><span class="k">品牌</span><span class="v">${c.brand.toFixed(0)}</span></div>
+        ${rep ? `<div class="stat-inline tb-opt"><span class="k">上月净利</span><span class="v ${rep.net >= 0 ? 'good' : 'bad'}">${fmtMoney(rep.net)}</span></div>` : ''}
       </div>
-      <button class="btn small" data-act="advance">下个月 ▸</button>
+      <div class="spacer"></div>
+      <div class="tb-group tb-time">
+        <div class="stat-inline"><span class="k">日期</span><span class="v">${fmtDate(state.date)}</span></div>
+        <div class="speed-group">
+          <button data-act="speed" data-v="0" class="${speed === 0 ? 'on' : ''}">❚❚</button>
+          <button data-act="speed" data-v="1" class="${speed === 1 ? 'on' : ''}">1×</button>
+          <button data-act="speed" data-v="2" class="${speed === 2 ? 'on' : ''}">2×</button>
+          <button data-act="speed" data-v="4" class="${speed === 4 ? 'on' : ''}">4×</button>
+          <button data-act="speed" data-v="8" class="${speed === 8 ? 'on' : ''}">8×</button>
+        </div>
+        <button class="btn small" data-act="advance">下个月 ▸</button>
+      </div>
       <button class="btn small ghost" data-act="open-news" title="通知与新闻">🔔${unreadNews ? ` <b style="color:#f56b6b">${unreadNews}</b>` : ''}</button>
       <button class="btn small ghost" data-act="open-gamemenu" title="菜单">☰</button>`;
   }

@@ -262,7 +262,8 @@ export function renderDesigner(container, state, model, hooks = {}) {
   const DZ_ASSESS_KEY = 'dz_assess_collapsed';
   const savedLeftW = Number(localStorage.getItem(DZ_LEFT_KEY));
   if (savedLeftW >= 220 && savedLeftW <= 460) dzRoot.style.setProperty('--dz-left-w', savedLeftW + 'px');
-  let assessCollapsed = localStorage.getItem(DZ_ASSESS_KEY) === '1';
+  const savedAssess = localStorage.getItem(DZ_ASSESS_KEY);
+  let assessCollapsed = savedAssess === '1' || (savedAssess == null && window.innerWidth < 1400);
   const catSnapshots = {};
   const undoStack = [];
   const redoStack = [];
@@ -324,6 +325,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
     assessCollapsed = !assessCollapsed;
     try { localStorage.setItem(DZ_ASSESS_KEY, assessCollapsed ? '1' : '0'); } catch (e) { /* 忽略 */ }
     applyAssessCollapsed();
+    renderAssessment();
     if (!assessCollapsed && viewMode === '3d') setTimeout(() => buildPhone(), 30);
   });
   // 左栏宽度拖拽（记忆到 localStorage，范围 220–460px）
@@ -1144,14 +1146,21 @@ export function renderDesigner(container, state, model, hooks = {}) {
     const d = v.derived;
     const cost = bomCost(model.design, year);
     const price = suggestedPrice(state, { design: model.design }, 'cn');
+    const peers = (state.models || []).filter((m) => m.id !== model.id && m.status !== 'draft' && m.design?.deviceType === model.design.deviceType);
+    const peerScores = peers.map((m) => { try { return validate(m.design, year, { unlocked }).derived.designScore; } catch (e) { return null; } }).filter((x) => x != null);
+    const peerAvg = peerScores.length ? Math.round(peerScores.reduce((a, b) => a + b, 0) / peerScores.length) : null;
+    const gap = peerAvg == null ? null : Math.round(d.designScore - peerAvg);
+    const errors = v.issues.filter((i) => i.level === 'error');
+    const warns = v.issues.filter((i) => i.level !== 'error');
     return `
       <div class="card-title" style="margin-bottom:10px">设计评估</div>
       <div class="score-ring"><div class="ring ${d.designScore > 70 ? 'good' : d.designScore > 45 ? '' : 'warn'}" style="--v:${d.designScore};width:52px;height:52px"><span>${Math.round(d.designScore)}</span></div>
-        <div><div style="font-weight:600">外观设计</div><div class="tiny dim">时代契合度 ${Math.round(d.eraFit)} · 屏占比 ${d.screenRatio}%</div></div>
+        <div><div style="font-weight:600">外观设计</div><div class="tiny dim">时代契合度 ${Math.round(d.eraFit)} · 屏占比 ${d.screenRatio}%</div>
+          ${peerAvg == null ? '' : `<div class="tiny ${gap >= 0 ? 'good' : 'warn'}">同类均值 ${peerAvg} · ${gap >= 0 ? '+' : ''}${gap}</div>`}</div>
       </div>
       <div class="grid" style="grid-template-columns:1fr 1fr;gap:8px;margin:10px 0">
-        ${[['性能', d.perf], ['影像', d.camera], ['续航', d.battery], ['散热', d.thermal]].map(([k, val]) => `
-          <div style="background:#121821;border-radius:8px;padding:8px">
+        ${[['性能', d.perf, 'hw'], ['影像', d.camera, 'camera'], ['续航', d.battery, 'hw'], ['散热', d.thermal, 'hw']].map(([k, val, jump]) => `
+          <div data-jump="${jump}" title="点击定位" style="background:#121821;border-radius:8px;padding:8px;cursor:pointer">
             <div class="between tiny"><span class="dim">${k}</span><b class="mono">${Math.round(val)}</b></div>
             <div class="bar" style="margin-top:5px"><i style="width:${val}%;background:${val > 65 ? 'var(--good)' : val > 40 ? 'var(--accent)' : 'var(--warn)'}"></i></div>
           </div>`).join('')}
@@ -1187,8 +1196,9 @@ export function renderDesigner(container, state, model, hooks = {}) {
       <div class="tiny dim">电池、摄像头模组、主板与散热都要塞进这个体积里。</div>
 
       <div class="section-label">装配检查</div>
-      ${v.issues.length ? v.issues.map((i) => `<div class="issue ${i.level}" data-issue-target="${issueTarget(i.text)}" title="点击定位到对应选项">${i.level === 'error' ? '✕' : '!'} ${esc(i.text)}</div>`).join('')
-        : '<div class="issue" style="background:rgba(55,201,165,.08);color:var(--good)">✓ 所有检查通过，可以量产</div>'}
+      ${errors.length ? `<div class="tiny bad" style="margin-bottom:4px">阻断问题</div>${errors.map((i) => `<div class="issue error" data-issue-target="${issueTarget(i.text)}" title="点击定位到对应选项">✕ ${esc(i.text)}</div>`).join('')}` : ''}
+      ${warns.length ? `<div class="tiny warn" style="margin:6px 0 4px">警告</div>${warns.map((i) => `<div class="issue warn" data-issue-target="${issueTarget(i.text)}" title="点击定位到对应选项">! ${esc(i.text)}</div>`).join('')}` : ''}
+      ${v.issues.length ? '' : '<div class="issue" style="background:rgba(55,201,165,.08);color:var(--good)">✓ 所有检查通过，可以量产</div>'}
 
       <div class="section-label">尺寸摘要</div>
       <div class="tiny dim" style="line-height:1.9">
@@ -2147,11 +2157,99 @@ export function renderDesigner(container, state, model, hooks = {}) {
       }
     }
 
+    drawDeviceHardware2D(ctx, x, y, W, H, view, d, scale);
+
     // 尺寸标注
     ctx.fillStyle = 'rgba(139,151,168,.55)';
     ctx.font = '10px monospace';
     ctx.textAlign = 'center';
     if (!isSide) ctx.fillText(`${b.width} mm`, x + W / 2, y + H + 12);
+  }
+
+  // 平板/手表专属硬件（2D 六视图）：表冠、侧键、表圈、支架、手写笔、键盘触点
+  function drawDeviceHardware2D(ctx, x, y, W, H, view, d, scale) {
+    const b = d.body;
+    const dt = d.deviceType || 'phone';
+    if (dt !== 'watch' && dt !== 'tablet') return;
+    const frame = partColor('frame');
+    const back = partColor('back');
+    const isFront = view.id === 'front';
+    const isBack = view.id === 'back';
+    const isSide = view.id === 'left' || view.id === 'right';
+    if (dt === 'watch') {
+      const w = d.watch || {};
+      const left = w.crown === 'left';
+      const sideX = left ? x : x + W;
+      const out = 1.4 * scale;
+      if (isFront || isSide) {
+        if (w.crown !== 'none') {
+          const cy = y + H * 0.32;
+          ctx.fillStyle = frame;
+          roundRect(ctx, left ? sideX - out : sideX, cy, out, 3.2 * scale, 0.6 * scale);
+          ctx.fill();
+          ctx.strokeStyle = 'rgba(0,0,0,.35)';
+          ctx.lineWidth = 1;
+          for (let i = -1; i <= 1; i++) {
+            ctx.beginPath();
+            ctx.moveTo((left ? sideX - out : sideX) + (left ? out * 0.4 : out * 0.6), cy + 3.2 * scale / 2 + i * scale * 0.7);
+            ctx.lineTo((left ? sideX - out : sideX) + (left ? out * 0.9 : out * 0.1), cy + 3.2 * scale / 2 + i * scale * 0.7);
+            ctx.stroke();
+          }
+        }
+        if (w.button) {
+          ctx.fillStyle = 'rgba(20,26,34,.9)';
+          roundRect(ctx, left ? sideX - out * 0.6 : sideX, y + H * 0.46, out * 0.6, 2.4 * scale, 0.5 * scale);
+          ctx.fill();
+        }
+      }
+      if (isFront) {
+        // 表圈：金属/陶瓷/玻璃三种描边
+        const bez = w.bezel || 'metal';
+        ctx.strokeStyle = bez === 'ceramic' ? '#f3f0ea' : bez === 'glass' ? 'rgba(159,216,255,.85)' : frame;
+        ctx.lineWidth = Math.max(1, 0.55 * scale);
+        ctx.beginPath();
+        ctx.arc(x + W / 2, y + H / 2, Math.min(W, H) / 2 - 0.9 * scale, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      return;
+    }
+    const t = d.tablet || {};
+    if (isFront || isBack) {
+      if (t.stylus) {
+        ctx.fillStyle = '#e8e8e8';
+        roundRect(ctx, x + W * 0.24, y - 1.1 * scale, W * 0.52, 0.9 * scale, 0.45 * scale);
+        ctx.fill();
+      }
+      if (t.keyboard) {
+        ctx.fillStyle = '#d8b25a';
+        for (let i = -1; i <= 1; i++) {
+          ctx.beginPath();
+          ctx.arc(x + W / 2 + i * W * 0.06, y + H - 0.7 * scale, 0.28 * scale, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+      if (t.cellular) {
+        ctx.fillStyle = 'rgba(42,49,57,.9)';
+        roundRect(ctx, x + W - 0.9 * scale, y + H * 0.16, 0.8 * scale, H * 0.32, 0.4 * scale);
+        ctx.fill();
+      }
+      if (isBack && t.stand) {
+        ctx.fillStyle = 'rgba(255,255,255,.06)';
+        roundRect(ctx, x + W * 0.25, y + H * 0.34, W * 0.5, H * 0.3, 1.2 * scale);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(255,255,255,.32)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(x + W * 0.3, y + H * 0.36);
+        ctx.lineTo(x + W * 0.7, y + H * 0.36);
+        ctx.stroke();
+      }
+    }
+    if (isSide && t.stand) {
+      ctx.fillStyle = 'rgba(40,50,62,.85)';
+      roundRect(ctx, x + W * 0.12, y + H * 0.38, W * 0.72, 1.1 * scale, 0.5 * scale);
+      ctx.fill();
+    }
   }
 
   // 折叠机展开态专用内屏壁纸：宽幅桌面铺满整个展开面（时钟/图标/.Dock 按展开比例重排）
@@ -2250,8 +2348,9 @@ export function renderDesigner(container, state, model, hooks = {}) {
 
   function init3D() {
     if (three) return;
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-    renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+    const coarse = window.matchMedia?.('(pointer: coarse)').matches;
+    const renderer = new THREE.WebGLRenderer({ antialias: !coarse, alpha: true, powerPreference: 'high-performance' });
+    renderer.setPixelRatio(Math.min(coarse ? 1.25 : 1.75, window.devicePixelRatio || 1));
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -3630,13 +3729,12 @@ export function renderDesigner(container, state, model, hooks = {}) {
     const st = right.scrollTop;
     right.innerHTML = assessment();
     right.scrollTop = st;
+    if (assessCollapsed) {
+      const sc = validate(model.design, year, sandboxAll ? { ignoreEra: true, unlocked } : { unlocked }).derived.designScore;
+      assessToggle.textContent = `评估 ${Math.round(sc)}`;
+    }
   }
-  // 点击装配检查项：展开对应分区并定位高亮
-  right.addEventListener('click', (e) => {
-    const it = e.target.closest('[data-issue-target]');
-    if (!it) return;
-    const key = it.dataset.issueTarget;
-    if (!key) return;
+  function gotoSection(key) {
     const sec = left.querySelector(`[data-sec="${key}"]`);
     if (!sec) return;
     collapsedSecs.delete(key);
@@ -3645,6 +3743,13 @@ export function renderDesigner(container, state, model, hooks = {}) {
     sec.scrollIntoView({ block: 'center', behavior: 'smooth' });
     sec.classList.add('dz-flash');
     setTimeout(() => sec.classList.remove('dz-flash'), 1200);
+  }
+  // 点击装配检查项/评分卡：展开对应分区并定位高亮
+  right.addEventListener('click', (e) => {
+    const it = e.target.closest('[data-issue-target]');
+    if (it) { gotoSection(it.dataset.issueTarget); return; }
+    const jp = e.target.closest('[data-jump]');
+    if (jp) gotoSection(jp.dataset.jump);
   });
 
   function refresh(rebuildAll = true) {

@@ -28,6 +28,13 @@ function normalizeDesign(d) {
   if (d.watchSteps === undefined) d.watchSteps = true;
   if (d.tabletSplit === undefined) d.tabletSplit = false;
   if (d.tabletDock === undefined) d.tabletDock = true;
+  if (d.iconScale === undefined) d.iconScale = 1;
+  if (d.iconRadius === undefined) d.iconRadius = 22;
+  if (d.homePages === undefined) d.homePages = 1;
+  if (d.wallpaperDim === undefined) d.wallpaperDim = 0;
+  if (d.wallpaperBlur === undefined) d.wallpaperBlur = 0;
+  if (d.lockNotifCount === undefined) d.lockNotifCount = 1;
+  if (!['card', 'compact'].includes(d.lockNotifStyle)) d.lockNotifStyle = 'card';
   if (d.lockAspect === undefined) d.lockAspect = true;
   if (d.navDir === undefined) d.navDir = 'ltr';
   if (d.gestureW === undefined) d.gestureW = 28;
@@ -141,6 +148,8 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
       carrier: '5G', showTime: true, showBattery: true, showSignal: true,
       navStyle: 'gesture', navDir: 'ltr', gestureW: 28, gestureH: 2.4, batteryDY: 0.9,
       dockCount: 4, cols: 4, rows: 5,
+      iconScale: 1, iconRadius: 22, homePages: 1, wallpaperDim: 0, wallpaperBlur: 0,
+      lockNotifCount: 1, lockNotifStyle: 'card',
       canvasW: 1080, canvasH: 2340, lockAspect: true,
       lockWallpaper: '', lockWallColor: '#141c33', lockShowTime: true, lockShowDate: true, lockShowNotif: true,
       deviceType: 'phone', watchShape: 'round', watchLayout: 'grid', watchShowDate: true,
@@ -202,7 +211,7 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
       <div class="sd-tabs">
         ${[['look', '外观'], ['controls', '控件'], ['canvas', '画布']].map(([v, n]) => `<button class="btn tiny ${sdTab === v ? 'primary' : ''}" data-sd="tab" data-v="${v}">${n}</button>`).join('')}
       </div>
-      <div data-sdt="controls" data-sdsec="watch" class="${sdTab === 'controls' ? 'on' : ''}">
+      <div data-sdt="controls" data-sdsec="devices" class="${sdTab === 'controls' ? 'on' : ''}">
       ${active.deviceType === 'watch' ? `
       <div class="section-label">手表表盘</div>
       <div class="row" style="gap:5px;flex-wrap:wrap">
@@ -231,11 +240,30 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
       <label class="field"><span>锁屏底色（无壁纸时）</span>
         <input type="color" data-sd="lock-wall-color" value="${active.lockWallColor || '#141c33'}" style="width:44px;height:26px;padding:1px" />
       </label>
+      <label class="field"><span>壁纸变暗</span>
+        <div class="row" style="gap:6px;align-items:center">
+          <input type="range" data-sd="wallpaperDim" min="0" max="60" step="2" value="${num(active.wallpaperDim, 0)}" style="flex:1" />
+          <span class="tiny dim" data-sd="wallpaperDim-v" style="width:36px;text-align:right">${num(active.wallpaperDim, 0)}%</span>
+        </div>
+      </label>
+      <label class="field"><span>壁纸模糊</span>
+        <div class="row" style="gap:6px;align-items:center">
+          <input type="range" data-sd="wallpaperBlur" min="0" max="12" step="1" value="${num(active.wallpaperBlur, 0)}" style="flex:1" />
+          <span class="tiny dim" data-sd="wallpaperBlur-v" style="width:36px;text-align:right">${num(active.wallpaperBlur, 0)}px</span>
+        </div>
+      </label>
       <div class="row" style="gap:5px;flex-wrap:wrap;margin-bottom:6px">
         <label class="form-check" style="margin:0"><input type="checkbox" class="form-check-input" data-sd="lockShowTime" ${active.lockShowTime ? 'checked' : ''} /><span class="form-check-label tiny">时间</span></label>
         <label class="form-check" style="margin:0"><input type="checkbox" class="form-check-input" data-sd="lockShowDate" ${active.lockShowDate ? 'checked' : ''} /><span class="form-check-label tiny">日期</span></label>
         <label class="form-check" style="margin:0"><input type="checkbox" class="form-check-input" data-sd="lockShowNotif" ${active.lockShowNotif ? 'checked' : ''} /><span class="form-check-label tiny">通知</span></label>
       </div>
+      ${active.lockShowNotif ? `
+      <div class="row" style="gap:5px;align-items:center;margin-bottom:6px">
+        <span class="tiny dim">通知条数</span>
+        ${[1, 2, 3].map((n) => `<button class="btn tiny ${(active.lockNotifCount || 1) === n ? 'primary' : ''}" data-sd="lockNotifCount" data-v="${n}">${n}</button>`).join('')}
+        <span class="tiny dim" style="margin-left:8px">样式</span>
+        ${[['card', '卡片'], ['compact', '紧凑']].map(([v, n]) => `<button class="btn tiny ${(active.lockNotifStyle || 'card') === v ? 'primary' : ''}" data-sd="lockNotifStyle" data-v="${v}">${n}</button>`).join('')}
+      </div>` : ''}
       </div>
       <div data-sdt="controls" data-sdsec="status" class="${sdTab === 'controls' ? 'on' : ''}">
       <div class="section-label">状态栏</div>
@@ -311,6 +339,22 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
         <span class="tiny dim">列</span>${[3, 4, 5].map((n) => `<button class="btn tiny ${active.cols === n ? 'primary' : ''}" data-sd="cols" data-v="${n}">${n}</button>`).join('')}
         <span class="tiny dim" style="margin-left:8px">行</span>${[4, 5, 6].map((n) => `<button class="btn tiny ${active.rows === n ? 'primary' : ''}" data-sd="rows" data-v="${n}">${n}</button>`).join('')}
       </div>
+      <label class="field" style="margin-top:6px"><span>图标大小</span>
+        <div class="row" style="gap:6px;align-items:center">
+          <input type="range" data-sd="iconScale" min="0.75" max="1.3" step="0.05" value="${num(active.iconScale, 1)}" style="flex:1" />
+          <span class="tiny dim" data-sd="iconScale-v" style="width:36px;text-align:right">${Math.round(num(active.iconScale, 1) * 100)}%</span>
+        </div>
+      </label>
+      <label class="field"><span>图标圆角</span>
+        <div class="row" style="gap:6px;align-items:center">
+          <input type="range" data-sd="iconRadius" min="8" max="35" step="1" value="${num(active.iconRadius, 22)}" style="flex:1" />
+          <span class="tiny dim" data-sd="iconRadius-v" style="width:36px;text-align:right">${num(active.iconRadius, 22)}%</span>
+        </div>
+      </label>
+      <div class="row" style="gap:5px;align-items:center;margin-bottom:6px">
+        <span class="tiny dim">桌面页数</span>
+        ${[1, 2, 3].map((n) => `<button class="btn tiny ${(active.homePages || 1) === n ? 'primary' : ''}" data-sd="homePages" data-v="${n}">${n}</button>`).join('')}
+      </div>
       </div>
       <input type="file" accept="image/*" data-sd="file" style="display:none" />
       <input type="file" accept="image/*" data-sd="lock-file" style="display:none" />`;
@@ -342,7 +386,15 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
       const img = new Image();
       img.onload = () => {
         if (dead || previewMode !== (isLock ? 'lock' : 'home')) return;
+        const blur = clamp(num(active.wallpaperBlur, 0), 0, 12);
+        if (blur > 0) c.filter = `blur(${blur * W / 1080}px)`;
         c.drawImage(img, 0, 0, W, H);
+        c.filter = 'none';
+        const dim = clamp(num(active.wallpaperDim, 0), 0, 60) / 100;
+        if (dim > 0) {
+          c.fillStyle = `rgba(0,0,0,${dim})`;
+          c.fillRect(0, 0, W, H);
+        }
         finish();
       };
       img.src = wp;
@@ -495,13 +547,17 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
     } else if (k === 'lock') {
       active.lockAspect = !active.lockAspect;
       markDirty();
-    } else if (k === 'nav' || k === 'navdir' || k === 'dock' || k === 'cols' || k === 'rows') {
-      const v = k === 'dock' || k === 'cols' || k === 'rows' ? Number(act.dataset.v) : act.dataset.v;
+    } else if (k === 'nav' || k === 'navdir' || k === 'dock' || k === 'cols' || k === 'rows' || k === 'homePages' || k === 'lockNotifCount' || k === 'lockNotifStyle') {
+      const numeric = ['dock', 'cols', 'rows', 'homePages', 'lockNotifCount'].includes(k);
+      const v = numeric ? Number(act.dataset.v) : act.dataset.v;
       if (k === 'nav') active.navStyle = v;
       else if (k === 'navdir') active.navDir = v;
       else if (k === 'dock') active.dockCount = v;
       else if (k === 'cols') active.cols = v;
-      else active.rows = v;
+      else if (k === 'rows') active.rows = v;
+      else if (k === 'homePages') active.homePages = v;
+      else if (k === 'lockNotifCount') active.lockNotifCount = v;
+      else active.lockNotifStyle = v;
       markDirty();
     }
     if (k !== 'import' && k !== 'lock-import') { renderControls(); draw(); }
@@ -528,6 +584,10 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
     else if (k === 'tabletSplit') active.tabletSplit = e.target.checked;
     else if (k === 'tabletDock') active.tabletDock = e.target.checked;
     else if (k === 'batteryDY') active.batteryDY = Number(e.target.value);
+    else if (k === 'iconScale') active.iconScale = Number(e.target.value);
+    else if (k === 'iconRadius') active.iconRadius = Number(e.target.value);
+    else if (k === 'wallpaperDim') active.wallpaperDim = Number(e.target.value);
+    else if (k === 'wallpaperBlur') active.wallpaperBlur = Number(e.target.value);
     else if (k === 'gestureW') active.gestureW = Number(e.target.value);
     else if (k === 'gestureH') active.gestureH = Number(e.target.value);
     else if (k === 'canvas-w') {
@@ -545,13 +605,16 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
     // 输入即视为修改（是否落盘由保存按钮决定）
     markDirty();
     if (k === 'canvas-w' || k === 'canvas-h') { draw(); renderControls(); }
-    else if (k === 'batteryDY' || k === 'gestureW' || k === 'gestureH') {
+    else if (k === 'batteryDY' || k === 'gestureW' || k === 'gestureH' || k === 'iconScale' || k === 'iconRadius' || k === 'wallpaperDim' || k === 'wallpaperBlur') {
       // 拖动滑杆时只更新数值标签，避免重建 DOM 打断拖动
       const label = controlsEl.querySelector(`[data-sd="${k}-v"]`);
       if (label) {
-        label.textContent = k === 'gestureW'
-          ? `${clamp(num(active.gestureW, 28), 10, 50)}%`
-          : `${clamp(num(active[k], 1), k === 'batteryDY' ? -2 : 1, k === 'batteryDY' ? 4 : 6).toFixed(1)}u`;
+        if (k === 'gestureW') label.textContent = `${clamp(num(active.gestureW, 28), 10, 50)}%`;
+        else if (k === 'iconScale') label.textContent = `${Math.round(num(active.iconScale, 1) * 100)}%`;
+        else if (k === 'iconRadius') label.textContent = `${clamp(num(active.iconRadius, 22), 8, 35)}%`;
+        else if (k === 'wallpaperDim') label.textContent = `${clamp(num(active.wallpaperDim, 0), 0, 60)}%`;
+        else if (k === 'wallpaperBlur') label.textContent = `${clamp(num(active.wallpaperBlur, 0), 0, 12)}px`;
+        else label.textContent = `${clamp(num(active[k], 1), k === 'batteryDY' ? -2 : 1, k === 'batteryDY' ? 4 : 6).toFixed(1)}u`;
       }
       draw();
     }
@@ -590,9 +653,15 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
   cv.addEventListener('click', (e) => {
     const r = cv.getBoundingClientRect();
     const y = (e.clientY - r.top) / Math.max(1, r.height);
-    let sec = y < 0.14 ? 'status' : y > 0.86 ? 'nav' : 'wallpaper';
-    if (active.deviceType === 'watch') sec = y > 0.8 ? 'nav' : 'watch';
-    else if (active.deviceType === 'tablet') sec = y > 0.88 ? 'dock' : y < 0.12 ? 'status' : 'wallpaper';
+    const x = (e.clientX - r.left) / Math.max(1, r.width);
+    let sec;
+    if (y < 0.11) sec = 'status';
+    else if (y > 0.94) sec = 'nav';
+    else if (active.deviceType === 'watch') sec = 'devices';
+    else if (active.deviceType === 'tablet') sec = y > 0.86 ? 'dock' : y < 0.16 ? 'status' : 'devices';
+    else if (y > 0.86) sec = 'dock';
+    else if (previewMode === 'lock') sec = 'wallpaper';
+    else sec = x < 0.06 || x > 0.94 ? 'wallpaper' : 'grid';
     sdTab = sec === 'wallpaper' ? 'look' : 'controls';
     controlsEl.querySelectorAll('[data-sdt]').forEach((el) => el.classList.toggle('on', el.dataset.sdt === sdTab));
     controlsEl.querySelectorAll('[data-sd="tab"]').forEach((el) => el.classList.toggle('primary', el.dataset.v === sdTab));
@@ -714,8 +783,10 @@ function drawHomeOverlays(ctx, W, H, active) {
   const dock = dockGeom(W, H, active);
   const gridTop = H * 0.09;
   const gridBottom = active.dockCount > 0 ? dock.dockY - H * 0.014 : H - navReserve(H, active) - H * 0.03;
-  const iconSize = Math.min((W - u * 12) / active.cols - u * 2, u * 13);
-  const iconGap = (W - u * 10 - iconSize * active.cols) / Math.max(1, active.cols - 1);
+  const iconScale = clamp(num(active.iconScale, 1), 0.75, 1.3);
+  const iconSize = Math.min((W - u * 12) / active.cols - u * 2, u * 13) * iconScale;
+  const iconGap = Math.max(u * 1.5, (W - u * 10 - iconSize * active.cols) / Math.max(1, active.cols - 1));
+  const iconR = iconSize * clamp(num(active.iconRadius, 22), 8, 35) / 100;
   const rows = Math.max(1, Math.floor((gridBottom - gridTop) / (iconSize + u * 7)));
   for (let r = 0; r < Math.min(rows, active.rows || 5); r++) {
     for (let c2 = 0; c2 < active.cols; c2++) {
@@ -723,9 +794,21 @@ function drawHomeOverlays(ctx, W, H, active) {
       const iy = gridTop + r * (iconSize + u * 7);
       const col = ICON_COLORS[(r * active.cols + c2) % ICON_COLORS.length];
       ctx.fillStyle = col;
-      ctx.beginPath(); ctx.roundRect(ix, iy, iconSize, iconSize, iconSize * 0.22); ctx.fill();
+      ctx.beginPath(); ctx.roundRect(ix, iy, iconSize, iconSize, iconR); ctx.fill();
       ctx.fillStyle = 'rgba(255,255,255,.16)';
-      ctx.beginPath(); ctx.roundRect(ix, iy, iconSize, iconSize * 0.4, iconSize * 0.22); ctx.fill();
+      ctx.beginPath(); ctx.roundRect(ix, iy, iconSize, iconSize * 0.4, iconR); ctx.fill();
+    }
+  }
+
+  // 桌面分页指示点
+  const pages = clamp(num(active.homePages, 1), 1, 3);
+  if (pages > 1) {
+    const py = (active.dockCount > 0 ? dock.dockY : H - navReserve(H, active) - u * 6) - u * 3.2;
+    for (let i = 0; i < pages; i++) {
+      ctx.fillStyle = i === 0 ? 'rgba(255,255,255,.92)' : 'rgba(255,255,255,.32)';
+      ctx.beginPath();
+      ctx.arc(W / 2 + (i - (pages - 1) / 2) * u * 3.2, py, u * 0.9, 0, Math.PI * 2);
+      ctx.fill();
     }
   }
 
@@ -913,32 +996,40 @@ function drawLockOverlays(ctx, W, H, active) {
   }
 
   if (active.lockShowNotif) {
-    const cardY = H * 0.28;
-    const cardH = H * 0.085;
-    ctx.fillStyle = 'rgba(255,255,255,.16)';
-    ctx.beginPath();
-    ctx.roundRect(u * 6, cardY, W - u * 12, cardH, u * 4);
-    ctx.fill();
-    // 通知图标
-    ctx.fillStyle = ICON_COLORS[2];
-    ctx.beginPath();
-    ctx.arc(u * 12, cardY + cardH / 2, u * 3.2, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = '#fff';
-    ctx.beginPath();
-    ctx.roundRect(u * 10.9, cardY + cardH / 2 - u * 1.4, u * 2.2, u * 2.8, u * 0.6);
-    ctx.fill();
-    // 文案
-    ctx.textAlign = 'left';
-    ctx.fillStyle = 'rgba(255,255,255,.95)';
-    ctx.font = `600 ${u * 3.2}px sans-serif`;
-    ctx.fillText('信息', u * 17.5, cardY + cardH * 0.4);
-    ctx.fillStyle = 'rgba(255,255,255,.7)';
-    ctx.font = `400 ${u * 2.7}px sans-serif`;
-    ctx.fillText('欢迎使用你的新手机', u * 17.5, cardY + cardH * 0.72);
-    ctx.textAlign = 'right';
-    ctx.fillStyle = 'rgba(255,255,255,.55)';
-    ctx.fillText('刚刚', W - u * 9, cardY + cardH * 0.4);
+    const count = clamp(num(active.lockNotifCount, 1), 1, 3);
+    const compact = (active.lockNotifStyle || 'card') === 'compact';
+    const cardH = H * (compact ? 0.058 : 0.085);
+    const gapY = H * 0.014;
+    for (let i = 0; i < count; i++) {
+      const cardY = H * 0.28 + i * (cardH + gapY);
+      ctx.fillStyle = `rgba(255,255,255,${i === 0 ? 0.16 : 0.11})`;
+      ctx.beginPath();
+      ctx.roundRect(u * 6, cardY, W - u * 12, cardH, u * 4);
+      ctx.fill();
+      // 通知图标
+      ctx.fillStyle = ICON_COLORS[(i + 2) % ICON_COLORS.length];
+      ctx.beginPath();
+      ctx.arc(u * 12, cardY + cardH / 2, u * (compact ? 2.6 : 3.2), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.beginPath();
+      ctx.roundRect(u * 10.9, cardY + cardH / 2 - u * 1.4, u * 2.2, u * 2.8, u * 0.6);
+      ctx.fill();
+      // 文案
+      ctx.textAlign = 'left';
+      ctx.fillStyle = 'rgba(255,255,255,.95)';
+      ctx.font = `600 ${u * (compact ? 2.9 : 3.2)}px sans-serif`;
+      ctx.fillText(i === 0 ? '信息' : i === 1 ? '日程' : '健康', u * 17.5, cardY + cardH * (compact ? 0.62 : 0.4));
+      if (!compact) {
+        ctx.fillStyle = 'rgba(255,255,255,.7)';
+        ctx.font = `400 ${u * 2.7}px sans-serif`;
+        ctx.fillText('欢迎使用你的新手机', u * 17.5, cardY + cardH * 0.72);
+      }
+      ctx.textAlign = 'right';
+      ctx.fillStyle = 'rgba(255,255,255,.55)';
+      ctx.font = `400 ${u * 2.6}px sans-serif`;
+      ctx.fillText(i === 0 ? '刚刚' : `${i * 5}分钟前`, W - u * 9, cardY + cardH * 0.4);
+    }
   }
 
   // 锁头

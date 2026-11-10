@@ -219,6 +219,23 @@ async function main() {
     return document.querySelector('[data-sdsec="status"]')?.classList.contains('on');
   })()`);
   check('画布点选跳转控件', clickSec === true, String(clickSec));
+  const iconDiff = await ev(`(() => {
+    const cv = document.querySelector('[data-sd=cv]');
+    const a = cv.toDataURL();
+    const el = document.querySelector('[data-sd=iconScale]'); el.value = '1.2'; el.dispatchEvent(new Event('input', { bubbles: true }));
+    return a !== cv.toDataURL();
+  })()`);
+  check('图标大小可调整渲染', iconDiff === true);
+  await ev(`document.querySelector('[data-sd="preview"][data-v="lock"]').click()`); await sleep(200);
+  const notifDiff = await ev(`(() => {
+    const cv = document.querySelector('[data-sd=cv]');
+    const a = cv.toDataURL();
+    const el = document.querySelector('[data-sd=lockNotifCount]'); el?.click();
+    const el3 = document.querySelector('[data-sd=lockNotifCount][data-v="3"]'); el3?.click();
+    return { diff: a !== cv.toDataURL(), has: !!document.querySelector('[data-sd=lockNotifCount][data-v="3"]') };
+  })()`);
+  check('锁屏通知条数可调', notifDiff.has === true, JSON.stringify(notifDiff));
+  await ev(`document.querySelector('[data-sd="preview"][data-v="home"]').click()`);
   await ev(`document.querySelector('[data-sd="tab"][data-v="controls"]').click()`);
 
   // 不保存退出：草稿不应写回；重新进入仍是默认手势 28%

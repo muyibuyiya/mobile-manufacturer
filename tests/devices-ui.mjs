@@ -48,6 +48,7 @@ async function main() {
     return ev(`(() => ({ cat: document.querySelector('[data-cat].primary')?.dataset.cat, len: document.querySelector('[data-k="body.length"]')?.value, wid: document.querySelector('[data-k="body.width"]')?.value, corner: document.querySelector('[data-k="body.corner"]')?.value, aspect: document.querySelector('[data-k="screen.aspect"]')?.value }))()`);
   };
   check('设计器可打开', await ev(`!!document.querySelector('[data-k="template"]')`));
+  check('顶栏信息分组', await ev(`document.querySelectorAll('.tb-group').length === 2`));
   await ev('window.confirm = () => true');
   const tablet = await pickCat('tablet');
   check('平板品类可切换', tablet.cat === 'tablet' && tablet.len === '250' && tablet.wid === '188' && tablet.aspect === '4:3', JSON.stringify(tablet));
@@ -88,7 +89,7 @@ async function main() {
   const undoLen = await ev(`(() => { const el = document.querySelector('[data-k="body.length"]'); el.value = '200'; el.dispatchEvent(new Event('input', { bubbles: true })); document.querySelector('#dz-undo').click(); return document.querySelector('[data-k="body.length"]')?.value; })()`);
   check('设计器撤销可恢复', Number(undoLen) === 300, String(undoLen));
   check('设计器有包装设计', await ev(`!!document.querySelector('[data-k="packaging.material"]') && document.body.textContent.includes('包装评分')`));
-  check('评估栏可收起', await ev(`(() => { const b = document.querySelector('#dz-assess-toggle'); if (!b) return false; b.click(); const off = document.querySelector('.designer')?.classList.contains('assess-collapsed'); b.click(); return off && !document.querySelector('.designer')?.classList.contains('assess-collapsed'); })()`));
+  check('评估栏可收起', await ev(`(() => { const b = document.querySelector('#dz-assess-toggle'); if (!b) return false; b.click(); const off = document.querySelector('.designer')?.classList.contains('assess-collapsed'); const score = /评估\\s*\\d+/.test(b.textContent); b.click(); return off && score && !document.querySelector('.designer')?.classList.contains('assess-collapsed'); })()`));
   check('左栏可拖宽', await ev(`(() => { const l = document.querySelector('#dz-left'); return !!document.querySelector('#dz-resizer') && l.clientWidth >= 220 && l.clientWidth <= 460; })()`));
   const issueFix = await ev(`(() => {
     const r = document.querySelector('#dz-right');
@@ -101,6 +102,10 @@ async function main() {
     return !!sec && !sec.classList.contains('collapsed') && sec.classList.contains('dz-flash');
   })()`);
   check('装配错误可点击定位', issueFix === true, String(issueFix));
+  const jumpFix = await ev(`(() => { const j = document.querySelector('#dz-right [data-jump="hw"]'); if (!j) return false; j.click(); const sec = document.querySelector('[data-sec="hw"]'); return !!sec && sec.classList.contains('dz-flash'); })()`);
+  check('评分项可点击定位', jumpFix === true, String(jumpFix));
+  const hw2d = await ev(`(() => { const cv = document.querySelector('#dz-2d'); const a = cv.toDataURL(); const c = document.querySelector('[data-k="tablet.stylus"]'); c.checked = true; c.dispatchEvent(new Event('input', { bubbles: true })); c.dispatchEvent(new Event('change', { bubbles: true })); return { diff: a !== document.querySelector('#dz-2d').toDataURL() }; })()`);
+  check('2D 视图同步品类硬件', hw2d.diff === true, JSON.stringify(hw2d));
   const pkg = await ev(`(() => { const s = document.querySelector('[data-k="packaging.material"]'); s.value = 'premium'; s.dispatchEvent(new Event('input', { bubbles: true })); s.dispatchEvent(new Event('change', { bubbles: true })); return s.value; })()`);
   await sleep(250);
   check('包装材质可切换', pkg === 'premium' && await ev(`/包装评分 [56]/.test(document.body.textContent)`), pkg);

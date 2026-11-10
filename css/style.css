@@ -223,6 +223,10 @@ div.field > span:first-child { display: block; font-size: 11.5px; color: var(--m
 .topbar .brand { display: flex; align-items: center; gap: 9px; font-weight: 650; }
 .topbar .brand i { width: 9px; height: 9px; border-radius: 3px; background: var(--accent); display: block; }
 .stat-inline { display: flex; align-items: baseline; gap: 5px; padding: 0 10px; border-left: 1px solid var(--line); }
+.tb-group { display: flex; align-items: center; gap: 2px; }
+.tb-group.tb-fin { padding-left: 2px; }
+.tb-group.tb-time { padding-left: 8px; border-left: 1px solid var(--line); }
+.tb-time .stat-inline { border-left: none; padding-left: 2px; }
 .stat-inline .k { font-size: 11px; color: var(--dim); }
 .stat-inline .v { font-family: var(--mono); font-size: 13.5px; font-weight: 600; }
 .speed-group { display: flex; gap: 3px; background: #10151c; padding: 3px; border-radius: 8px; border: 1px solid var(--line); }
@@ -700,12 +704,14 @@ div.field > span:first-child { display: block; font-size: 11.5px; color: var(--m
   .sidebar { padding: 10px 6px; align-items: center; }
   .nav-item { justify-content: center; padding: 10px 0; width: 42px; font-size: 15px; }
   .nav-item .txt, .nav-item .badge-dot { display: none; }
-  .designer { grid-template-columns: 210px 1fr 260px; }
+  .designer { grid-template-columns: var(--dz-left-w, 220px) 1fr 300px; }
+  .tb-opt { display: none; }
 }
 
 /* 平板竖屏 ≤900（iPad Air/mini 竖屏，手机横屏） */
 @media (max-width: 900px) {
   .designer { grid-template-columns: 1fr; grid-template-rows: auto minmax(320px, 46vh) auto; height: auto; overflow: visible; }
+  .dz-resizer { display: none; }
   .dz-stage { order: -1; }
   .two-col, .grid.two-col { grid-template-columns: 1fr !important; }
   .cap-grid { grid-template-columns: 1fr !important; }
@@ -734,6 +740,13 @@ div.field > span:first-child { display: block; font-size: 11.5px; color: var(--m
   .designer { height: auto; }
 }
 
+@media (pointer: coarse) {
+  .btn, .pselect-btn, .dz-sec-head, .speed-group button { min-height: 36px; }
+  .btn.tiny { min-height: 32px; padding-left: 9px; padding-right: 9px; }
+  input[type=range] { height: 28px; }
+  .pselect-item { padding: 10px 9px; }
+  .nav-item { min-height: 42px; }
+}
 /* 超窄手机竖屏 ≤480：提示横屏（覆盖层），底部导航保持可用 */
 @media (max-width: 480px) and (orientation: portrait) {
   .rotate-hint { display: flex !important; }
