@@ -4,6 +4,16 @@
 import { autoSave } from '../core/state.js';
 
 const ICON_COLORS = ['#3a7bd5', '#e0533d', '#2fb37a', '#f2b134', '#8b5cf6', '#22a8c9', '#e8548a', '#5b6b7f'];
+const ICON_THEMES = {
+  cool: ['#3a7bd5', '#22a8c9', '#5b8def', '#2fb37a', '#6c7cf0', '#1f9bb5'],
+  warm: ['#e0533d', '#f2b134', '#e8548a', '#f08a3c', '#d94f5c', '#f5a623'],
+};
+function iconColorAt(i, active) {
+  const theme = active?.iconTheme || 'cycle';
+  if (theme === 'mono') return active.iconColor || '#3a7bd5';
+  const pal = ICON_THEMES[theme] || ICON_COLORS;
+  return pal[i % pal.length];
+}
 
 function num(v, d) {
   const n = Number(v);
@@ -30,6 +40,9 @@ function normalizeDesign(d) {
   if (d.tabletDock === undefined) d.tabletDock = true;
   if (d.iconScale === undefined) d.iconScale = 1;
   if (d.iconRadius === undefined) d.iconRadius = 22;
+  if (d.iconTheme === undefined) d.iconTheme = 'cycle';
+  if (d.iconColor === undefined) d.iconColor = '#3a7bd5';
+  if (d.selectedIcon === undefined) d.selectedIcon = -1;
   if (d.homePages === undefined) d.homePages = 1;
   if (d.wallpaperDim === undefined) d.wallpaperDim = 0;
   if (d.wallpaperBlur === undefined) d.wallpaperBlur = 0;
@@ -72,6 +85,7 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
   const redoStack = [];
   let lastUndoAt = 0;
   let restoring = false;
+  let panelCollapsed = false;
   let onChangedCb = null;
   let dead = false;
 
@@ -94,6 +108,7 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
         <button class="btn small" data-sd="zoom" data-v="75">75%</button>
         <button class="btn small" data-sd="zoom" data-v="100">100%</button>
       </div>
+      <button class="btn small ghost" data-sd="panel-toggle">收起控件</button>
       <button class="btn small ghost" data-sd="undo" title="撤销 Ctrl+Z">撤销</button>
       <button class="btn small ghost" data-sd="redo" title="重做 Ctrl+Shift+Z">重做</button>
       <div style="flex:1"></div>
@@ -148,7 +163,7 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
       carrier: '5G', showTime: true, showBattery: true, showSignal: true,
       navStyle: 'gesture', navDir: 'ltr', gestureW: 28, gestureH: 2.4, batteryDY: 0.9,
       dockCount: 4, cols: 4, rows: 5,
-      iconScale: 1, iconRadius: 22, homePages: 1, wallpaperDim: 0, wallpaperBlur: 0,
+      iconScale: 1, iconRadius: 22, iconTheme: 'cycle', iconColor: '#3a7bd5', selectedIcon: -1, homePages: 1, wallpaperDim: 0, wallpaperBlur: 0,
       lockNotifCount: 1, lockNotifStyle: 'card',
       canvasW: 1080, canvasH: 2340, lockAspect: true,
       lockWallpaper: '', lockWallColor: '#141c33', lockShowTime: true, lockShowDate: true, lockShowNotif: true,
@@ -352,6 +367,12 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
         </div>
       </label>
       <div class="row" style="gap:5px;align-items:center;margin-bottom:6px">
+        <span class="tiny dim">图标主题</span>
+        ${[['cycle', '彩色'], ['mono', '单色'], ['cool', '冷色'], ['warm', '暖色']].map(([v, n]) => `<button class="btn tiny ${(active.iconTheme || 'cycle') === v ? 'primary' : ''}" data-sd="iconTheme" data-v="${v}">${n}</button>`).join('')}
+        ${(active.iconTheme || 'cycle') === 'mono' ? `<input type="color" data-sd="iconColor" value="${active.iconColor || '#3a7bd5'}" style="width:32px;height:26px;padding:1px" />` : ''}
+      </div>
+      <div class="tiny dim" data-sd="selected-label" style="margin-bottom:6px">${active.selectedIcon >= 0 ? `已选中图标 #${active.selectedIcon + 1}（可继续调主题/圆角）` : '点击画布上的图标可选中'}</div>
+      <div class="row" style="gap:5px;align-items:center;margin-bottom:6px">
         <span class="tiny dim">桌面页数</span>
         ${[1, 2, 3].map((n) => `<button class="btn tiny ${(active.homePages || 1) === n ? 'primary' : ''}" data-sd="homePages" data-v="${n}">${n}</button>`).join('')}
       </div>
@@ -547,7 +568,7 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
     } else if (k === 'lock') {
       active.lockAspect = !active.lockAspect;
       markDirty();
-    } else if (k === 'nav' || k === 'navdir' || k === 'dock' || k === 'cols' || k === 'rows' || k === 'homePages' || k === 'lockNotifCount' || k === 'lockNotifStyle') {
+    } else if (k === 'nav' || k === 'navdir' || k === 'dock' || k === 'cols' || k === 'rows' || k === 'homePages' || k === 'lockNotifCount' || k === 'lockNotifStyle' || k === 'iconTheme') {
       const numeric = ['dock', 'cols', 'rows', 'homePages', 'lockNotifCount'].includes(k);
       const v = numeric ? Number(act.dataset.v) : act.dataset.v;
       if (k === 'nav') active.navStyle = v;
@@ -557,6 +578,7 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
       else if (k === 'rows') active.rows = v;
       else if (k === 'homePages') active.homePages = v;
       else if (k === 'lockNotifCount') active.lockNotifCount = v;
+      else if (k === 'iconTheme') active.iconTheme = v;
       else active.lockNotifStyle = v;
       markDirty();
     }
@@ -586,6 +608,7 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
     else if (k === 'batteryDY') active.batteryDY = Number(e.target.value);
     else if (k === 'iconScale') active.iconScale = Number(e.target.value);
     else if (k === 'iconRadius') active.iconRadius = Number(e.target.value);
+    else if (k === 'iconColor') active.iconColor = e.target.value;
     else if (k === 'wallpaperDim') active.wallpaperDim = Number(e.target.value);
     else if (k === 'wallpaperBlur') active.wallpaperBlur = Number(e.target.value);
     else if (k === 'gestureW') active.gestureW = Number(e.target.value);
@@ -648,6 +671,14 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
     }
     if (e.target.closest('[data-sd="undo"]')) { undoDesign(); return; }
     if (e.target.closest('[data-sd="redo"]')) { redoDesign(); return; }
+    const pt = e.target.closest('[data-sd="panel-toggle"]');
+    if (pt) {
+      panelCollapsed = !panelCollapsed;
+      controlsEl.style.display = panelCollapsed ? 'none' : '';
+      pt.textContent = panelCollapsed ? '展开控件' : '收起控件';
+      setTimeout(() => draw(), 30);
+      return;
+    }
   });
   // 画布点选：上/中/下区域跳到对应控件组
   cv.addEventListener('click', (e) => {
@@ -663,6 +694,24 @@ export function openScreenDesign(mount, state, { onClose, onToast }) {
     else if (previewMode === 'lock') sec = 'wallpaper';
     else sec = x < 0.06 || x > 0.94 ? 'wallpaper' : 'grid';
     sdTab = sec === 'wallpaper' ? 'look' : 'controls';
+    if (sec === 'grid' && previewMode !== 'lock') {
+      const W = active.canvasW || 1080, H = active.canvasH || 2340, u = W / 100;
+      const scale = clamp(num(active.iconScale, 1), 0.75, 1.3);
+      const size = Math.min((W - u * 12) / active.cols - u * 2, u * 13) * scale;
+      const gap = Math.max(u * 1.5, (W - u * 10 - size * active.cols) / Math.max(1, active.cols - 1));
+      const gx = ((e.clientX - r.left) / Math.max(1, r.width)) * W;
+      const gy = ((e.clientY - r.top) / Math.max(1, r.height)) * H;
+      const col = Math.floor((gx - u * 5) / (size + gap));
+      const row = Math.floor((gy - H * 0.09) / (size + u * 7));
+      const insideX = gx >= u * 5 + col * (size + gap) && gx <= u * 5 + col * (size + gap) + size;
+      const insideY = gy >= H * 0.09 + row * (size + u * 7) && gy <= H * 0.09 + row * (size + u * 7) + size;
+      if (col >= 0 && col < active.cols && row >= 0 && row < (active.rows || 5) && insideX && insideY) {
+        active.selectedIcon = row * active.cols + col;
+        markDirty(); draw();
+        const lab = controlsEl.querySelector('[data-sd="selected-label"]');
+        if (lab) lab.textContent = `已选中图标 #${active.selectedIcon + 1}（可继续调主题/圆角）`;
+      }
+    }
     controlsEl.querySelectorAll('[data-sdt]').forEach((el) => el.classList.toggle('on', el.dataset.sdt === sdTab));
     controlsEl.querySelectorAll('[data-sd="tab"]').forEach((el) => el.classList.toggle('primary', el.dataset.v === sdTab));
     const node = controlsEl.querySelector(`[data-sdsec="${sec}"]`);
@@ -792,11 +841,16 @@ function drawHomeOverlays(ctx, W, H, active) {
     for (let c2 = 0; c2 < active.cols; c2++) {
       const ix = u * 5 + c2 * (iconSize + iconGap);
       const iy = gridTop + r * (iconSize + u * 7);
-      const col = ICON_COLORS[(r * active.cols + c2) % ICON_COLORS.length];
+      const col = iconColorAt(r * active.cols + c2, active);
       ctx.fillStyle = col;
       ctx.beginPath(); ctx.roundRect(ix, iy, iconSize, iconSize, iconR); ctx.fill();
       ctx.fillStyle = 'rgba(255,255,255,.16)';
       ctx.beginPath(); ctx.roundRect(ix, iy, iconSize, iconSize * 0.4, iconR); ctx.fill();
+      if (active.selectedIcon === r * active.cols + c2) {
+        ctx.strokeStyle = 'rgba(255,255,255,.95)';
+        ctx.lineWidth = Math.max(2, u * 0.5);
+        ctx.beginPath(); ctx.roundRect(ix - u * 0.8, iy - u * 0.8, iconSize + u * 1.6, iconSize + u * 1.6, iconR + u * 0.8); ctx.stroke();
+      }
     }
   }
 
@@ -820,7 +874,7 @@ function drawHomeOverlays(ctx, W, H, active) {
     const dockGap = (W - u * 12 - dockIcon * active.dockCount) / Math.max(1, active.dockCount + 1);
     for (let i = 0; i < active.dockCount; i++) {
       const dx = u * 6 + i * (dockIcon + dockGap) + dockGap / 2;
-      ctx.fillStyle = ICON_COLORS[i % ICON_COLORS.length];
+      ctx.fillStyle = iconColorAt(i, active);
       ctx.beginPath(); ctx.roundRect(dx, dock.dockY + (dock.dockH - dockIcon) / 2, dockIcon, dockIcon, dockIcon * 0.22); ctx.fill();
     }
   }
@@ -916,7 +970,7 @@ function drawWatchHome(ctx, W, H, d) {
       ctx.fillStyle = 'rgba(255,255,255,.14)';
       ctx.beginPath(); ctx.roundRect(W * 0.16, y, W * 0.68, u * 8, u * 2); ctx.fill();
       ctx.textAlign = 'left';
-      ctx.fillStyle = ICON_COLORS[i % ICON_COLORS.length];
+      ctx.fillStyle = iconColorAt(i, d);
       ctx.beginPath(); ctx.roundRect(W * 0.20, y + u * 1.5, u * 5, u * 5, u * 1.2); ctx.fill();
       ctx.fillStyle = 'rgba(255,255,255,.9)';
       ctx.font = `500 ${u * 3.4}px sans-serif`;
@@ -929,7 +983,7 @@ function drawWatchHome(ctx, W, H, d) {
     for (let i = 0; i < 9; i++) {
       const x = x0 + (i % cols) * (size + gap);
       const y = top + Math.floor(i / cols) * (size + gap);
-      ctx.fillStyle = ICON_COLORS[i % ICON_COLORS.length];
+      ctx.fillStyle = iconColorAt(i, d);
       ctx.beginPath(); ctx.roundRect(x, y, size, size, size * 0.28); ctx.fill();
       ctx.fillStyle = 'rgba(255,255,255,.2)';
       ctx.beginPath(); ctx.roundRect(x, y, size, size * 0.42, size * 0.28); ctx.fill();
@@ -972,7 +1026,7 @@ function drawTabletDock(ctx, W, H, d, u, dockH) {
   const gap = (W - u * 12) / n;
   for (let i = 0; i < n; i++) {
     const cx = u * 6 + gap * i + gap / 2;
-    ctx.fillStyle = ICON_COLORS[i % ICON_COLORS.length];
+    ctx.fillStyle = iconColorAt(i, d);
     ctx.beginPath(); ctx.roundRect(cx - u * 3, y + dockH / 2 - u * 3, u * 6, u * 6, u * 1.6); ctx.fill();
   }
 }

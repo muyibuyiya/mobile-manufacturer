@@ -230,6 +230,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
             <button class="btn small ${autoRotate ? 'primary' : ''}" id="btn-rotate">自动旋转</button>
             <button class="btn small" id="btn-explode">拆解视图</button>
           </div>
+          <button class="btn small ghost" id="dz-panel-toggle">控件</button>
           <button class="btn small ghost" id="dz-assess-toggle">收起评估</button>
           <span class="tiny warn" id="dz-dirty" style="display:none">未保存</span>
           <button class="btn small ghost" id="dz-undo" title="撤销 Ctrl+Z">撤销</button>
@@ -258,6 +259,13 @@ export function renderDesigner(container, state, model, hooks = {}) {
   const dzRoot = container.querySelector('.designer');
   const resizer = container.querySelector('#dz-resizer');
   const assessToggle = container.querySelector('#dz-assess-toggle');
+  const panelToggle = container.querySelector('#dz-panel-toggle');
+  panelToggle.addEventListener('click', () => {
+    const hidden = dzRoot.classList.toggle('controls-hidden');
+    panelToggle.textContent = hidden ? '展开控件' : '控件';
+    panelToggle.classList.toggle('primary', hidden);
+    if (viewMode === '2d') setTimeout(draw2D, 30); else setTimeout(buildPhone, 30);
+  });
   const DZ_LEFT_KEY = 'dz_left_w';
   const DZ_ASSESS_KEY = 'dz_assess_collapsed';
   const savedLeftW = Number(localStorage.getItem(DZ_LEFT_KEY));
@@ -309,6 +317,11 @@ export function renderDesigner(container, state, model, hooks = {}) {
   }
   function onUndoKey(e) {
     if (!container.isConnected) return;
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+      e.preventDefault();
+      container.querySelector('#dz-save')?.click();
+      return;
+    }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
       e.preventDefault();
       if (e.shiftKey) redoDesign(); else undoDesign();
@@ -389,7 +402,8 @@ export function renderDesigner(container, state, model, hooks = {}) {
     const ports = body.ports || {};
     const sp = speakerRowSpec(ports.speakerStyle);
     const micSpan = ports.micStyle && ports.micStyle !== 'hole' ? speakerRowSpec(ports.micStyle).span : 2.8;
-    return section('category', '产品品类', `
+    return `<div class="dz-toc">${[['category', '品类'], ['body', '机身'], ['screen', '屏幕'], ['camera', '影像'], ['material', '材质'], ['package', '包装'], ['buttons', '按键'], ['hw', '硬件'], ['charge', '充电'], ['extras', '附加']].map(([k, n]) => `<button type="button" class="btn tiny ghost" data-toc="${k}">${n}</button>`).join('')}</div>`
+      + section('category', '产品品类', `
       <div class="row" style="gap:5px;flex-wrap:wrap">
         ${DEVICE_CATEGORIES.map((c) => `<button type="button" class="btn small ${category === c.id ? 'primary' : ''}" data-cat="${c.id}">${c.name}</button>`).join('')}
       </div>
@@ -4073,6 +4087,8 @@ export function renderDesigner(container, state, model, hooks = {}) {
   });
 
   left.addEventListener('click', (e) => {
+    const tocBtn = e.target.closest('[data-toc]');
+    if (tocBtn) { e.preventDefault(); gotoSection(tocBtn.dataset.toc); return; }
     const sizeBtn = e.target.closest('[data-tablet-size]');
     if (sizeBtn) {
       e.preventDefault();
