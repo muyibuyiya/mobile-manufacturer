@@ -3,7 +3,7 @@ import { clamp, rand, randInt, pick, chance, fmtMoney, fmtNum, fmtUnit, sum } fr
 import { MARKETS, MARKET_MAP, eraFactor, EVENTS, COUNTRIES, expectedPrice, makeCompetitorPhone, LINEUP_MAP, COMPETITORS, phonePriceInMarket, scaleCompetitorPrice } from '../data/world.js';
 import { derive, validate, eraBaseline, eraRel } from './design.js';
 import { TECHS, TECH_MAP } from '../data/tech.js';
-import { addLog, staffPower, deptById, DIFFICULTY, makeCompetitors, generateEmployee } from './state.js';
+import { addLog, staffPower, deptById, DIFFICULTY, makeCompetitors, generateEmployee, salaryBase } from './state.js';
 import { checkMilestones } from './milestones.js';
 import { campusBonus, stepConstruction, buildingCount } from './campus.js';
 import { stepSupply, consumeComponents, stockCoverage, SPOT_PREMIUM, supplyCostMul, addDisruption } from './supply.js';
@@ -391,6 +391,18 @@ function stepSales(state, report) {
     if (seriesSales > 100000) decay -= 0.5;
     if (seriesSales > 500000) decay -= 0.5;
     p.heat = clamp(p.heat - decay, 0, 120);
+    // 自然退市：上市满 18 个月且热度归零持续 6 个月，自动下市（长尾机型不再无限出货）
+    const monthsOnSale = p.launched
+      ? (state.date.year - (p.launched.year || state.date.year)) * 12 + (state.date.month - (p.launched.month || 0))
+      : 99;
+    p.staleMonths = p.heat <= 1 ? (p.staleMonths || 0) + 1 : 0;
+    if (p.staleMonths >= 6 && monthsOnSale >= 18) {
+      p.status = 'discontinued';
+      p.discontinuedAt = { ...state.date };
+      addLog(state, 'product', `${p.name} 上市 ${Math.floor(monthsOnSale / 12)} 年后热度归零，已自动下市。`);
+      report.notes.push(`${p.name} 已自动下市，可考虑推出后续机型。`);
+      continue;
+    }
     if (p.heat < 20 && !p._staleWarned) {
       p._staleWarned = true;
       report.notes.push(`${p.name} 产品热度已低于 20，建议降价清仓或推出新版本。`);
@@ -554,8 +566,9 @@ const LIFE_EVENTS = [
 function stepEmployees(state, report) {
   const diff = DIFFICULTY[state.company.difficulty] || DIFFICULTY.normal;
   const country = COUNTRIES.find((c) => c.id === state.company.country) || COUNTRIES[0];
-  const avgSalary = state.employees.length ? sum(state.employees, (e) => e.salary) / state.employees.length : 0;
-  const marketSalary = avgSalary * (0.85 + Math.random() * 0.3);
+  // 市场薪资基准随年代增长（salaryBase），再按团队平均技能修正；用于薪资期望的长期锚点
+  const avgSkill = state.employees.length ? sum(state.employees, (e) => e.skill) / state.employees.length : 55;
+  const marketSalary = Math.round(salaryBase(state.date.year) * (0.75 + avgSkill / 100 * 0.65));
   const leaving = [];
   const retiring = [];
   for (const e of state.employees) {
@@ -565,6 +578,9 @@ function stepEmployees(state, report) {
     const startAge = ({ 专科: 21, 本科: 22, 硕士: 24, 博士: 27 })[e.edu] || 22;
     e.exp = +clamp(e.age - startAge, 0, 38).toFixed(1);
     if (e.fresh && e.tenure >= 1) e.fresh = false; // 入职满一年不再算应届
+    // 薪资期望向当前市场价缓慢靠拢（年代通胀通过 salaryBase 进入）
+    const marketForE = marketSalary * (0.55 + e.skill / 100 * 1.05);
+    e.expectSalary = Math.round((e.expectSalary * 0.97 + marketForE * 0.03) / 100) * 100;
     if (e.age > 35) e.potential = +clamp((e.potential ?? 50) - 0.04, 5, 100).toFixed(2);
     if (e.age >= 60) { retiring.push(e); continue; }
     const payRatio = e.salary / Math.max(e.expectSalary, 1);

@@ -23,7 +23,7 @@ import { compactAll } from './history.js';
 
 export { DEPT_DEFS, ROLE_BY_DEPT };
 
-export const GAME_VERSION = '1.20.0'; // 全局唯一版本号（启动页/关于/存档兼容判断）
+export const GAME_VERSION = '1.21.0'; // 全局唯一版本号（启动页/关于/存档兼容判断）
 
 // 室内布局（v2）：房间可拖放/调尺寸 + 家具/隔墙单数据源。
 // 旧档（v1：仅 items/edges，房间位置硬编码）经 migrateV1 迁移：rooms 取默认双排布局，items/edges 原样保留
@@ -66,7 +66,7 @@ export const TRAITS = [
 
 const SALARY_BASE = { 1980: 1100, 1990: 2600, 2000: 5200, 2010: 8200, 2020: 13000, 2030: 16000, 2040: 20000 };
 
-function salaryBase(year) {
+export function salaryBase(year) {
   const keys = Object.keys(SALARY_BASE).map(Number).sort((a, b) => a - b);
   for (let i = 0; i < keys.length - 1; i++) {
     if (year >= keys[i] && year <= keys[i + 1]) {
@@ -120,6 +120,8 @@ export function generateEmployee(year, opts = {}) {
     age = skewAge(lo, hi);
     edu = pickEdu(skill, age, profile);
     exp = clamp(age - (EDU_START_AGE[edu] || 22) + randInt(-1, 1), 0, 38);
+    // 经验不能早于移动通信行业本身（1980 年为起点，留 2 年电子行业转岗空间）
+    exp = Math.min(exp, Math.max(0, year - 1978));
   }
   const traits = [];
   const pool = [...TRAITS];
@@ -182,6 +184,10 @@ export { officeCapacity };
 
 export function deptById(state, id) { return state.departments.find((d) => d.id === id); }
 export function headcount(state) { return state.employees.length; }
+// 工位是硬上限：招聘前必须还有空位（含园区/办公室加成）
+export function canHireMore(state) {
+  return state.employees.length < officeCapacity(state);
+}
 
 export function deptCost(state, id) {
   return state.employees.filter((e) => e.deptId === id).reduce((s, e) => s + e.salary, 0);

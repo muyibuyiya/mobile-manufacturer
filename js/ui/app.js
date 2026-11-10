@@ -8,7 +8,7 @@ import { autoPriceModel, variantCost, variantPriceMul, priceCurve } from '../cor
 import {
   saveGame, loadGame, saveSlots, deleteSave, staffPower, deptCost, generateEmployee,
   ensureLayout, autoSave, queueAutoSave, flushAutoSave,
-  DEPT_DEFS, ROLE_BY_DEPT, traitNames, addLog, officeCapacity,
+  DEPT_DEFS, ROLE_BY_DEPT, traitNames, addLog, officeCapacity, canHireMore,
 } from '../core/state.js';
 import { historyRows, historyTotals, historyMaxUnits, compHistoryRows } from '../core/history.js';
 import { newModel, derive, validate, bomCost } from '../core/design.js';
@@ -597,6 +597,7 @@ export function renderGame(root, state, opts = {}) {
         if (!c) break;
         const isHH = state.recruitChannel === 'headhunter';
         const fee = c.salary * 2 * (isHH ? 1.2 : 1);
+        if (!canHireMore(state)) { opts.onToast?.(`工位已满（${state.employees.length}/${officeCapacity(state)}），请先扩建办公室或园区`, 'bad'); break; }
         if (state.company.cash < fee) { opts.onToast?.(isHH ? '资金不足（含猎头费 20%）' : '资金不足，无法支付招聘费用', 'bad'); break; }
         state.company.cash -= fee;
         state.employees.push({ ...c, deptId: ds.dept || c.deptId, role: c.role });
@@ -1122,7 +1123,12 @@ export function renderGame(root, state, opts = {}) {
         if (!m) break;
         if (m.markets.includes(ds.market)) m.markets = m.markets.filter((x) => x !== ds.market);
         else {
-          const cost = 800000;
+          const mk = MARKET_MAP[ds.market];
+          if (state.date.year < (mk.openYear || 1980)) {
+            opts.onToast?.(`${mk.name} 将在 ${mk.openYear} 年开放`, 'warn');
+            break;
+          }
+          const cost = mk.entryCost || 800000;
           if (state.company.cash < cost) { opts.onToast?.('渠道铺设资金不足', 'bad'); break; }
           state.company.cash -= cost;
           m.markets.push(ds.market);
@@ -1213,17 +1219,19 @@ export function renderGame(root, state, opts = {}) {
       case 'batch-enter-preview': {
         const m = state.models.find((x) => x.id === ds.model);
         if (!m) break;
-        const rest = MARKETS.filter((mk) => !m.markets.includes(mk.id));
-        if (!rest.length) { opts.onToast?.('已进入全部市场', 'good'); break; }
-        const cost = rest.length * 800000;
-        modalShell('批量进入市场', `勾选要进入的市场，单个市场铺设费 ¥80万。`, `
+        const rest = MARKETS.filter((mk) => !m.markets.includes(mk.id) && state.date.year >= (mk.openYear || 1980));
+        const closed = MARKETS.filter((mk) => !m.markets.includes(mk.id) && state.date.year < (mk.openYear || 1980));
+        if (!rest.length) { opts.onToast?.(closed.length ? '暂无已开放的新市场，未开放市场需等待对应年份' : '已进入全部市场', 'warn'); break; }
+        const cost = rest.reduce((s2, mk) => s2 + (mk.entryCost || 800000), 0);
+        modalShell('批量进入市场', `只列出当前年代已开放的市场，铺设费按市场规模计算。`, `
           <div class="grid" style="grid-template-columns:1fr 1fr;gap:6px;max-height:46vh;overflow:auto">
-            ${rest.map((mk) => `<label class="opt on" style="display:flex;gap:6px;align-items:center;padding:7px 9px"><input type="checkbox" class="batch-market" value="${mk.id}" checked /><span>${mk.name}</span></label>`).join('')}
+            ${rest.map((mk) => `<label class="opt on" style="display:flex;gap:6px;align-items:center;padding:7px 9px"><input type="checkbox" class="batch-market" value="${mk.id}" checked /><span>${mk.name} · ¥${fmtNum(mk.entryCost || 800000)}</span></label>`).join('')}
+            ${closed.map((mk) => `<label class="opt disabled" style="display:flex;gap:6px;align-items:center;padding:7px 9px;opacity:.5"><input type="checkbox" disabled /><span>${mk.name} · ${mk.openYear} 年开放</span></label>`).join('')}
           </div>
           <div class="row" style="gap:8px;margin-top:14px">
             <button class="btn primary" data-act="batch-enter-confirm" data-model="${m.id}">确认进入选中市场</button>
             <button class="btn ghost" data-close>取消</button>
-            <span class="tiny dim">最多 ¥${fmtNum(cost)}（${rest.length} 个）</span>
+            <span class="tiny dim">已开放 ${rest.length} 个 · 全部进入需 ¥${fmtNum(cost)}</span>
           </div>`);
         break;
       }
@@ -1234,7 +1242,7 @@ export function renderGame(root, state, opts = {}) {
         const ids = activeModal ? [...activeModal.mask.querySelectorAll('.batch-market:checked')].map((x) => x.value) : [];
         if (!ids.length) { opts.onToast?.('请至少选择一个市场', 'warn'); break; }
         const rest = MARKETS.filter((mk) => ids.includes(mk.id) && !m.markets.includes(mk.id));
-        const cost = rest.length * 800000;
+        const cost = rest.reduce((s2, mk) => s2 + (mk.entryCost || 800000), 0);
         if (state.company.cash < cost) { opts.onToast?.('现金不足', 'bad'); break; }
         state.company.cash -= cost;
         for (const mk of rest) {
@@ -2274,7 +2282,10 @@ export function renderGame(root, state, opts = {}) {
               <td class="num ${margin > 0.15 ? 'good' : margin > 0 ? 'warn' : 'bad'}" data-margin>${on ? (margin * 100).toFixed(0) + '%' : '—'}</td>
               <td class="num" data-health><span class="chip ${health.cls}">${on ? health.label : '—'}</span></td>
               <td class="num">
-                <button class="btn small ${on ? 'ghost' : ''}" data-act="toggle-market" data-model="${m.id}" data-market="${mk.id}">${on ? '退出' : '进入 ¥80万'}</button>
+                ${on ? `<button class="btn small ghost" data-act="toggle-market" data-model="${m.id}" data-market="${mk.id}">退出</button>`
+                  : state.date.year < (mk.openYear || 1980)
+                    ? `<span class="tiny dim">${mk.openYear} 年开放</span>`
+                    : `<button class="btn small" data-act="toggle-market" data-model="${m.id}" data-market="${mk.id}">进入 ¥${fmtNum(mk.entryCost || 800000)}</button>`}
                 ${on ? `<button class="btn small ghost" data-act="auto-price" data-model="${m.id}" data-market="${mk.id}">建议价</button>` : ''}
                 ${on ? `<button class="btn small ghost" data-act="price-forecast" data-model="${m.id}" data-market="${mk.id}">预测</button>` : ''}
               </td>
@@ -2486,7 +2497,7 @@ export function renderGame(root, state, opts = {}) {
       </div>
       ${perkCard}
       <div class="kpi-row">
-        <div class="kpi"><div class="k">在岗人数</div><div class="v">${state.employees.length}</div><div class="d dim">工位 ${officeCapacity(state)}</div></div>
+        <div class="kpi"><div class="k">在岗人数</div><div class="v">${state.employees.length}</div><div class="d dim">工位 ${state.employees.length}/${officeCapacity(state)} · 市场月薪 ¥${fmtNum(state.company.marketSalary || 0)}</div></div>
         <div class="kpi"><div class="k">培训中</div><div class="v">${ts.count}</div><div class="d dim">月支出 ${fmtMoney(ts.monthly)}</div></div>
         <div class="kpi"><div class="k">高级及以上</div><div class="v">${dist[3] + dist[4] + dist[5]}</div><div class="d dim">专家 ${dist[5]} · 资深 ${dist[4]}</div></div>
         <div class="kpi"><div class="k">平均能力</div><div class="v">${(sum(state.employees, (e) => e.skill) / Math.max(1, state.employees.length)).toFixed(1)}</div><div class="d dim">平均满意度 ${Math.round(sum(state.employees, (e) => e.satisfaction) / Math.max(1, state.employees.length))}</div></div>
@@ -2620,7 +2631,8 @@ export function renderGame(root, state, opts = {}) {
         </div>
 
         <div class="card">
-          <div class="card-title">招聘市场 <span class="right">入职费 = 2 个月薪资</span></div>
+          <div class="card-title">招聘市场 <span class="right">工位 ${state.employees.length}/${officeCapacity(state)} · 入职费 = 2 个月薪资</span></div>
+          ${canHireMore(state) ? '' : '<div class="tiny warn" style="margin-bottom:6px">工位已满：请在园区扩建办公室或园区地块后继续招聘。</div>'}
           <div class="row" style="gap:5px;margin-bottom:8px;flex-wrap:wrap">
             <button class="btn small ${(state.recruitChannel || 'social') === 'social' ? 'primary' : ''}" data-act="recruit-channel" data-v="social">社招</button>
             <button class="btn small ${state.recruitChannel === 'campus' ? 'primary' : ''}" data-act="recruit-channel" data-v="campus">校招</button>
@@ -2639,7 +2651,7 @@ export function renderGame(root, state, opts = {}) {
                   <div class="between"><b>${esc(c.name)}</b><span class="tiny dim">${Math.floor(c.age)}岁 · ${c.edu}${c.fresh ? '（应届）' : ''}</span></div>
                   <div class="tiny dim">${c.field} · ${Math.round(c.exp)} 年经验 · 能力 ${Math.round(c.skill)} · <span style="color:${rk.color}">${rk.name}</span> · 期望 ¥${fmtNum(c.salary)}/月</div>
                 </div>
-                <button class="btn small primary" data-act="hire" data-i="${i}" data-dept="${c.deptId || ''}">录用</button>
+                <button class="btn small primary" data-act="hire" data-i="${i}" data-dept="${c.deptId || ''}" ${canHireMore(state) ? '' : 'disabled title="工位已满"'}>录用</button>
               </div>`;
             }).join('')}
           </div>

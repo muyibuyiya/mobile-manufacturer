@@ -20,18 +20,18 @@ export const COUNTRIES = [
 
 // prefs 权重之和为 1；price 表示价格敏感度（越大越看重便宜）
 export const MARKETS = [
-  { id: 'cn', name: '中国市场', pop: 1400, base: 22e6, wealth: 0.62, tariff: 0, prefs: { perf: 0.2, cam: 0.2, bat: 0.16, design: 0.16, brand: 0.13, price: 0.15 } },
-  { id: 'in', name: '印度市场', pop: 1400, base: 14e6, wealth: 0.32, tariff: 0.18, prefs: { perf: 0.14, cam: 0.16, bat: 0.22, design: 0.1, brand: 0.1, price: 0.28 } },
-  { id: 'na', name: '北美市场', pop: 380, base: 11e6, wealth: 0.95, tariff: 0.06, prefs: { perf: 0.2, cam: 0.17, bat: 0.12, design: 0.16, brand: 0.25, price: 0.1 } },
-  { id: 'eu', name: '西欧市场', pop: 420, base: 9e6, wealth: 0.85, tariff: 0.08, prefs: { perf: 0.17, cam: 0.2, bat: 0.14, design: 0.2, brand: 0.19, price: 0.1 } },
-  { id: 'sea', name: '东南亚市场', pop: 680, base: 6e6, wealth: 0.38, tariff: 0.12, prefs: { perf: 0.15, cam: 0.18, bat: 0.24, design: 0.12, brand: 0.11, price: 0.2 } },
-  { id: 'jp', name: '日本市场', pop: 125, base: 3e6, wealth: 0.9, tariff: 0.05, prefs: { perf: 0.18, cam: 0.22, bat: 0.12, design: 0.22, brand: 0.2, price: 0.06 } },
-  { id: 'kr', name: '韩国市场', pop: 52, base: 2e6, wealth: 0.82, tariff: 0.06, prefs: { perf: 0.2, cam: 0.18, bat: 0.14, design: 0.18, brand: 0.22, price: 0.08 } },
-  { id: 'sa', name: '南美市场', pop: 430, base: 5e6, wealth: 0.4, tariff: 0.2, prefs: { perf: 0.14, cam: 0.16, bat: 0.22, design: 0.14, brand: 0.14, price: 0.2 } },
-  { id: 'ee', name: '东欧市场', pop: 290, base: 3e6, wealth: 0.45, tariff: 0.12, prefs: { perf: 0.16, cam: 0.16, bat: 0.2, design: 0.14, brand: 0.16, price: 0.18 } },
-  { id: 'me', name: '中东市场', pop: 450, base: 3e6, wealth: 0.6, tariff: 0.1, prefs: { perf: 0.18, cam: 0.18, bat: 0.16, design: 0.2, brand: 0.18, price: 0.1 } },
-  { id: 'af', name: '非洲市场', pop: 1300, base: 4e6, wealth: 0.22, tariff: 0.2, prefs: { perf: 0.12, cam: 0.12, bat: 0.3, design: 0.1, brand: 0.1, price: 0.26 } },
-  { id: 'oc', name: '大洋洲市场', pop: 42, base: 1e6, wealth: 0.88, tariff: 0.06, prefs: { perf: 0.19, cam: 0.18, bat: 0.12, design: 0.2, brand: 0.21, price: 0.1 } },
+  { id: 'cn', name: '中国市场', pop: 1400, base: 22e6, wealth: 0.62, tariff: 0, openYear: 1980, entryCost: 800000, prefs: { perf: 0.2, cam: 0.2, bat: 0.16, design: 0.16, brand: 0.13, price: 0.15 } },
+  { id: 'in', name: '印度市场', pop: 1400, base: 14e6, wealth: 0.32, tariff: 0.18, openYear: 1995, entryCost: 600000, prefs: { perf: 0.14, cam: 0.16, bat: 0.22, design: 0.1, brand: 0.1, price: 0.28 } },
+  { id: 'na', name: '北美市场', pop: 380, base: 11e6, wealth: 0.95, tariff: 0.06, openYear: 1984, entryCost: 520000, prefs: { perf: 0.2, cam: 0.17, bat: 0.12, design: 0.16, brand: 0.25, price: 0.1 } },
+  { id: 'eu', name: '西欧市场', pop: 420, base: 9e6, wealth: 0.85, tariff: 0.08, openYear: 1986, entryCost: 470000, prefs: { perf: 0.17, cam: 0.2, bat: 0.14, design: 0.2, brand: 0.19, price: 0.1 } },
+  { id: 'sea', name: '东南亚市场', pop: 680, base: 6e6, wealth: 0.38, tariff: 0.12, openYear: 1988, entryCost: 400000, prefs: { perf: 0.15, cam: 0.18, bat: 0.24, design: 0.12, brand: 0.11, price: 0.2 } },
+  { id: 'jp', name: '日本市场', pop: 125, base: 3e6, wealth: 0.9, tariff: 0.05, openYear: 1982, entryCost: 320000, prefs: { perf: 0.18, cam: 0.22, bat: 0.12, design: 0.22, brand: 0.2, price: 0.06 } },
+  { id: 'kr', name: '韩国市场', pop: 52, base: 2e6, wealth: 0.82, tariff: 0.06, openYear: 1989, entryCost: 300000, prefs: { perf: 0.2, cam: 0.18, bat: 0.14, design: 0.18, brand: 0.22, price: 0.08 } },
+  { id: 'sa', name: '南美市场', pop: 430, base: 5e6, wealth: 0.4, tariff: 0.2, openYear: 1993, entryCost: 370000, prefs: { perf: 0.14, cam: 0.16, bat: 0.22, design: 0.14, brand: 0.14, price: 0.2 } },
+  { id: 'ee', name: '东欧市场', pop: 290, base: 3e6, wealth: 0.45, tariff: 0.12, openYear: 1991, entryCost: 320000, prefs: { perf: 0.16, cam: 0.16, bat: 0.2, design: 0.14, brand: 0.16, price: 0.18 } },
+  { id: 'me', name: '中东市场', pop: 450, base: 3e6, wealth: 0.6, tariff: 0.1, openYear: 1994, entryCost: 320000, prefs: { perf: 0.18, cam: 0.18, bat: 0.16, design: 0.2, brand: 0.18, price: 0.1 } },
+  { id: 'af', name: '非洲市场', pop: 1300, base: 4e6, wealth: 0.22, tariff: 0.2, openYear: 2000, entryCost: 350000, prefs: { perf: 0.12, cam: 0.12, bat: 0.3, design: 0.1, brand: 0.1, price: 0.26 } },
+  { id: 'oc', name: '大洋洲市场', pop: 42, base: 1e6, wealth: 0.88, tariff: 0.06, openYear: 1990, entryCost: 270000, prefs: { perf: 0.19, cam: 0.18, bat: 0.12, design: 0.2, brand: 0.21, price: 0.1 } },
 ];
 
 export const MARKET_MAP = Object.fromEntries(MARKETS.map((m) => [m.id, m]));

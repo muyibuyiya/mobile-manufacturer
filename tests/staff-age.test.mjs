@@ -1,7 +1,8 @@
 // 员工年龄/招聘渠道/老化退休回归
-import { createGame, generateEmployee } from '../js/core/state.js';
+import { createGame, generateEmployee, officeCapacity, canHireMore } from '../js/core/state.js';
 import { tick } from '../js/core/sim.js';
-import { EDUS } from '../js/data/world.js';
+import { EDUS, MARKETS } from '../js/data/world.js';
+import { newModel } from '../js/core/design.js';
 
 let bad = 0;
 const check = (name, ok, detail = '') => { if (!ok) bad += 1; console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? '  ' + detail : ''}`); };
@@ -63,6 +64,42 @@ check('未到龄不退休', s2.employees.some((e) => e.id === young.id));
 check('年龄按月增长', young.age > 40 && young.age < 40.2, String(young.age));
 check('司龄按月增长', young.tenure > 3 && young.tenure < 3.2, String(young.tenure));
 check('潜力随年龄衰减或持平', young.potential <= 100);
+
+// 工位硬上限：满员时不能继续招聘
+const s3 = createGame({ mode: 'sandbox', year: 2020, cash: 2e9 });
+const cap = officeCapacity(s3);
+check('初始人数不超过工位', s3.employees.length <= cap, `${s3.employees.length}/${cap}`);
+check('有空位时可招聘', canHireMore(s3) === true);
+while (s3.employees.length < cap) s3.employees.push(generateEmployee(2020, { profile: 'social' }));
+check('满员时禁止招聘', canHireMore(s3) === false, `${s3.employees.length}/${cap}`);
+
+// 薪资期望随市场基准上涨（年代通胀）
+const s4 = createGame({ mode: 'sandbox', year: 2020, cash: 2e9 });
+const low = s4.employees[0];
+low.expectSalary = 3000; low.salary = 3000;
+const beforeExp = low.expectSalary;
+tick(s4);
+check('薪资期望向市场价靠拢', low.expectSalary > beforeExp, `${beforeExp} → ${low.expectSalary}`);
+check('市场月薪写入状态', s4.company.marketSalary > 0, String(s4.company.marketSalary));
+
+// 市场年代开放与差异化进入成本
+check('市场有开放年份', MARKETS.every((m) => m.openYear >= 1980 && m.entryCost > 0));
+check('印度 1995 年才开放', MARKETS.find((m) => m.id === 'in').openYear === 1995);
+check('进入成本随市场规模不同', new Set(MARKETS.map((m) => m.entryCost)).size > 3);
+
+// 老机型自动退市：上市 18 个月、热度归零持续 6 个月
+const s5 = createGame({ mode: 'sandbox', year: 2020, cash: 2e9 });
+const old = newModel(2018, s5.tech.unlocked, '老机型');
+old.status = 'production'; old.released = true; old.markets = ['cn'];
+old.launched = { year: 2018, month: 0 }; old.heat = 0; old.price = { cn: 2000 };
+s5.models.push(old);
+for (let i = 0; i < 7; i++) tick(s5);
+check('热度归零的老机型自动下市', old.status === 'discontinued', old.status);
+check('自动下市记录时间', !!old.discontinuedAt);
+
+// 经验不早于行业：1980 年社招最多 2 年相关经验
+const early = generateEmployee(1980, { profile: 'social', skillMean: 60 });
+check('1980 年经验 ≤2 年', early.exp <= 2, String(early.exp));
 
 if (bad) process.exit(1);
 console.log('\nSTAFF AGE PASS');
