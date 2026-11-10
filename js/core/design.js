@@ -40,6 +40,17 @@ export function deviceTypeOf(design) {
   return t === 'tablet' ? 'tablet' : String(t).startsWith('watch') ? 'watch' : 'phone';
 }
 
+// 各品类可用的附加功能（手表不做屏下摄像头/均热板/指纹；平板不做屏下摄像头）
+export const CAT_EXTRAS = {
+  watch: ['x_wp', 'x_sec', 'x_sat'],
+  tablet: ['x_fp', 'x_face', 'x_wp', 'x_wl', 'x_fc', 'x_vc', 'x_sat', 'x_sec'],
+};
+
+// 返回该品类的附加功能白名单；手机沿用模板能力，返回 null 表示不额外限制
+export function allowedExtras(design) {
+  return CAT_EXTRAS[deviceTypeOf(design)] || null;
+}
+
 export function ensureDeviceExtras(design) {
   if (!design) return design;
   design.deviceType = deviceTypeOf(design);
@@ -65,6 +76,36 @@ export function ensureDeviceExtras(design) {
       if (!design.parts) design.parts = {};
       design.parts.battery = 'bw1';
     }
+  }
+  // 品类硬件合规：手表低功耗小容量、平板大电池大存储，避免跨品类复用带出不合规档位
+  if (design.parts) {
+    const nearest = (list, pick, fallback) => (pick || list[0] || {}).id || fallback;
+    if (design.deviceType === 'watch') {
+      const lowRam = RAMS.filter((x) => x.gb <= 4).sort((a, b) => b.gb - a.gb)[0];
+      const lowStg = STORAGES.filter((x) => x.gb <= 64).sort((a, b) => b.gb - a.gb)[0];
+      if (!RAMS.some((x) => x.id === design.parts.ram && x.gb <= 4)) design.parts.ram = nearest(RAMS, lowRam, design.parts.ram);
+      if (!STORAGES.some((x) => x.id === design.parts.storage && x.gb <= 64)) design.parts.storage = nearest(STORAGES, lowStg, design.parts.storage);
+      const wWired = CHARGERS.wired.filter((x) => x.watt <= 5).sort((a, b) => b.watt - a.watt)[0];
+      if (!CHARGERS.wired.some((x) => x.id === design.parts.charge?.wired && x.watt <= 5)) {
+        design.parts.charge = { ...(design.parts.charge || {}), wired: wWired?.id || 'w5', proto: 'p_std' };
+      }
+    } else if (design.deviceType === 'tablet') {
+      const bigRam = RAMS.filter((x) => x.gb >= 4).sort((a, b) => a.gb - b.gb)[0];
+      const bigStg = STORAGES.filter((x) => x.gb >= 64).sort((a, b) => a.gb - b.gb)[0];
+      const bigBat = BATTERIES.filter((x) => x.mah >= 5000).sort((a, b) => a.mah - b.mah)[0];
+      if (!RAMS.some((x) => x.id === design.parts.ram && x.gb >= 4)) design.parts.ram = nearest(RAMS, bigRam, design.parts.ram);
+      if (!STORAGES.some((x) => x.id === design.parts.storage && x.gb >= 64)) design.parts.storage = nearest(STORAGES, bigStg, design.parts.storage);
+      if (!BATTERIES.some((x) => x.id === design.parts.battery && x.mah >= 5000)) design.parts.battery = nearest(BATTERIES, bigBat, design.parts.battery);
+      if (!CHARGERS.wired.some((x) => x.id === design.parts.charge?.wired && x.watt >= 10)) {
+        const w = CHARGERS.wired.filter((x) => x.watt >= 10)[0];
+        if (w) design.parts.charge = { ...(design.parts.charge || {}), wired: w.id };
+      }
+    }
+  }
+  // 品类切换后剔除该品类不支持的附加功能（旧档/跨品类复用设计）
+  const allow = allowedExtras(design);
+  if (allow && Array.isArray(design.parts?.extras)) {
+    design.parts.extras = design.parts.extras.filter((id) => allow.includes(id));
   }
   return design;
 }

@@ -1,6 +1,6 @@
 // 手机设计器：参数化 2D 六视图 + three.js 3D 模型 + 合理性校验
 import * as THREE from '../../vendor/three.module.js';
-import { derive, validate, bomCost, screenSize, SCREEN_ASPECTS, defaultDesign, maxScreenInch, cameraModuleRect, lensSpecs, ensureLenses, ensureBranding, ensurePackaging, ensureDeviceExtras, ensureTemplate, packageScore, PACKAGE_MATERIALS, speakerRowSpec, PORT_OPENINGS, layoutPos, makeLens, arrangeLenses } from '../core/design.js';
+import { derive, validate, bomCost, screenSize, SCREEN_ASPECTS, defaultDesign, maxScreenInch, cameraModuleRect, lensSpecs, ensureLenses, ensureBranding, ensurePackaging, ensureDeviceExtras, ensureTemplate, packageScore, PACKAGE_MATERIALS, speakerRowSpec, PORT_OPENINGS, layoutPos, makeLens, arrangeLenses, allowedExtras } from '../core/design.js';
 import { CPUS, RAMS, STORAGES, SCREENS, CAMERAS, BATTERIES, SYSTEMS, EXTRAS, MATERIALS, FINISHES, CHARGERS, BODY_COLORS } from '../data/parts.js';
 import { PHONE_TEMPLATES, PHONE_TPL_MAP, tplCaps, DEVICE_CATEGORIES, templatesForCategory, defaultTemplateForCategory } from '../data/templates.js';
 import { IMAGE_SENSORS, LENS_TYPES, DECO_SHAPES, PANEL_VENDORS, RES_TIERS, lensTypeById, sensorById, lensRadiusMm } from '../data/hardware.js';
@@ -406,6 +406,8 @@ export function renderDesigner(container, state, model, hooks = {}) {
     const ramChoices = (category === 'watch' ? RAMS.filter((x) => x.gb <= 4) : category === 'tablet' ? RAMS.filter((x) => x.gb >= 4) : RAMS);
     const storageChoices = (category === 'watch' ? STORAGES.filter((x) => x.gb <= 64) : category === 'tablet' ? STORAGES.filter((x) => x.gb >= 64) : STORAGES);
     const protoChoices = (category === 'watch' ? CHARGERS.proto.filter((x) => x.id === 'p_std' || x.tech === 'nicd') : CHARGERS.proto);
+    // 附加功能按品类过滤：手表不做屏下摄像头/均热板/指纹，平板不做屏下摄像头
+    const catExtras = allowedExtras(d) || TPL.extras;
     const bodyLMin = isWatch ? 30 : isTablet ? 120 : 70, bodyLMax = isTablet ? 360 : 200;
     const bodyWMin = isWatch ? 30 : isTablet ? 80 : 35, bodyWMax = isTablet ? 260 : 100;
     const ports = body.ports || {};
@@ -783,10 +785,10 @@ export function renderDesigner(container, state, model, hooks = {}) {
       })()})
       ` : ''}`))
       + (isTablet ? section('tablet', '平板专属', `
-      <div class="tiny dim" style="margin:2px 0 8px">平板机身支持分屏、支架与手写笔；屏幕设计页可选平板分屏 UI。</div>
+      <div class="tiny dim" style="margin:2px 0 8px">平板机身支持分屏、支架与手写笔；屏幕设计页可选平板分屏 UI。支架/手写笔本体属外围配件，图纸只画磁吸位。</div>
       <label class="opt ${d.tablet.stand ? 'on' : ''}" style="display:flex;gap:6px;align-items:center;padding:6px 8px;margin-bottom:6px">
         <input type="checkbox" data-k="tablet.stand" data-bool="1" ${d.tablet.stand ? 'checked' : ''} style="width:auto" />
-        <span>背部一体式支架（可折叠支撑）</span>
+        <span>背部支架磁吸位（不画支架本体）</span>
       </label>
       <label class="opt ${d.tablet.keyboard ? 'on' : ''}" style="display:flex;gap:6px;align-items:center;padding:6px 8px;margin-bottom:6px">
         <input type="checkbox" data-k="tablet.keyboard" data-bool="1" ${d.tablet.keyboard ? 'checked' : ''} style="width:auto" />
@@ -878,8 +880,8 @@ export function renderDesigner(container, state, model, hooks = {}) {
       </label>`)
       + section('extras', '附加功能', `
       <div class="grid" style="grid-template-columns:1fr 1fr;gap:5px">
-        ${EXTRAS.filter((x) => TPL.extras.includes(x.id)).map((x) => {
-          const tplOk = TPL.extras.includes(x.id);
+        ${EXTRAS.filter((x) => catExtras.includes(x.id)).map((x) => {
+          const tplOk = catExtras.includes(x.id);
           const ok = tplOk && unlocked.includes(x.tech) && (x.year || 0) <= availYear;
           const on = model.design.parts.extras.includes(x.id);
           const tip = !tplOk ? `${TPL.name}形态不可用` : '';
@@ -2238,8 +2240,8 @@ export function renderDesigner(container, state, model, hooks = {}) {
     }
     const t = d.tablet || {};
     if (isFront || isBack) {
-      if (t.stylus) {
-        // 只画手写笔磁吸凹槽，不画笔本体
+      if (t.stylus && isBack) {
+        // 只画手写笔磁吸凹槽，不画笔本体（正面不可见）
         ctx.fillStyle = 'rgba(12,17,24,.55)';
         roundRect(ctx, x + W * 0.24, y + 0.35 * scale, W * 0.52, 0.55 * scale, 0.28 * scale);
         ctx.fill();
@@ -2250,6 +2252,21 @@ export function renderDesigner(container, state, model, hooks = {}) {
         ctx.lineTo(x + W * 0.74, y + 0.62 * scale);
         ctx.stroke();
       }
+      if (t.stand && isBack) {
+        // 支架属外围配件：只画背部磁吸触点，不画支架本体
+        ctx.fillStyle = 'rgba(210,220,235,.5)';
+        for (const dx of [-1, 1]) {
+          roundRect(ctx, x + W / 2 + dx * W * 0.1 - 1.1 * scale, y + H * 0.56, 2.2 * scale, 1.2 * scale, 0.6 * scale);
+          ctx.fill();
+        }
+        ctx.strokeStyle = 'rgba(255,255,255,.14)';
+        ctx.setLineDash([2 * scale, 2 * scale]);
+        ctx.beginPath();
+        ctx.moveTo(x + W / 2 - W * 0.12, y + H * 0.56);
+        ctx.lineTo(x + W / 2 + W * 0.12, y + H * 0.56);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
       if (t.keyboard) {
         ctx.fillStyle = '#d8b25a';
         for (let i = -1; i <= 1; i++) {
@@ -2258,11 +2275,38 @@ export function renderDesigner(container, state, model, hooks = {}) {
           ctx.fill();
         }
       }
-      if (t.cellular) {
+      if (t.cellular && isBack) {
         ctx.fillStyle = 'rgba(42,49,57,.9)';
         roundRect(ctx, x + W - 0.9 * scale, y + H * 0.16, 0.8 * scale, H * 0.32, 0.4 * scale);
         ctx.fill();
       }
+    }
+    if (isSide && t.cellular) {
+      // 侧视：天线注塑条沿上段边框
+      ctx.fillStyle = 'rgba(42,49,57,.9)';
+      roundRect(ctx, x - 0.4 * scale, y + H * 0.16, W + 0.8 * scale, H * 0.32, 0.4 * scale);
+      ctx.fill();
+    }
+    if (isSide && t.stylus) {
+      // 侧视：顶部磁吸槽剖面
+      ctx.fillStyle = 'rgba(12,17,24,.7)';
+      roundRect(ctx, x + W * 0.15, y - 0.35 * scale, W * 0.7, 0.55 * scale, 0.24 * scale);
+      ctx.fill();
+    }
+    if (view.id === 'bottom' && t.keyboard) {
+      // 底视：3 pin 键盘触点
+      ctx.fillStyle = '#d8b25a';
+      for (let i = -1; i <= 1; i++) {
+        ctx.beginPath();
+        ctx.arc(x + W / 2 + i * W * 0.06, y + H / 2, 0.3 * scale, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    if (view.id === 'top' && t.stylus) {
+      // 顶视：磁吸槽开口
+      ctx.fillStyle = 'rgba(12,17,24,.7)';
+      roundRect(ctx, x + W * 0.24, y + H / 2 - 0.3 * scale, W * 0.52, 0.6 * scale, 0.28 * scale);
+      ctx.fill();
     }
   }
 
@@ -2647,6 +2691,16 @@ export function renderDesigner(container, state, model, hooks = {}) {
         const strip = new THREE.Mesh(new THREE.BoxGeometry(0.8, L * 0.32, 0.25), new THREE.MeshStandardMaterial({ color: 0x2a3139, metalness: 0.1, roughness: 0.7 }));
         strip.position.set(W / 2 - 0.1, L * 0.18, -FACE - 0.15);
         g.add(strip);
+      }
+      if (t.stand) {
+        // 支架本体属外围配件不建模，只做背部磁吸触点
+        const padMat = new THREE.MeshStandardMaterial({ color: 0xd2dced, metalness: 0.7, roughness: 0.35 });
+        for (const dx of [-1, 1]) {
+          const pad = new THREE.Mesh(new THREE.BoxGeometry(2.2, 1.2, 0.12), padMat);
+          pad.userData.part = 'body';
+          pad.position.set(dx * W * 0.1, -L * 0.06, -FACE - 0.06);
+          g.add(pad);
+        }
       }
     }
   }
@@ -4149,6 +4203,22 @@ export function renderDesigner(container, state, model, hooks = {}) {
         if (!batOk) {
           const pick = BATTERIES.filter((x) => x.mah >= 5000 && x.year <= year).slice(-1)[0];
           if (pick) model.design.parts.battery = pick.id;
+        }
+        // 平板硬件下限：内存 ≥4GB、存储 ≥64GB、有线 ≥10W（避免跨品类带入不合规档位）
+        const ramOk = RAMS.find((x) => x.id === model.design.parts.ram && x.gb >= 4);
+        if (!ramOk) {
+          const rp = RAMS.filter((x) => x.gb >= 4 && x.year <= year).slice(-1)[0];
+          if (rp) model.design.parts.ram = rp.id;
+        }
+        const stOk = STORAGES.find((x) => x.id === model.design.parts.storage && x.gb >= 64);
+        if (!stOk) {
+          const sp = STORAGES.filter((x) => x.gb >= 64 && x.year <= year).slice(-1)[0];
+          if (sp) model.design.parts.storage = sp.id;
+        }
+        const wiredOk = CHARGERS.wired.find((x) => x.id === model.design.parts.charge?.wired && x.watt >= 10);
+        if (!wiredOk) {
+          const wp = CHARGERS.wired.filter((x) => x.watt >= 10 && x.year <= year)[0];
+          if (wp) model.design.parts.charge = { ...(model.design.parts.charge || {}), wired: wp.id };
         }
       }
       if (cat === 'watch') {

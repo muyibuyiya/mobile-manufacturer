@@ -106,6 +106,13 @@ async function main() {
   check('评分项可点击定位', jumpFix === true, String(jumpFix));
   const hw2d = await ev(`(() => { const cv = document.querySelector('#dz-2d'); const a = cv.toDataURL(); const c = document.querySelector('[data-k="tablet.stylus"]'); c.checked = true; c.dispatchEvent(new Event('input', { bubbles: true })); c.dispatchEvent(new Event('change', { bubbles: true })); return { diff: a !== document.querySelector('#dz-2d').toDataURL() }; })()`);
   check('2D 视图同步品类硬件', hw2d.diff === true, JSON.stringify(hw2d));
+  const exTab = await ev(`(() => { const t = document.body.textContent; const opts = [...document.querySelectorAll('[data-x]')].map(x => x.dataset.x); return { udc: opts.includes('x_udc'), sat: opts.includes('x_sat'), standLabel: t.includes('不画支架本体'), n: opts.length }; })()`);
+  check('平板附加功能按品类过滤（无屏下摄像头/有卫星）', exTab.udc === false && exTab.sat === true, JSON.stringify(exTab));
+  check('支架只画磁吸位（选项文案）', exTab.standLabel === true, JSON.stringify(exTab));
+  await pickCat('watch');
+  const exWatch = await ev(`(() => { const opts = [...document.querySelectorAll('[data-x]')].map(x => x.dataset.x); return { opts, n: opts.length, t: document.body.textContent.includes('屏下摄像头') }; })()`);
+  check('手表附加功能按品类过滤', exWatch.n === 3 && !exWatch.opts.includes('x_udc') && !exWatch.opts.includes('x_fp'), JSON.stringify(exWatch));
+  await pickCat('tablet');
   const pkg = await ev(`(() => { const s = document.querySelector('[data-k="packaging.material"]'); s.value = 'premium'; s.dispatchEvent(new Event('input', { bubbles: true })); s.dispatchEvent(new Event('change', { bubbles: true })); return s.value; })()`);
   await sleep(250);
   check('包装材质可切换', pkg === 'premium' && await ev(`/包装评分 [56]/.test(document.body.textContent)`), pkg);
