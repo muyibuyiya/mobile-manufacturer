@@ -540,9 +540,9 @@ function stepBrand(state, report, extraBrand = 0) {
 
 const LIFE_EVENTS = [
   { text: '{n} 过生日，团队一起庆祝，满意度 +4。', fx: (e) => { e.satisfaction = clamp(e.satisfaction + 4, 0, 100); } },
-  { text: '{n} 休完婚假归来，满意度 +6，薪资期望 +5%。', fx: (e) => { e.satisfaction = clamp(e.satisfaction + 6, 0, 100); e.expectSalary = Math.round(e.expectSalary * 1.05 / 100) * 100; } },
-  { text: '{n} 因健康问题请假两周，压力有所缓解。', fx: (e) => { e.stress = clamp(e.stress - 6, 0, 100); e.satisfaction = clamp(e.satisfaction - 2, 0, 100); } },
-  { text: '{n} 最近家庭事务缠身，压力 +8。', fx: (e) => { e.stress = clamp(e.stress + 8, 0, 100); } },
+  { text: '{n} 休完婚假归来，满意度 +6，薪资期望 +5%。', min: 24, max: 38, fx: (e) => { e.satisfaction = clamp(e.satisfaction + 6, 0, 100); e.expectSalary = Math.round(e.expectSalary * 1.05 / 100) * 100; } },
+  { text: '{n} 因健康问题请假两周，压力有所缓解。', min: 40, fx: (e) => { e.stress = clamp(e.stress - 6, 0, 100); e.satisfaction = clamp(e.satisfaction - 2, 0, 100); } },
+  { text: '{n} 最近家庭事务缠身，压力 +8。', min: 28, max: 48, fx: (e) => { e.stress = clamp(e.stress + 8, 0, 100); } },
   { text: '{n} 与同事发生争执，效率暂降 1 点。', fx: (e) => { e.eff = clamp(e.eff - 1, 10, 100); } },
   { text: '{n} 自费参加了行业研讨会，能力 +0.4。', fx: (e) => { e.skill = clamp(e.skill + 0.4, 1, 99); } },
   // v1.5.0：更多个人事件，让名册更有"人味"
@@ -557,7 +557,16 @@ function stepEmployees(state, report) {
   const avgSalary = state.employees.length ? sum(state.employees, (e) => e.salary) / state.employees.length : 0;
   const marketSalary = avgSalary * (0.85 + Math.random() * 0.3);
   const leaving = [];
+  const retiring = [];
   for (const e of state.employees) {
+    // 每月自然老化：年龄与司龄按 1/12 年推进，经验随学历起点重算，35 岁后潜力缓慢衰减
+    e.age = +((Number(e.age) || 30) + 1 / 12).toFixed(2);
+    e.tenure = +((Number(e.tenure) || 0) + 1 / 12).toFixed(2);
+    const startAge = ({ 专科: 21, 本科: 22, 硕士: 24, 博士: 27 })[e.edu] || 22;
+    e.exp = +clamp(e.age - startAge, 0, 38).toFixed(1);
+    if (e.fresh && e.tenure >= 1) e.fresh = false; // 入职满一年不再算应届
+    if (e.age > 35) e.potential = +clamp((e.potential ?? 50) - 0.04, 5, 100).toFixed(2);
+    if (e.age >= 60) { retiring.push(e); continue; }
     const payRatio = e.salary / Math.max(e.expectSalary, 1);
     const stressDelta = (e.stress > 70 ? 0.8 : -0.3);
     e.stress = clamp(e.stress + stressDelta + rand(-1.5, 1.5), 0, 100);
@@ -598,9 +607,12 @@ function stepEmployees(state, report) {
     }
     // ---- 员工个人小事件：让名册有"人味" ----
     if (chance(0.02) && !leaving.includes(e)) {
-      const ev = LIFE_EVENTS[Math.floor(Math.random() * LIFE_EVENTS.length)];
-      ev.fx(e);
-      report.notes.push(ev.text.replace('{n}', e.name));
+      const pool = LIFE_EVENTS.filter((ev) => (!ev.min || e.age >= ev.min) && (!ev.max || e.age <= ev.max));
+      const ev = pool[Math.floor(Math.random() * pool.length)];
+      if (ev) {
+        ev.fx(e);
+        report.notes.push(ev.text.replace('{n}', e.name));
+      }
     }
   }
   for (const e of leaving) {
@@ -608,6 +620,25 @@ function stepEmployees(state, report) {
     addLog(state, 'hr', `${e.name} 离职（满意度 ${Math.round(e.satisfaction)}）。`);
   }
   if (leaving.length) report.notes.push(`${leaving.length} 名员工离职。`);
+
+  // 60 岁退休：N+1 个月薪资补偿，释放主管/高管席位；CEO 退休需重新任命
+  for (const e of retiring) {
+    const years = Math.max(1, Math.round(Number(e.tenure) || 1));
+    const pay = Math.round(e.salary * (years + 1));
+    state.company.cash -= pay;
+    state.employees = state.employees.filter((x) => x.id !== e.id);
+    state.org = state.org || { heads: {}, execs: {}, history: [] };
+    for (const [dept, id] of Object.entries(state.org.heads || {})) {
+      if (id === e.id) delete state.org.heads[dept];
+    }
+    for (const [seat, id] of Object.entries(state.org.execs || {})) {
+      if (id === e.id) delete state.org.execs[seat];
+    }
+    if (state.company.ceo === e.id) state.company.ceo = null;
+    addLog(state, 'hr', `${e.name} 到龄退休（${Math.floor(e.age)} 岁），公司支付 ${fmtMoney(pay)} 退休补偿。`);
+    report.notes.push(`${e.name} 退休，补偿 ${fmtMoney(pay)}。`);
+  }
+  if (retiring.length) report.notes.push(`${retiring.length} 名员工到龄退休，请及时补充人手。`);
 
   // 招聘市场刷新（不存库，按需生成）
   state.company.marketSalary = Math.round(marketSalary);
@@ -949,6 +980,7 @@ export function poachFromRival(state, compId) {
   if (!c) return { ok: false, msg: '该公司已不在市场中' };
   const emp = generateEmployee(state.date.year, {
     skillMean: clamp(60 + (c.brand || 40) * 0.28, 55, 92),
+    profile: 'headhunter',
     deptId: 'rnd',
     role: '高级工程师',
     field: '手机研发',

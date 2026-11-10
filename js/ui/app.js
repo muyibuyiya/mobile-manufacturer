@@ -2587,7 +2587,7 @@ export function renderGame(root, state, opts = {}) {
                   const rk = rankOf(e.skill);
                   return `
                   <tr>
-                    <td>${e.star ? '<span title="行业明星：产出 +12%，品牌 +，注意被挖角">⭐</span> ' : ''}<b>${esc(e.name)}</b><div class="tiny dim">${e.age}岁 · ${e.edu} · ${e.field}</div></td>
+                    <td>${e.star ? '<span title="行业明星：产出 +12%，品牌 +，注意被挖角">⭐</span> ' : ''}<b>${esc(e.name)}</b><div class="tiny dim">${Math.floor(e.age)}岁 · ${e.edu}${e.fresh ? '（应届）' : ''} · ${e.field}</div></td>
                     <td>
                       <select data-field="emp-dept" data-id="${e.id}" style="padding:3px 4px;font-size:11.5px">
                         <option value="">待分配</option>
@@ -2636,8 +2636,8 @@ export function renderGame(root, state, opts = {}) {
               return `
               <div class="list-item">
                 <div style="flex:1">
-                  <div class="between"><b>${esc(c.name)}</b><span class="tiny dim">${c.age}岁 · ${c.edu}</span></div>
-                  <div class="tiny dim">${c.field} · 能力 ${Math.round(c.skill)} · <span style="color:${rk.color}">${rk.name}</span> · 期望 ¥${fmtNum(c.salary)}/月</div>
+                  <div class="between"><b>${esc(c.name)}</b><span class="tiny dim">${Math.floor(c.age)}岁 · ${c.edu}${c.fresh ? '（应届）' : ''}</span></div>
+                  <div class="tiny dim">${c.field} · ${Math.round(c.exp)} 年经验 · 能力 ${Math.round(c.skill)} · <span style="color:${rk.color}">${rk.name}</span> · 期望 ¥${fmtNum(c.salary)}/月</div>
                 </div>
                 <button class="btn small primary" data-act="hire" data-i="${i}" data-dept="${c.deptId || ''}">录用</button>
               </div>`;
@@ -3321,7 +3321,7 @@ export function renderGame(root, state, opts = {}) {
         const b = leaderBonus(e);
         const rk = rankOf(e.skill);
         return `<tr>
-          <td><b>${esc(e.name)}</b><div class="tiny dim">${rk.name} · ${e.role} · ${e.age} 岁</div></td>
+          <td><b>${esc(e.name)}</b><div class="tiny dim">${rk.name} · ${e.role} · ${Math.floor(e.age)} 岁</div></td>
           <td class="num">${Math.round(e.skill)}</td>
           <td class="num">${e.comm}</td>
           <td class="num">${Math.round(e.satisfaction)}</td>
@@ -4203,7 +4203,7 @@ export function renderGame(root, state, opts = {}) {
         <div style="flex:1;min-width:0">
           <div class="row" style="gap:8px;flex-wrap:wrap"><b style="font-size:16px">${esc(e.name)}${e.star ? ' ⭐' : ''}</b>
             <span class="rank-badge" style="background:${rk.color}22;color:${rk.color};border-color:${rk.color}66">${rk.name}</span></div>
-          <div class="tiny dim" style="margin-top:4px">${e.gender || ''} · ${e.age} 岁 · ${e.edu || ''} · ${e.exp} 年经验 · ${e.field || ''}</div>
+          <div class="tiny dim" style="margin-top:4px">${e.gender || ''} · ${Math.floor(e.age)} 岁 · ${e.edu || ''}${e.fresh ? '（应届）' : ''} · ${Math.round(e.exp)} 年经验 · ${e.field || ''}</div>
           <div class="tiny dim">${dept ? dept.name : '待分配'} · ${e.role} · 月薪 ¥${fmtNum(e.salary)}（期望 ¥${fmtNum(e.expectSalary)}）</div>
         </div>
       </div>
@@ -4435,8 +4435,8 @@ function genPool(state, channel = 'social') {
     let mul = 1;
     if (channel === 'campus') { skillMean = 32 + state.company.brand * 0.1 + (Math.random() - 0.5) * 10; mul = 0.6; if (!campusSeason && !state.recruitment?.campusEventMonths) skillMean -= 5; }
     else if (channel === 'headhunter') { skillMean = 68 + state.company.brand * 0.15 + (Math.random() - 0.5) * 12; mul = 1.35; }
-    const emp = generateEmployee(state.date.year, { skillMean, deptId: dept, role: roles[Math.floor(Math.random() * roles.length)] });
-    if (channel === 'campus') { emp.potential = Math.min(100, emp.potential + 12); emp.edu = '本科（应届）'; }
+    const emp = generateEmployee(state.date.year, { skillMean, deptId: dept, role: roles[Math.floor(Math.random() * roles.length)], profile: channel });
+    if (channel === 'campus') emp.potential = Math.min(100, emp.potential + 12);
     emp.salary = Math.round(emp.salary * mul / 100) * 100;
     emp.expectSalary = Math.round(emp.expectSalary * mul / 100) * 100;
     pool.push(emp);

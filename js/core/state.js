@@ -23,7 +23,7 @@ import { compactAll } from './history.js';
 
 export { DEPT_DEFS, ROLE_BY_DEPT };
 
-export const GAME_VERSION = '1.19.0'; // 全局唯一版本号（启动页/关于/存档兼容判断）
+export const GAME_VERSION = '1.20.0'; // 全局唯一版本号（启动页/关于/存档兼容判断）
 
 // 室内布局（v2）：房间可拖放/调尺寸 + 家具/隔墙单数据源。
 // 旧档（v1：仅 items/edges，房间位置硬编码）经 migrateV1 迁移：rooms 取默认双排布局，items/edges 原样保留
@@ -78,13 +78,49 @@ function salaryBase(year) {
 }
 
 let empSeq = 0;
+// 各学历的常态入职年龄：专科 21 / 本科 22 / 硕士 24 / 博士 27
+const EDU_START_AGE = { 专科: 21, 本科: 22, 硕士: 24, 博士: 27 };
+// 中间密集、两端稀疏的年龄采样（sum(3) 近似正态峰）
+function skewAge(min, max) {
+  const r = (Math.random() + Math.random() + Math.random()) / 3;
+  return Math.round(min + (max - min) * r);
+}
+// 招聘渠道 → 年龄区间（campus 由学历决定，不用此表）
+const PROFILE_AGE = {
+  social: [22, 40],
+  headhunter: [28, 45],
+  exec: [32, 48],
+  initial: [25, 40],
+};
+// 按技能与年龄挑学历：年龄不到则不能出现更高学历
+function pickEdu(skill, age, profile) {
+  if (profile === 'campus') {
+    const r = Math.random();
+    const edu = r < 0.05 ? '博士' : r < 0.38 ? '硕士' : '本科';
+    return edu;
+  }
+  const maxIdx = EDUS.filter((x) => (EDU_START_AGE[x] || 22) <= age).length - 1;
+  const want = clamp(Math.floor(skill / 26) + 1, 1, 4) - 1;
+  const idx = Math.max(0, Math.min(want, maxIdx));
+  // 高技能更可能取到上限档，但不会越过年龄限制
+  return EDUS[Math.random() < 0.55 ? idx : Math.max(0, idx - 1)] || '本科';
+}
 export function generateEmployee(year, opts = {}) {
   const skill = clamp(gauss(opts.skillMean ?? 48, opts.skillSd ?? 14), 8, 97);
   const foreign = chance(0.28);
   const name = foreign ? pick(FOREIGN).join(' ') : pick(SURNAMES) + pick(GIVEN);
-  const age = randInt(22, 58);
-  const exp = clamp(age - 22 + randInt(-2, 2), 0, 35);
-  const edu = pick(EDUS.slice(0, clamp(Math.floor(skill / 26) + 1, 1, 4)));
+  const profile = opts.profile || 'social';
+  let age, edu, exp;
+  if (profile === 'campus') {
+    edu = pickEdu(skill, 22, profile);
+    age = clamp((EDU_START_AGE[edu] || 22) + randInt(0, 2), 21, 29);
+    exp = 0;
+  } else {
+    const [lo, hi] = PROFILE_AGE[profile] || PROFILE_AGE.social;
+    age = skewAge(lo, hi);
+    edu = pickEdu(skill, age, profile);
+    exp = clamp(age - (EDU_START_AGE[edu] || 22) + randInt(-1, 1), 0, 38);
+  }
   const traits = [];
   const pool = [...TRAITS];
   for (let i = 0; i < randInt(1, 2); i++) {
@@ -102,6 +138,8 @@ export function generateEmployee(year, opts = {}) {
     age,
     edu,
     exp,
+    fresh: profile === 'campus',
+    tenure: 0,
     field: opts.field || pick(FIELDS),
     skill: Math.round(skillFinal),
     eff: Math.round(clamp(gauss(58, 12) + tBonus('eff'), 10, 100)),
@@ -216,13 +254,13 @@ export function createGame(opts) {
   for (let i = 0; i < startCount; i++) {
     const dept = i < 2 ? 'rnd' : i < 3 ? 'design' : i < 4 ? 'mkt' : i < 5 ? 'sales' : 'prod';
     const emp = generateEmployee(year, {
-      skillMean, deptId: dept,
+      skillMean, deptId: dept, profile: 'initial',
       role: ROLE_BY_DEPT[dept][i % 2 ? 1 : 0],
     });
     state.employees.push(emp);
   }
   // 任命一个初始管理者
-  const ceo = generateEmployee(year, { skillMean: 66, deptId: 'exec', role: 'CEO' });
+  const ceo = generateEmployee(year, { skillMean: 66, deptId: 'exec', role: 'CEO', profile: 'exec' });
   ceo.salary = Math.round(ceo.salary * 1.6);
   state.employees.push(ceo);
   state.company.ceo = ceo.id;
@@ -449,6 +487,8 @@ export function sanitizeState(s) {
     }
     if (!Number.isFinite(Number(e.quality))) e.quality = 55;
     if (!Number.isFinite(Number(e.trained))) e.trained = 0;
+    if (!Number.isFinite(Number(e.tenure))) e.tenure = 0;
+    if (typeof e.fresh !== 'boolean') e.fresh = false;
     if (!Number.isFinite(Number(e.grew))) e.grew = 0;
     if (!Number.isFinite(Number(e.leaveRisk))) e.leaveRisk = 0;
     if (typeof e.star !== 'boolean') e.star = !!e.star;

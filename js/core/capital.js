@@ -534,7 +534,7 @@ export function stepSubsidiaries(state, report) {
     }
     // ---- 员工互派：子公司输送 1 名成熟工程师（免入职费）----
     if (chance(0.04) && !state.subEmployeeOffer) {
-      state.subEmployeeOffer = { subId: sub.id, subName: sub.name, emp: generateEmployee(year, { skillMean: 66 + sub.brand * 0.12 }), months: 3 };
+      state.subEmployeeOffer = { subId: sub.id, subName: sub.name, emp: generateEmployee(year, { skillMean: 66 + sub.brand * 0.12, profile: 'social' }), months: 3 };
     }
     if (state.subTechOffer && --state.subTechOffer.months <= 0) state.subTechOffer = null;
     if (state.subEmployeeOffer && --state.subEmployeeOffer.months <= 0) state.subEmployeeOffer = null;
