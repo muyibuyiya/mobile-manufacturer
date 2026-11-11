@@ -275,7 +275,6 @@ export function renderDesigner(container, state, model, hooks = {}) {
     controlsHidden = v;
     try { localStorage.setItem('dz_left_hidden', v ? '1' : '0'); } catch (e) { /* 忽略 */ }
     applyControlsHidden();
-    if (!v) setAssessCollapsed(true); // 打开左栏时收起评估面板
     if (viewMode === '2d') setTimeout(draw2D, 30); else setTimeout(buildPhone, 30);
   }
   panelToggle.addEventListener('click', () => setControlsHidden(!controlsHidden));
@@ -399,7 +398,6 @@ export function renderDesigner(container, state, model, hooks = {}) {
     try { localStorage.setItem(DZ_ASSESS_KEY, v ? '1' : '0'); } catch (e) { /* 忽略 */ }
     applyAssessCollapsed();
     renderAssessment();
-    if (!v) setControlsHidden(true); // 打开评估面板时收起左栏（同时只开一个侧栏）
     if (!v && viewMode === '3d') setTimeout(() => buildPhone(), 30);
   }
   container.querySelector('#dz-assess-tab')?.addEventListener('click', () => setAssessCollapsed(false));

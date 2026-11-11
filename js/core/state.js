@@ -24,7 +24,7 @@ import { compactAll } from './history.js';
 
 export { DEPT_DEFS, ROLE_BY_DEPT };
 
-export const GAME_VERSION = '1.32.0'; // 全局唯一版本号（启动页/关于/存档兼容判断）
+export const GAME_VERSION = '1.32.1'; // 全局唯一版本号（启动页/关于/存档兼容判断）
 
 // 室内布局（v2）：房间可拖放/调尺寸 + 家具/隔墙单数据源。
 // 旧档（v1：仅 items/edges，房间位置硬编码）经 migrateV1 迁移：rooms 取默认双排布局，items/edges 原样保留

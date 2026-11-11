@@ -51,20 +51,17 @@ async function main() {
     };
   })()`);
 
-  // 1) 平板横屏：左栏默认展开，评估按宽度收起；画布为两列
+  // 1) 平板横屏：左栏常驻（两列），评估按宽度收起
   await openDesigner(1100, 800);
   const m0 = await measure();
-  check('1100×800 左栏默认展开（两列）', m0.cols === 2 && m0.stage.w >= 700, `cols=${m0.cols} ${m0.stage.w}px`);
+  check('1100×800 左栏常驻（两列）', m0.cols === 2 && m0.stage.w >= 700, `cols=${m0.cols} ${m0.stage.w}px`);
   check('1100×800 无横向溢出', m0.scrollW <= m0.innerW + 1, `${m0.scrollW}/${m0.innerW}`);
   check('1100×800 悬浮评估按钮在画布右上角', !!m0.tab && m0.tab.y >= m0.wrap.y && m0.tab.right <= m0.wrap.right + 1, JSON.stringify(m0.tab));
 
-  // 收起左栏：画布独占整宽
-  await ev(`document.querySelector('#dz-panel-toggle')?.click()`); await sleep(350);
-  const m1 = await measure();
-  check('收起左栏后画布全宽', m1.cols === 1 && m1.stage.w >= 900, `cols=${m1.cols} ${m1.stage.w}px`);
-
-  // 2) 展开评估：面板完整落在画布内，且不改变画布宽度
+  const leftW0 = await ev(`Math.round(document.querySelector('#dz-left').clientWidth)`);
+  // 2) 打开评估：面板浮在画布内，画布与左栏都不变
   await ev(`document.querySelector('#dz-assess-tab')?.click()`); await sleep(500);
+  const m1 = await measure();
   const expanded = await ev(`(() => {
     const p = document.querySelector('#dz-right'); const wrap = document.querySelector('.dz-canvas-wrap');
     const pb = p.getBoundingClientRect(); const wb = wrap.getBoundingClientRect();
@@ -74,8 +71,10 @@ async function main() {
   check('展开后面板完整落在画布内', expanded.inside, JSON.stringify(expanded));
   check('面板可见且可关闭', expanded.opacity === '1' && expanded.hasClose, JSON.stringify(expanded));
   const m2 = await measure();
-  check('展开面板时左栏保持收起', m2.cols === 1, `cols=${m2.cols}`);
+  check('展开面板时左栏保持显示', m2.cols === 2, `cols=${m2.cols}`);
   check('展开不改变画布宽度', m2.stage.w === m1.stage.w, `${m1.stage.w} -> ${m2.stage.w}`);
+  const leftW1 = await ev(`Math.round(document.querySelector('#dz-left').clientWidth)`);
+  check('展开面板不改变左栏宽度', leftW0 === leftW1 && leftW1 > 200, `${leftW0} -> ${leftW1}`);
 
   // 3) 平板竖屏：画布与参数纵向堆叠，面板只盖画布
   await openDesigner(900, 1440);

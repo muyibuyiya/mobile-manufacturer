@@ -100,8 +100,6 @@ async function main() {
     b.click();
     return off && score && !d()?.classList.contains('assess-collapsed');
   })()`));
-  // 评估展开时左栏会被互斥收起，这里重新打开左栏再量宽度
-  await ev(`document.querySelector('#dz-panel-toggle')?.click()`); await sleep(300);
   check('左栏可拖宽', await ev(`(() => { const l = document.querySelector('#dz-left'); return !!document.querySelector('#dz-resizer') && l.clientWidth >= 220 && l.clientWidth <= 460; })()`));
   const issueFix = await ev(`(() => {
     const r = document.querySelector('#dz-right');

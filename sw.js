@@ -1,6 +1,6 @@
 ﻿// Service Worker：游戏为纯静态资源，运行时缓存全部同源 GET，
 // 首次游玩即完整离线可用；发版时把 CACHE 后缀号 +1 即可强制刷新
-const CACHE = 'mm-cache-v58';
+const CACHE = 'mm-cache-v59';
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(['./', './index.html', './manifest.json'])));

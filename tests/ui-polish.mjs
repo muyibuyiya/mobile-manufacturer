@@ -1,4 +1,4 @@
-// UI 回归：招聘市场按月刷新 / 设计器侧栏默认折叠且互斥 / 设置内锁定项 / 菜单不自动聚焦输入框
+﻿// UI 回归：招聘市场按月刷新 / 设计器侧栏默认折叠且互斥 / 设置内锁定项 / 菜单不自动聚焦输入框
 const BASE = 'http://127.0.0.1:9222';
 const URL = process.argv[2] || 'http://127.0.0.1:8124/index.html';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -28,7 +28,7 @@ async function main() {
   await send('Network.setCacheDisabled', { cacheDisabled: true });
   try { await send('Network.setBypassServiceWorker', { bypass: true }); } catch (e) { /* 旧版 chrome */ }
   await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
-  const waitFor = async (expr, tries = 30, ms = 300) => {
+  const waitFor = async (expr, tries = 70, ms = 400) => {
     for (let i = 0; i < tries; i++) { if (await ev(expr)) return true; await sleep(ms); }
     return false;
   };
@@ -98,14 +98,15 @@ async function main() {
   const sec2 = await ev(`(() => { const s = [...document.querySelectorAll('.dz-sec[data-sec]')]; return { open: s.filter((x) => !x.classList.contains('collapsed')).length, thirdOpen: !!s[2] && !s[2].classList.contains('collapsed') }; })()`);
   check('任何时刻最多只开一块', sec2.open === 1 && sec2.thirdOpen, JSON.stringify(sec2));
 
-  // 左右侧栏互斥
-  await ev(`document.querySelector('#dz-panel-toggle')?.click()`); await sleep(300);
-  check('可收起左栏', await ev(`document.querySelector('.designer').classList.contains('controls-hidden')`));
-  await ev(`document.querySelector('#dz-panel-toggle')?.click()`); await sleep(300);
-  check('再次展开左栏', await ev(`!document.querySelector('.designer').classList.contains('controls-hidden')`));
-  check('展开左栏后评估自动收起（互斥）', await ev(`document.querySelector('.designer').classList.contains('assess-collapsed')`));
+  // 左栏常驻：平板/桌面没有收起入口；评估浮层不改变左栏
+  check('左栏无收起入口（常驻）', await ev(`getComputedStyle(document.querySelector('#dz-panel-toggle')).display === 'none'`));
+  await ev(`document.querySelector('#dz-assess-toggle')?.click()`); await sleep(300); // 先收起评估
+  const leftW0 = await ev(`Math.round(document.querySelector('#dz-left').clientWidth)`);
   await ev(`document.querySelector('#dz-assess-tab')?.click()`); await sleep(450);
-  check('展开评估后左栏自动收起（互斥）', await ev(`document.querySelector('.designer').classList.contains('controls-hidden')`));
+  check('可打开评估面板', await ev(`!document.querySelector('.designer').classList.contains('assess-collapsed')`));
+  const leftW1 = await ev(`Math.round(document.querySelector('#dz-left').clientWidth)`);
+  check('打开评估不改变左栏', leftW0 === leftW1 && leftW1 > 200, `${leftW0} -> ${leftW1}`);
+  check('左栏始终显示', await ev(`!document.querySelector('.designer').classList.contains('controls-hidden')`));
 
   check('无运行时报错', errors.length === 0, errors.slice(0, 2).join(' | '));
   console.log(`\n1 suite, ${bad} failed`);

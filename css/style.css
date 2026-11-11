@@ -427,7 +427,8 @@ div.field > span:first-child { display: block; font-size: var(--fs-sm); color: v
 .dz-toc .btn { flex: none; }
 #dz-panel-toggle { display: none; }
 .designer.controls-hidden #dz-left { display: none; }
-@media (max-width: 900px) { #dz-panel-toggle { display: inline-flex; } }
+/* 控件栏常驻：桌面/平板不提供收起入口，只在手机横屏（高度 ≤480）留抽屉按钮 */
+@media (max-height: 480px) and (orientation: landscape) { #dz-panel-toggle { display: inline-flex; } }
 .dz-flash { animation: dzFlash 1.1s ease; }
 @keyframes dzFlash { 0%,100% { box-shadow: none; } 40% { box-shadow: 0 0 0 2px rgba(74,163,255,.8) inset; } }
 .sd-tabs { display: flex; gap: 5px; margin: 8px 0 10px; padding: 3px; border-radius: 9px; background: var(--bg); }
