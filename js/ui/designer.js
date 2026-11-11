@@ -250,10 +250,10 @@ export function renderDesigner(container, state, model, hooks = {}) {
             <span><i style="background:#c9a6ff"></i>影像模组</span>
             <span><i style="background:#a9b8c9"></i>后盖</span>
           </div>
+          <div class="dz-panel" id="dz-right"></div>
+          <button class="dz-assess-tab" id="dz-assess-tab" title="打开「评估与检查」面板">📊 评估</button>
         </div>
       </div>
-      <div class="dz-panel" id="dz-right"></div>
-      <button class="dz-assess-tab" id="dz-assess-tab" title="打开「评估与检查」面板">📊 评估</button>
     </div>`;
 
   const left = container.querySelector('#dz-left');
