@@ -89,24 +89,19 @@ async function main() {
   const undoLen = await ev(`(() => { const el = document.querySelector('[data-k="body.length"]'); el.value = '200'; el.dispatchEvent(new Event('input', { bubbles: true })); document.querySelector('#dz-undo').click(); return document.querySelector('[data-k="body.length"]')?.value; })()`);
   check('设计器撤销可恢复', Number(undoLen) === 300, String(undoLen));
   check('设计器有包装设计', await ev(`!!document.querySelector('[data-k="packaging.material"]') && document.body.textContent.includes('包装评分')`));
-  // 侧栏默认折叠：先展开评估 → 收起 → 再展开
-  const assessState = await ev(`(() => {
+  // 侧栏默认展开：点一次收起，再点展开
+  check('评估栏可收起', await ev(`(() => {
     const b = document.querySelector('#dz-assess-toggle');
-    if (!b) return { missing: true };
+    if (!b) return false;
     const d = () => document.querySelector('.designer');
-    const start = d()?.classList.contains('assess-collapsed');
-    if (start) b.click();
     b.click();
     const off = d()?.classList.contains('assess-collapsed');
     const score = /评估\\s*\\d+/.test(b.textContent);
-    const text = b.textContent;
     b.click();
-    return { start, off, score, text, after: d()?.classList.contains('assess-collapsed') };
-  })()`);
-  check('评估栏可收起', !!assessState && assessState.off && assessState.score && !assessState.after, JSON.stringify(assessState));
-  // 左栏默认折叠：点「控件」展开后再量宽度
-  await ev(`document.querySelector('#dz-panel-toggle')?.click()`);
-  await sleep(250);
+    return off && score && !d()?.classList.contains('assess-collapsed');
+  })()`));
+  // 评估展开时左栏会被互斥收起，这里重新打开左栏再量宽度
+  await ev(`document.querySelector('#dz-panel-toggle')?.click()`); await sleep(300);
   check('左栏可拖宽', await ev(`(() => { const l = document.querySelector('#dz-left'); return !!document.querySelector('#dz-resizer') && l.clientWidth >= 220 && l.clientWidth <= 460; })()`));
   const issueFix = await ev(`(() => {
     const r = document.querySelector('#dz-right');

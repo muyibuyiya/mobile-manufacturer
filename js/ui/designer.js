@@ -262,9 +262,9 @@ export function renderDesigner(container, state, model, hooks = {}) {
   const resizer = container.querySelector('#dz-resizer');
   const assessToggle = container.querySelector('#dz-assess-toggle');
   const panelToggle = container.querySelector('#dz-panel-toggle');
-  // 侧栏默认折叠（用户可手动展开，选择会被记住）；左右两个侧栏互斥，只允许开一个
+  // 侧栏默认展开（可手动收起，选择会被记住）；左右两个侧栏互斥，只允许开一个
   const savedHidden = localStorage.getItem('dz_left_hidden');
-  let controlsHidden = savedHidden == null ? true : savedHidden === '1';
+  let controlsHidden = savedHidden === '1';
   function applyControlsHidden() {
     dzRoot.classList.toggle('controls-hidden', controlsHidden);
     panelToggle.textContent = controlsHidden ? '展开控件' : '控件';
@@ -322,8 +322,8 @@ export function renderDesigner(container, state, model, hooks = {}) {
   const savedLeftW = Number(localStorage.getItem(DZ_LEFT_KEY));
   if (savedLeftW >= 220 && savedLeftW <= 460) dzRoot.style.setProperty('--dz-left-w', savedLeftW + 'px');
   const savedAssess = localStorage.getItem(DZ_ASSESS_KEY);
-  // 评估面板同样默认折叠：没有记忆时一律收起
-  let assessCollapsed = savedAssess == null ? true : savedAssess === '1';
+  // 评估面板：窄屏默认收起，宽屏默认展开；玩家手动切换后按记忆走
+  let assessCollapsed = savedAssess == null ? window.innerWidth < 1400 : savedAssess === '1';
   if (localStorage.getItem('mm_dz_lock_left') === '1') dzRoot.classList.add('lock-left');
   const catSnapKey = `mm_cat_snaps_${model.id || 'new'}`;
   const catSnapshots = (() => {
@@ -437,9 +437,39 @@ export function renderDesigner(container, state, model, hooks = {}) {
   // ---------- 左侧控件 ----------
   // 分区折叠：折叠状态存 localStorage（视觉偏好，跨存档），展开/收起不触发重渲染
   const DZ_SEC_KEY = 'dz_collapsed_secs';
+  const DZ_ACC_VER_KEY = 'dz_accordion_ver';
   const collapsedSecs = (() => {
     try { return new Set(JSON.parse(localStorage.getItem(DZ_SEC_KEY) || '[]')); } catch (e) { return new Set(); }
   })();
+  function saveSecs() {
+    try { localStorage.setItem(DZ_SEC_KEY, JSON.stringify([...collapsedSecs])); } catch (e) { /* 隐私模式忽略 */ }
+  }
+  // 手风琴：展开某个分区时把其余分区全部折叠（一次只看一块，避免面板一屏塞满）
+  function expandOnlySection(key) {
+    left.querySelectorAll('.dz-sec[data-sec]').forEach((el) => {
+      const k = el.dataset.sec;
+      if (k === key) { el.classList.remove('collapsed'); collapsedSecs.delete(k); return; }
+      el.classList.add('collapsed');
+      collapsedSecs.add(k);
+    });
+    saveSecs();
+  }
+  // 首次进入：只展开第一个分区，其余默认折叠（迁移一次，之后尊重玩家手动选择）
+  function applyAccordionDefault() {
+    try {
+      if (localStorage.getItem(DZ_ACC_VER_KEY) === '1') return;
+      const secs = [...left.querySelectorAll('.dz-sec[data-sec]')];
+      if (secs.length <= 1) return;
+      localStorage.setItem(DZ_ACC_VER_KEY, '1');
+      collapsedSecs.clear();
+      secs.forEach((el, i) => {
+        if (i === 0) return;
+        el.classList.add('collapsed');
+        collapsedSecs.add(el.dataset.sec);
+      });
+      saveSecs();
+    } catch (e) { /* 隐私模式忽略 */ }
+  }
   function section(key, title, inner, tip = '') {
     const on = collapsedSecs.has(key);
     return `<div class="dz-sec ${on ? 'collapsed' : ''}" data-sec="${key}">
@@ -3878,6 +3908,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
   function renderControls() {
     const st = left.scrollTop;
     left.innerHTML = controls();
+    applyAccordionDefault();
     left.scrollTop = st;
   }
   function renderAssessment() {
@@ -3895,9 +3926,7 @@ export function renderDesigner(container, state, model, hooks = {}) {
   function gotoSection(key) {
     const sec = left.querySelector(`[data-sec="${key}"]`);
     if (!sec) return;
-    collapsedSecs.delete(key);
-    try { localStorage.setItem(DZ_SEC_KEY, JSON.stringify([...collapsedSecs])); } catch (err) { /* 忽略 */ }
-    sec.classList.remove('collapsed');
+    expandOnlySection(key); // 手风琴：定位到的分区独占展开
     sec.scrollIntoView({ block: 'center', behavior: 'smooth' });
     sec.classList.add('dz-flash');
     setTimeout(() => sec.classList.remove('dz-flash'), 1200);
@@ -4335,10 +4364,16 @@ export function renderDesigner(container, state, model, hooks = {}) {
       e.preventDefault();
       const key = secBtn.dataset.secToggle;
       const sec = secBtn.closest('.dz-sec');
-      const collapsed = !sec.classList.contains('collapsed');
-      sec.classList.toggle('collapsed', collapsed);
-      if (collapsed) collapsedSecs.add(key); else collapsedSecs.delete(key);
-      try { localStorage.setItem(DZ_SEC_KEY, JSON.stringify([...collapsedSecs])); } catch (err) { /* 隐私模式忽略 */ }
+      const willCollapse = !sec.classList.contains('collapsed');
+      if (willCollapse) {
+        sec.classList.add('collapsed');
+        collapsedSecs.add(key);
+        saveSecs();
+      } else {
+        // 手风琴：展开当前分区，其余自动折叠
+        expandOnlySection(key);
+        secBtn.scrollIntoView?.({ block: 'nearest' });
+      }
       return;
     }
     // 影像区二级折叠（Deco / 闪光灯 / 模组位置）

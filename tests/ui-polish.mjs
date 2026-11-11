@@ -28,9 +28,15 @@ async function main() {
   await send('Network.setCacheDisabled', { cacheDisabled: true });
   try { await send('Network.setBypassServiceWorker', { bypass: true }); } catch (e) { /* 旧版 chrome */ }
   await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
-  await send('Page.navigate', { url: URL + '?t=' + Date.now() }); await sleep(1500);
-  await ev(`localStorage.clear()`); await send('Page.reload'); await sleep(1500);
-  await ev(`[...document.querySelectorAll('.menu-item')].find(x => x.textContent.includes('沙盒'))?.click()`); await sleep(400);
+  const waitFor = async (expr, tries = 30, ms = 300) => {
+    for (let i = 0; i < tries; i++) { if (await ev(expr)) return true; await sleep(ms); }
+    return false;
+  };
+  await send('Page.navigate', { url: URL + '?t=' + Date.now() }); await sleep(2500);
+  await ev(`localStorage.clear()`); await send('Page.reload'); await sleep(2500);
+  check('菜单已加载', await waitFor(`document.querySelectorAll('.menu-item').length > 0`));
+  await ev(`[...document.querySelectorAll('.menu-item')].find(x => x.textContent.includes('沙盒'))?.click()`); await sleep(500);
+  check('设置页已加载', await waitFor(`!!document.querySelector('#f-year')`));
   await ev(`(() => { const y=document.querySelector('#f-year'); y.value='2020'; y.dispatchEvent(new Event('change')); const c=document.querySelector('#f-cash'); c.value='5000000000'; c.dispatchEvent(new Event('input')); return true; })()`);
   await ev(`document.querySelector('#start')?.click()`); await sleep(1700);
 
@@ -78,22 +84,28 @@ async function main() {
   await ev(`document.querySelector('[data-tab="product"]')?.click()`); await sleep(400);
   await ev(`document.querySelector('[data-act="design"]')?.click()`); await sleep(1500);
   check('设计器打开', await ev(`!!document.querySelector('.designer')`));
-  check('左栏默认折叠', await ev(`document.querySelector('.designer').classList.contains('controls-hidden')`));
-  check('评估栏默认折叠', await ev(`document.querySelector('.designer').classList.contains('assess-collapsed')`));
-  check('两侧栏默认都收起（把手可见）', await ev(`getComputedStyle(document.querySelector('#dz-assess-tab')).display !== 'none'`));
+  check('左栏默认展开', await ev(`!document.querySelector('.designer').classList.contains('controls-hidden')`));
+  check('评估默认展开（1440 宽）', await ev(`!document.querySelector('.designer').classList.contains('assess-collapsed')`));
   check('宽度锁定生效（无分隔条）', await ev(`getComputedStyle(document.querySelector('#dz-resizer')).display === 'none'`));
 
-  await ev(`document.querySelector('#dz-panel-toggle')?.click()`); await sleep(350);
-  check('展开左栏', await ev(`!document.querySelector('.designer').classList.contains('controls-hidden')`));
-  check('展开左栏后评估仍收起', await ev(`document.querySelector('.designer').classList.contains('assess-collapsed')`));
+  // 分区手风琴：默认只展开第一块，打开另一块时自动折叠前一块
+  const sec0 = await ev(`(() => { const s = [...document.querySelectorAll('.dz-sec[data-sec]')]; return { total: s.length, open: s.filter((x) => !x.classList.contains('collapsed')).length, firstOpen: !!s[0] && !s[0].classList.contains('collapsed') }; })()`);
+  check('分区默认只展开第一块', sec0.total > 1 && sec0.open === 1 && sec0.firstOpen, JSON.stringify(sec0));
+  await ev(`document.querySelectorAll('.dz-sec-head')[1]?.click()`); await sleep(250);
+  const sec1 = await ev(`(() => { const s = [...document.querySelectorAll('.dz-sec[data-sec]')]; return { open: s.filter((x) => !x.classList.contains('collapsed')).length, firstOpen: !!s[0] && !s[0].classList.contains('collapsed'), secondOpen: !!s[1] && !s[1].classList.contains('collapsed') }; })()`);
+  check('打开第二块自动折叠第一块', sec1.open === 1 && sec1.secondOpen && !sec1.firstOpen, JSON.stringify(sec1));
+  await ev(`document.querySelectorAll('.dz-sec-head')[2]?.click()`); await sleep(250);
+  const sec2 = await ev(`(() => { const s = [...document.querySelectorAll('.dz-sec[data-sec]')]; return { open: s.filter((x) => !x.classList.contains('collapsed')).length, thirdOpen: !!s[2] && !s[2].classList.contains('collapsed') }; })()`);
+  check('任何时刻最多只开一块', sec2.open === 1 && sec2.thirdOpen, JSON.stringify(sec2));
 
-  await ev(`document.querySelector('#dz-assess-tab')?.click()`); await sleep(400);
-  check('展开评估', await ev(`!document.querySelector('.designer').classList.contains('assess-collapsed')`));
+  // 左右侧栏互斥
+  await ev(`document.querySelector('#dz-panel-toggle')?.click()`); await sleep(300);
+  check('可收起左栏', await ev(`document.querySelector('.designer').classList.contains('controls-hidden')`));
+  await ev(`document.querySelector('#dz-panel-toggle')?.click()`); await sleep(300);
+  check('再次展开左栏', await ev(`!document.querySelector('.designer').classList.contains('controls-hidden')`));
+  check('展开左栏后评估自动收起（互斥）', await ev(`document.querySelector('.designer').classList.contains('assess-collapsed')`));
+  await ev(`document.querySelector('#dz-assess-tab')?.click()`); await sleep(450);
   check('展开评估后左栏自动收起（互斥）', await ev(`document.querySelector('.designer').classList.contains('controls-hidden')`));
-
-  await ev(`document.querySelector('#dz-panel-toggle')?.click()`); await sleep(350);
-  check('再展开左栏', await ev(`!document.querySelector('.designer').classList.contains('controls-hidden')`));
-  check('再展开左栏后评估自动收起（互斥）', await ev(`document.querySelector('.designer').classList.contains('assess-collapsed')`));
 
   check('无运行时报错', errors.length === 0, errors.slice(0, 2).join(' | '));
   console.log(`\n1 suite, ${bad} failed`);
