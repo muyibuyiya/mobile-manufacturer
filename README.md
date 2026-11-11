@@ -2,7 +2,7 @@
 
 把《手机开发商设计方案》（GDD）里的核心系统做成一个**能真正玩的浏览器原型**：从年代科技树起步，亲手设计手机（2D 六视图 + 3D 模型同源联动），排产、定价、进入全球 12 个市场，和**十六家**按史实入场、衰退、退出的 AI 竞争对手抢份额。
 
-纯前端，无构建步骤，原生 ES Module + three.js（已本地化到 `vendor/`）。当前版本 **1.29.1**。
+纯前端，无构建步骤，原生 ES Module + three.js（已本地化到 `vendor/`）。当前版本 **1.29.2**。
 
 ## 运行
 
@@ -165,6 +165,7 @@ npm run test:landscape   # 844×390 横屏：溢出/顶栏/画布/抽屉/命中�
 npm run test:setup       # 开局设置页：平板横屏不被裁切、矮视口可滚动、竖屏居中
 npm run test:time        # 时间推进：空闲不自动走月、下个月 +1、推进一年 +12、弹窗不流逝
 npm run test:tablet      # 平板设计器：1100 两列不被挤、面板只在画布内浮起、竖屏不越界
+npm run test:layout-overflow # 1024/1440/900：普通页面无横滚（科技树除外）、卡片内容不越界
 npm run test:visual      # 2D 六视图 + 3D 正视像素差（基线 tests/baselines）
 npm run test:r33:ui      # 员工档案/竞品财报/谈判/子品牌发品/发布会 mini-game
 npm run test:r34:ui      # 历史趋势/竞品招牌/状态筛选/存档占用/推进时 DOM 复用

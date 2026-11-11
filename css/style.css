@@ -64,6 +64,7 @@ html, body {
   -webkit-font-smoothing: antialiased;
 }
 button, input, select, textarea { font-family: inherit; color: inherit; }
+input, select, textarea { max-width: 100%; min-width: 0; }
 ::-webkit-scrollbar { width: 9px; height: 9px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--line-3); border-radius: 6px; }
@@ -314,7 +315,7 @@ div.field > span:first-child { display: block; font-size: var(--fs-sm); color: v
 .nav-item .badge-dot { margin-left: auto; width: 6px; height: 6px; border-radius: 50%; background: var(--warn); }
 .nav-sep { height: 1px; background: var(--line); margin: 8px 4px; }
 
-.content { overflow-y: auto; padding: 16px 18px 40px; min-width: 0; }
+.content { overflow: hidden auto; padding: 16px 18px 40px; min-width: 0; }
 .crumbs { display: flex; align-items: center; gap: 6px; margin: -2px 0 10px; font-size: var(--fs-sm); color: var(--dim); }
 .crumbs button { background: none; border: none; padding: 0; color: var(--muted); cursor: pointer; font: inherit; }
 .crumbs button:hover { color: var(--accent); }
@@ -752,6 +753,16 @@ div.field > span:first-child { display: block; font-size: var(--fs-sm); color: v
   border: 1px solid rgba(74,163,255,.35); background: rgba(74,163,255,.06);
 }
 .org-execs { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; margin-top: 8px; }
+/* 部门卡片：平板一律两列，卡片内按钮可换行，避免内容撑破边框 */
+.divisions-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr)); gap: 10px; }
+.divisions-grid > .card-item, .divisions-grid .org-exec { min-width: 0; }
+.divisions-grid .org-exec .row { flex-wrap: wrap; row-gap: 6px; }
+@media (max-width: 1440px) {
+  .divisions-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 640px) {
+  .divisions-grid { grid-template-columns: 1fr; }
+}
 .org-exec {
   padding: 9px 10px; border-radius: 9px; border: 1px dashed var(--line);
   background: var(--panel); font-size: var(--fs-sm);
@@ -836,8 +847,8 @@ div.field > span:first-child { display: block; font-size: var(--fs-sm); color: v
   .two-col, .grid.two-col { grid-template-columns: 1fr !important; }
   .cap-grid { grid-template-columns: 1fr !important; }
   .modal-wide { width: 96vw !important; max-width: 96vw !important; }
-  .topbar { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
-  .topbar::-webkit-scrollbar { display: none; }
+  .topbar { flex-wrap: nowrap; overflow: hidden; gap: 6px; }
+  .topbar .brand { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 }
 
 /* 手机横屏 / 窄屏 ≤760：侧栏变底部导航条 */

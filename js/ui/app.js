@@ -2631,7 +2631,7 @@ export function renderGame(root, state, opts = {}) {
       ${head('自研部门', '成立部门后可设计多款产品并行研发，等级限制品质上限；系统开发部产出自研 OS')}
       <div class="card" style="margin-bottom:12px">
         <div class="card-title">自研部门 <span class="right">自研部件供自家机型使用，也可对外供货赚取收入</span></div>
-        <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:10px">
+        <div class="grid divisions-grid">
           ${DIVISION_IDS.map((id) => {
             const def = DIVISION_DEFS[id];
             const div = state.divisions?.[id] || { level: 0, supplyOn: false };
