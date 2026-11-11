@@ -235,10 +235,15 @@ export function buildDivision(state, id) {
 
 // ---------- 设计新产品（与升级解耦，同一等级下可设计多款） ----------
 // 设计只是计划 → 需要研发时间（月） → 完工后进 products 池供手机设计器选用
+export function designSlots(div) { return Math.max(1, div?.level || 1); }
+
 export function designProduct(state, id, form) {
   const def = DIVISION_DEFS[id];
   const div = ensureDivisions(state)[id];
   if (div.level <= 0) return { ok: false, msg: '请先成立该部门' };
+  const designing = (div.products || []).filter((p2) => p2.status === 'designing').length;
+  const slots = designSlots(div);
+  if (designing >= slots) return { ok: false, msg: `设计槽位已满（${designing}/${slots}），升级部门可增加并行项目` };
   const spec = computeCustomSpec(state, id, form);
   if (!spec || !spec.ok) return { ok: false, msg: spec ? spec.errors.join('；') : '规格设计错误' };
   // 研发时间 = 复杂度决定（规格越激进越久）
@@ -296,7 +301,8 @@ export function computeCustomSpec(state, id, form) {
     const gpu = GPU_ARCHS.find((g) => g.id === form.gpuArch);
     if (!gpu) errors.push('请选择 GPU 架构');
     else if (gpu.year > year) errors.push(`${gpu.name} 尚未发布（${gpu.year} 年）`);
-    const nP = clamp(form.primeN | 0, 0, 2), nB = clamp(form.bigN | 0, 1, 6);
+    const nP = prime ? clamp(form.primeN | 0, 0, 2) : 0; // 未选超大核架构时数量必须归零
+    const nB = clamp(form.bigN | 0, 1, 6);
     const nL = little ? clamp(form.littleN | 0, 1, 6) : 0; // 小核可选「无」
     const total = nP + nB + nL;
     if (total < 1 || total > 12) errors.push('核心总数需在 1~12 之间');

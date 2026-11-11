@@ -139,6 +139,60 @@ export function stageOf(state) {
   return COMPANY_STAGES.find((s) => n >= s.min && n <= s.max) || COMPANY_STAGES[0];
 }
 
+// ---------- 专业 → 部门：招聘与一键分配都用这张表 ----------
+// 数组第一项是主部门；有多个时，一键分配会按当前人数均衡分流（市场/财务这种跨职能专业）
+export const FIELD_DEPT_PREFS = {
+  通信工程: ['rnd'],
+  微电子: ['rnd'],
+  工业设计: ['design'],
+  软件工程: ['sw'],
+  材料科学: ['prod'],
+  质量管理: ['qa'],
+  供应链管理: ['supply'],
+  市场营销: ['mkt', 'sales'],
+  财务管理: ['fin', 'hr'],
+};
+
+export function deptPrefsOf(emp) {
+  const p = FIELD_DEPT_PREFS[emp?.field];
+  return Array.isArray(p) && p.length ? p : ['rnd'];
+}
+
+// 岗位跟着部门与资历走：部门内三档（初级/高级/专家），按能力分档
+export function roleForDept(deptId, skill = 60) {
+  const roles = ROLE_BY_DEPT[deptId] || ROLE_BY_DEPT.rnd;
+  if (!roles.length) return '工程师';
+  const lv = skill >= 80 ? 2 : skill >= 60 ? 1 : 0;
+  return roles[Math.min(lv, roles.length - 1)];
+}
+
+// 一键按专业分配：高管（deptId=exec）不动；被调离部门的主管自动卸任，避免主管挂在外部门
+export function autoAssignByField(state) {
+  ensureOrg(state);
+  const employees = state.employees || [];
+  const counts = {};
+  for (const e of employees) if (e.deptId) counts[e.deptId] = (counts[e.deptId] || 0) + 1;
+  let moved = 0;
+  for (const e of employees) {
+    if (e.deptId === 'exec') continue;
+    const prefs = deptPrefsOf(e);
+    let target = prefs[0];
+    for (const d of prefs) if ((counts[d] || 0) < (counts[target] || 0)) target = d;
+    if (e.deptId === target) continue;
+    if (e.deptId) counts[e.deptId] = Math.max(0, (counts[e.deptId] || 0) - 1);
+    counts[target] = (counts[target] || 0) + 1;
+    e.deptId = target;
+    e.role = roleForDept(target, e.skill);
+    moved++;
+  }
+  let released = 0;
+  for (const [deptId, empId] of Object.entries(state.org.heads || {})) {
+    const e = employees.find((x) => x.id === empId);
+    if (!e || e.deptId !== deptId) { delete state.org.heads[deptId]; released++; }
+  }
+  return { ok: true, moved, released };
+}
+
 // 任命与卸任
 export function appointHead(state, deptId, empId) {
   ensureOrg(state);

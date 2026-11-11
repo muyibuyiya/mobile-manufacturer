@@ -22,7 +22,7 @@ import { openScreenDesign } from './screendesign.js';
 import { openPosterStudio } from './poster.js';
 import { TECHS, TECH_MAP, TECH_CATS, techState, techBuyable, techMissing, techDependents, techLeadYears, techLeadPenalty, TECH_LEAD_STAGE_NAME } from '../data/tech.js';
 import { MARKETS, MARKET_MAP, COUNTRIES, eraFactor, expectedPrice, SEGMENTS, SEGMENT_MAP, LINEUPS, LINEUP_MAP, marketMix, suggestModelName, signatureOf, phonePriceInMarket } from '../data/world.js';
-import { DIVISION_DEFS, DIVISION_IDS, buildDivision, startUpgrade, upgradeCost, computeCustomSpec, ownCpuSpec, ownCmrSpec, ownOsSpec, ownPanelSpec, releaseOsVersion, toggleOsLicense, osReleaseCost, startOsTech, osTechBonuses, chooseOsRoute } from '../core/divisions.js';
+import { DIVISION_DEFS, DIVISION_IDS, buildDivision, startUpgrade, designProduct, upgradeCost, computeCustomSpec, ownCpuSpec, ownCmrSpec, ownOsSpec, ownPanelSpec, releaseOsVersion, toggleOsLicense, osReleaseCost, startOsTech, osTechBonuses, chooseOsRoute } from '../core/divisions.js';
 import { OS_TECHS, OS_TECH_BRANCHES, osTechState, OS_ROUTES } from '../data/os-tech.js';
 import { CPU_CORES, GPU_ARCHS, OS_BASES, RES_TIERS, LENS_TYPES } from '../data/hardware.js';
 import { MILESTONES, milestoneProgress } from '../core/milestones.js';
@@ -44,7 +44,7 @@ import { CPUS, RAMS, STORAGES, SCREENS, CAMERAS, BATTERIES, SYSTEMS, EXTRAS } fr
 import {
   ensureOrg, focusOf, headOf, execOf, appointHead, clearHead, appointExec, clearExec,
   candidatesFor, execCandidates, orgTree, stageOf, COMPANY_STAGES, EXEC_SEATS, FOCUS_HINT,
-  leaderBonus, headBonus,
+  leaderBonus, headBonus, deptPrefsOf, roleForDept, autoAssignByField,
 } from '../core/org.js';
 import {
   ensureCapital, valuationOf, raiseRound, raiseLimit, founderPct, ipoRequirements, canIPO,
@@ -798,6 +798,15 @@ export function renderGame(root, state, opts = {}) {
         break;
       }
       case 'emp-filter': empFilter = ds.v; render(); break;
+      case 'auto-assign-dept': {
+        const r = autoAssignByField(state);
+        const extra = r.released ? `，${r.released} 位主管卸任` : '';
+        addLog(state, 'hr', `按专业重新分配 ${r.moved} 名员工${extra}`);
+        opts.onToast?.(r.moved ? `已按专业分配 ${r.moved} 人${extra}` : `所有人已在对应部门${extra}`, 'good');
+        if (r.moved) sfx('good');
+        render();
+        break;
+      }
       case 'prod-filter': prodFilter = ds.v; render(); break;
       case 'news-read-all': {
         (state.news || []).forEach((n) => { n.read = true; });
@@ -1380,7 +1389,13 @@ export function renderGame(root, state, opts = {}) {
     }
     if (name === 'emp-dept') {
       const e = state.employees.find((x) => x.id === el.dataset.id);
-      if (e) { e.deptId = v || null; e.role = v ? ROLE_BY_DEPT[v][Math.min(1, ROLE_BY_DEPT[v].length - 1)] : '待分配'; render(); }
+      if (e) {
+        const prev = e.deptId;
+        if (prev && state.org?.heads?.[prev] === e.id) delete state.org.heads[prev];
+        e.deptId = v || null;
+        e.role = v ? roleForDept(v, e.skill) : '待分配';
+        render();
+      }
     }
     if (name === 'marketing') { state.company.marketingBudget = v; paintTopbar(); }
     if (name === 'ch-budget') { setChannel(state, el.dataset.id, v); }
@@ -2636,6 +2651,8 @@ export function renderGame(root, state, opts = {}) {
             const def = DIVISION_DEFS[id];
             const div = state.divisions?.[id] || { level: 0, supplyOn: false };
             const lv = div.level;
+            const designingCount = (div.products || []).filter((p2) => p2.status === 'designing').length;
+            const slots = Math.max(1, lv);
             const spec = id === 'chip' ? ownCpuSpec(state) : id === 'optics' ? ownCmrSpec(state)
               : id === 'osd' ? ownOsSpec(state) : ownPanelSpec(state);
             const specText = id === 'chip' && spec ? `自研 SoC ${spec.gen}.0 · 性能 ${Math.round(spec.perf)}` : '';
@@ -2649,10 +2666,10 @@ export function renderGame(root, state, opts = {}) {
               ${div.proj ? `<div class="tiny" style="color:${def.color};margin-bottom:4px">🔧 研发升级 Lv.${div.proj.target} 中 — 进度 ${Math.round(div.proj.progress / div.proj.work * 100)}%（研发部人力越强越快）</div>
               <div class="bar" style="height:6px;margin-bottom:8px"><div style="width:${Math.round(div.proj.progress / div.proj.work * 100)}%;height:100%;background:${def.color}"></div></div>`
                 : ''}
-              ${lv > 0 && !div.proj ? `<div class="tiny" style="color:${def.color};margin-bottom:6px">${specText || specText2 || specText3 || specText4}
+              ${lv > 0 ? `<div class="tiny" style="color:${def.color};margin-bottom:6px">${specText || specText2 || specText3 || specText4}${(specText || specText2 || specText3 || specText4) ? ' · ' : ''}设计槽位 ${designingCount}/${slots}
                 ${lv < 5 ? ` · 下级升级费用 ${fmtMoney(upgradeCost(id, lv))}` : ' · 已满级'}</div>
               <div class="row" style="gap:6px">
-                ${lv < 5 ? `<button class="btn small" data-act="div-upgrade" data-id="${id}">部门升级 Lv.${lv + 1}（${fmtMoney(upgradeCost(id, lv))}）</button>` : ''}
+                ${lv < 5 && !div.proj ? `<button class="btn small" data-act="div-upgrade" data-id="${id}">部门升级 Lv.${lv + 1}（${fmtMoney(upgradeCost(id, lv))}）</button>` : ''}
                 <button class="btn small primary" data-act="div-design" data-id="${id}">＋ 设计新产品</button>
                 <button class="btn small ${div.supplyOn ? 'primary' : 'ghost'}" data-act="div-supply" data-id="${id}">${div.supplyOn ? '停止对外供货' : '开始对外供货'}</button>
                 <span class="tiny dim" style="margin-left:auto">月维护 ${fmtMoney(def.upkeep * lv)}${div.supplyOn ? ` · 供货收入约 ${fmtMoney(def.supplyRate * lv * eraFactor(state.date.year))}/月` : ''}</span>
@@ -2796,6 +2813,7 @@ export function renderGame(root, state, opts = {}) {
           <div class="card-title">员工名册 <span class="right">${state.employees.length} 人</span></div>
       <div class="row" style="gap:5px;margin:8px 0;flex-wrap:wrap">
         <span class="tiny dim">按部门：</span>
+        <button class="btn tiny primary" data-act="auto-assign-dept" title="按员工专业重新归属部门：高管不动，被调离部门的主管自动卸任">⚡ 一键按专业分配</button>
         <button class="btn tiny ${empFilter === 'all' ? 'primary' : ''}" data-act="emp-filter" data-v="all">全部</button>
         ${DEPT_DEFS.map((d2) => `<button class="btn tiny ${empFilter === d2.id ? 'primary' : ''}" data-act="emp-filter" data-v="${d2.id}">${d2.name}</button>`).join('')}
       </div>          <div style="max-height:520px;overflow:auto">
@@ -2806,10 +2824,11 @@ export function renderGame(root, state, opts = {}) {
                   const rk = rankOf(e.skill);
                   return `
                   <tr>
-                    <td>${e.star ? '<span title="行业明星：产出 +12%，品牌 +，注意被挖角">⭐</span> ' : ''}<b>${esc(e.name)}</b><div class="tiny dim">${Math.floor(e.age)}岁 · ${e.edu}${e.fresh ? '（应届）' : ''} · ${e.field}</div></td>
+                    <td>${e.star ? '<span title="行业明星：产出 +12%，品牌 +，注意被挖角">⭐</span> ' : ''}<b>${esc(e.name)}</b><div class="tiny dim">${Math.floor(e.age)}岁 · ${e.edu}${e.fresh ? '（应届）' : ''} · <span class="emp-field">${e.field}</span></div></td>
                     <td>
                       <select data-field="emp-dept" data-id="${e.id}" style="padding:3px 4px;font-size:11.5px">
-                        <option value="">待分配</option>
+                        ${e.deptId === 'exec' ? '<option value="exec" selected>高管层</option>' : ''}
+                        <option value="" ${e.deptId ? '' : 'selected'}>待分配</option>
                         ${DEPT_DEFS.map((d) => `<option value="${d.id}" ${e.deptId === d.id ? 'selected' : ''}>${d.name}</option>`).join('')}
                       </select>
                     </td>
@@ -4545,7 +4564,8 @@ export function renderGame(root, state, opts = {}) {
       if (!spec || !spec.ok) { opts.onToast?.(spec?.errors?.[0] || '规格不完整', 'bad'); return; }
       let r;
       if (mode === 'design') {
-        r = designProduct(state, id, spec);
+        // designProduct 需要原始表单（内部会重新校验并计算 spec），不能把已算好的 spec 传进去
+        r = designProduct(state, id, collect());
       } else {
         r = startUpgrade(state, id, spec);
       }
@@ -4796,13 +4816,16 @@ function genPool(state, channel = 'social') {
   const pool = [];
   const campusSeason = [3, 4, 9, 10].includes(state.date.month + 1);
   for (let i = 0; i < count; i++) {
-    const dept = DEPT_DEFS[Math.floor(Math.random() * DEPT_DEFS.length)].id;
-    const roles = ROLE_BY_DEPT[dept];
     let skillMean = 45 + state.company.brand * 0.18 + (Math.random() - 0.5) * 16;
     let mul = 1;
     if (channel === 'campus') { skillMean = 32 + state.company.brand * 0.1 + (Math.random() - 0.5) * 10; mul = 0.6; if (!campusSeason && !state.recruitment?.campusEventMonths) skillMean -= 5; }
     else if (channel === 'headhunter') { skillMean = 68 + state.company.brand * 0.15 + (Math.random() - 0.5) * 12; mul = 1.35; }
-    const emp = generateEmployee(state.date.year, { skillMean, deptId: dept, role: roles[Math.floor(Math.random() * roles.length)], profile: channel });
+    const emp = generateEmployee(state.date.year, { skillMean, profile: channel });
+    // 专业决定部门与岗位：候选人不再被随机塞进无关部门
+    const prefs = deptPrefsOf(emp);
+    const dept = prefs[Math.floor(Math.random() * prefs.length)];
+    emp.deptId = dept;
+    emp.role = roleForDept(dept, emp.skill);
     if (channel === 'campus') emp.potential = Math.min(100, emp.potential + 12);
     emp.salary = Math.round(emp.salary * mul / 100) * 100;
     emp.expectSalary = Math.round(emp.expectSalary * mul / 100) * 100;
