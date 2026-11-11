@@ -51,15 +51,19 @@ async function main() {
     };
   })()`);
 
-  // 1) 平板横屏中等宽度：左栏 + 画布必须只有两列，画布不能被右栏挤占
+  // 1) 平板横屏：两侧栏默认折叠，画布占满整宽
   await openDesigner(1100, 800);
-  const m1 = await measure();
-  check('1100×800 设计器只有两列', m1.cols === 2, `cols=${m1.cols} ${m1.stage.w}px`);
-  check('1100×800 画布宽度 ≥ 700', m1.stage.w >= 700, `${m1.stage.w}px`);
-  check('1100×800 无横向溢出', m1.scrollW <= m1.innerW + 1, `${m1.scrollW}/${m1.innerW}`);
-  check('1100×800 悬浮评估按钮在画布右上角', !!m1.tab && m1.tab.y >= m1.wrap.y && m1.tab.right <= m1.wrap.right + 1, JSON.stringify(m1.tab));
+  const m0 = await measure();
+  check('1100×800 默认折叠（画布全宽）', m0.cols === 1 && m0.stage.w >= 900, `cols=${m0.cols} ${m0.stage.w}px`);
+  check('1100×800 无横向溢出', m0.scrollW <= m0.innerW + 1, `${m0.scrollW}/${m0.innerW}`);
+  check('1100×800 折叠时悬浮评估按钮在画布右上角', !!m0.tab && m0.tab.y >= m0.wrap.y && m0.tab.right <= m0.wrap.right + 1, JSON.stringify(m0.tab));
 
-  // 2) 展开：面板必须完整落在画布内，且不改变画布宽度
+  // 展开左栏：恢复两列，画布仍足够宽
+  await ev(`document.querySelector('#dz-panel-toggle')?.click()`); await sleep(350);
+  const m1 = await measure();
+  check('1100×800 展开左栏后为两列', m1.cols === 2 && m1.stage.w >= 700, `cols=${m1.cols} ${m1.stage.w}px`);
+
+  // 2) 展开评估：左栏自动收起，面板完整落在画布内，画布回到折叠时的全宽
   await ev(`document.querySelector('#dz-assess-tab')?.click()`); await sleep(500);
   const expanded = await ev(`(() => {
     const p = document.querySelector('#dz-right'); const wrap = document.querySelector('.dz-canvas-wrap');
@@ -70,7 +74,8 @@ async function main() {
   check('展开后面板完整落在画布内', expanded.inside, JSON.stringify(expanded));
   check('面板可见且可关闭', expanded.opacity === '1' && expanded.hasClose, JSON.stringify(expanded));
   const m2 = await measure();
-  check('展开不改变画布宽度', m2.stage.w === m1.stage.w, `${m1.stage.w} -> ${m2.stage.w}`);
+  check('展开面板时左栏自动收起', m2.cols === 1, `cols=${m2.cols}`);
+  check('展开不改变画布宽度（相对折叠态）', m2.stage.w === m0.stage.w, `${m0.stage.w} -> ${m2.stage.w}`);
 
   // 3) 平板竖屏：画布与参数纵向堆叠，面板只盖画布
   await openDesigner(900, 1440);

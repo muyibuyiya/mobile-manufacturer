@@ -394,6 +394,8 @@ div.field > span:first-child { display: block; font-size: var(--fs-sm); color: v
 
 /* 设计师 */
 .designer { display: grid; grid-template-columns: var(--dz-left-w, 260px) 1fr; gap: 12px; height: calc(100vh - 52px - 32px); min-height: 520px; position: relative; }
+/* 左栏收起时画布独占整行（否则 stage 会被挤进 220px 的固定列） */
+.designer.controls-hidden { grid-template-columns: minmax(0, 1fr) !important; }
 /* 评估面板：作为画布区域的浮层（基准是 .dz-canvas-wrap），展开/收起都不改变画布尺寸 */
 #dz-right {
   position: absolute; top: 8px; right: 8px; bottom: 8px; width: min(320px, calc(100% - 16px)); z-index: 20;

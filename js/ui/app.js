@@ -1,4 +1,4 @@
-// 游戏主界面：顶栏 / 导航 / 各功能面板 / 回合循环
+﻿// 游戏主界面：顶栏 / 导航 / 各功能面板 / 回合循环
 import {
   tick, marketShare, suggestedPrice, unitCost, capacityOf, FOUNDRIES, factoryCapacity,
   startResearch, researchBudget, payResearchTrial, techIpStats, avgShare, bomUnit, assemblyUnit, ownFactoryCount,
@@ -207,7 +207,9 @@ export function renderGame(root, state, opts = {}) {
       if (title) mask.setAttribute('aria-label', title);
       const focusables = () => [...mask.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')].filter((el) => !el.disabled && el.offsetParent !== null);
       const list = focusables();
-      (list.find((el) => !el.matches('[data-close]')) || list[0] || mask).focus?.();
+      // 自动聚焦优先落在按钮上：不要一打开弹窗就把光标塞进输入框（移动端会直接弹软键盘）
+      const preferred = list.find((el) => !el.matches('[data-close]') && !/^(INPUT|SELECT|TEXTAREA)$/.test(el.tagName));
+      (preferred || list.find((el) => !el.matches('[data-close]')) || list[0] || mask).focus?.();
       mask.addEventListener('keydown', (e) => {
         if (e.key !== 'Tab') return;
         const els = focusables();
@@ -360,6 +362,12 @@ export function renderGame(root, state, opts = {}) {
         mask.remove(); opts.onExit?.();
       } else if (ev.target === mask) { mask.remove(); }
     });
+  }
+
+  function genPoolNow(channel) {
+    state.hiringPool = genPool(state, channel || state.recruitChannel || 'social');
+    state.hiringPoolMonth = { year: state.date.year, month: state.date.month };
+    return state.hiringPool;
   }
 
   function paintTopbar() {
@@ -622,19 +630,19 @@ export function renderGame(root, state, opts = {}) {
         e.satisfaction = clamp(e.satisfaction + 8, 0, 100);
         render(); break;
       }
-      case 'recruit-channel': state.recruitChannel = ds.v; state.hiringPool = genPool(state, ds.v); render(); break;
+      case 'recruit-channel': state.recruitChannel = ds.v; genPoolNow(ds.v); render(); break;
       case 'campus-event': {
         if (state.company.cash < 3000000) { opts.onToast?.('资金不足', 'bad'); break; }
         state.company.cash -= 3000000;
         state.recruitment = state.recruitment || {};
         state.recruitment.campusEventMonths = 3;
-        state.hiringPool = genPool(state, 'campus');
+        genPoolNow('campus');
         addLog(state, 'hr', '举办校园招聘会，应届生候选人批量涌入。');
         opts.onToast?.('校园招聘会已举办', 'good');
         render();
         break;
       }
-      case 'refresh-pool': state.hiringPool = genPool(state, state.recruitChannel || 'social'); render(); break;
+      case 'refresh-pool': genPoolNow(); render(); break;
       case 'expand-office': {
         const o = state.offices[0];
         const cost = 2000000 * o.level;
@@ -2691,7 +2699,12 @@ export function renderGame(root, state, opts = {}) {
 
   function pageCompany() {
     const depts = DEPT_DEFS;
-    if (!state.hiringPool) state.hiringPool = genPool(state);
+    // 招聘市场按月刷新：同一月内候选人固定，推进到下个月才换一批
+    {
+      const pm = state.hiringPoolMonth;
+      const stale = !state.hiringPool || !pm || pm.year !== state.date.year || pm.month !== state.date.month;
+      if (stale) genPoolNow();
+    }
     const ts = trainingSummary(state);
     const dist = rankDistribution(state);
     const tree = orgTree(state);
@@ -2865,10 +2878,12 @@ export function renderGame(root, state, opts = {}) {
             <button class="btn small ${state.recruitChannel === 'campus' ? 'primary' : ''}" data-act="recruit-channel" data-v="campus">校招</button>
             <button class="btn small ${state.recruitChannel === 'headhunter' ? 'primary' : ''}" data-act="recruit-channel" data-v="headhunter">猎头</button>
             <div style="flex:1"></div>
+            <button class="btn tiny ghost" data-act="refresh-pool" title="本池按当前渠道立即重抽（不消耗时间）">↻ 重抽本池</button>
             ${(state.recruitChannel || 'social') === 'campus' ? `<button class="btn tiny" data-act="campus-event" ${(state.recruitment?.campusEventMonths || 0) > 0 ? 'disabled' : ''}>${(state.recruitment?.campusEventMonths || 0) > 0 ? `招聘会中（${state.recruitment.campusEventMonths}月）` : '举办招聘会（¥300万）'}</button>` : ''}
             ${(state.recruitChannel || 'social') === 'headhunter' ? '<span class="tiny dim" style="align-self:center">猎头费 = 年薪 20%</span>' : ''}
             ${(state.recruitChannel || 'social') === 'campus' ? '<span class="tiny dim" style="align-self:center">应届生：薪资低潜力高，3-4/9-10 月最佳</span>' : ''}
           </div>
+          <div class="tiny dim" style="margin:-2px 0 6px">招聘市场每月自动换一批候选人（本月内固定）；换渠道或点「重抽本池」可立即刷新。</div>
           <div class="list">
             ${state.hiringPool.map((c, i) => {
               const rk = rankOf(c.skill);
@@ -4299,6 +4314,7 @@ export function renderGame(root, state, opts = {}) {
     const on = audioEnabled();
     const g = state.guide;
     const gOn = !(g?.skipped) && (g?.step || 0) < GUIDE_STEPS.length;
+    const lockL = localStorage.getItem('mm_dz_lock_left') === '1';
     const QUALS = [['auto', '自动'], ['high', '高'], ['standard', '标准'], ['low', '流畅']];
     const mask = document.createElement('div');
     mask.className = 'modal-mask';
@@ -4322,6 +4338,14 @@ export function renderGame(root, state, opts = {}) {
         <div class="list-item">
           <div style="flex:1"><b>新手引导</b><div class="tiny dim">当前${gOn ? `进行到第 ${(g?.step || 0) + 1} 步` : g && g.step >= GUIDE_STEPS.length ? '已完成' : '已关闭'}</div></div>
           <button class="btn small ${gOn ? 'ghost' : 'primary'}" data-set="guide">${gOn ? '关闭引导' : '开启引导'}</button>
+        </div>
+        <div class="list-item" style="display:block">
+          <b>设计器侧栏</b>
+          <div class="tiny dim" style="margin:4px 0">锁定后左侧控件栏宽度固定，拖动分隔条不再生效，避免误触改宽；侧栏默认折叠，打开一个会自动收起另一个</div>
+          <div class="row">
+            <button class="btn small ${lockL ? 'primary' : 'ghost'}" data-set="lock-left">${lockL ? '已锁定' : '未锁定'}</button>
+            <button class="btn small ghost" data-set="reset-left">恢复默认宽度</button>
+          </div>
         </div>
         <div class="list-item" style="display:block">
           <b>存档文件（跨设备迁移）</b>
@@ -4376,6 +4400,18 @@ export function renderGame(root, state, opts = {}) {
       row.querySelector('.tiny.dim').textContent = `当前${gOn2 ? `进行到第 ${(g2?.step || 0) + 1} 步` : g2 && g2.step >= GUIDE_STEPS.length ? '已完成' : '已关闭'}`;
       e.target.textContent = gOn2 ? '关闭引导' : '开启引导';
       e.target.className = 'btn small ' + (gOn2 ? 'ghost' : 'primary');
+    };
+    const lockBtn = mask.querySelector('[data-set="lock-left"]');
+    lockBtn.onclick = () => {
+      const next = localStorage.getItem('mm_dz_lock_left') !== '1';
+      try { localStorage.setItem('mm_dz_lock_left', next ? '1' : '0'); } catch (e2) { /* 忽略 */ }
+      lockBtn.textContent = next ? '已锁定' : '未锁定';
+      lockBtn.className = 'btn small ' + (next ? 'primary' : 'ghost');
+      opts.onToast?.(next ? '设计器侧栏宽度已锁定' : '设计器侧栏宽度已解锁', 'good');
+    };
+    mask.querySelector('[data-set="reset-left"]').onclick = () => {
+      try { localStorage.removeItem('dz_left_w'); } catch (e2) { /* 忽略 */ }
+      opts.onToast?.('下次进入设计器恢复默认栏宽', 'good');
     };
     mask.querySelector('[data-set="export"]').onclick = () => {
       try {

@@ -262,12 +262,23 @@ export function renderDesigner(container, state, model, hooks = {}) {
   const resizer = container.querySelector('#dz-resizer');
   const assessToggle = container.querySelector('#dz-assess-toggle');
   const panelToggle = container.querySelector('#dz-panel-toggle');
-  panelToggle.addEventListener('click', () => {
-    const hidden = dzRoot.classList.toggle('controls-hidden');
-    panelToggle.textContent = hidden ? '展开控件' : '控件';
-    panelToggle.classList.toggle('primary', hidden);
+  // 侧栏默认折叠（用户可手动展开，选择会被记住）；左右两个侧栏互斥，只允许开一个
+  const savedHidden = localStorage.getItem('dz_left_hidden');
+  let controlsHidden = savedHidden == null ? true : savedHidden === '1';
+  function applyControlsHidden() {
+    dzRoot.classList.toggle('controls-hidden', controlsHidden);
+    panelToggle.textContent = controlsHidden ? '展开控件' : '控件';
+    panelToggle.classList.toggle('primary', controlsHidden);
+  }
+  function setControlsHidden(v) {
+    if (controlsHidden === v) return;
+    controlsHidden = v;
+    try { localStorage.setItem('dz_left_hidden', v ? '1' : '0'); } catch (e) { /* 忽略 */ }
+    applyControlsHidden();
+    if (!v) setAssessCollapsed(true); // 打开左栏时收起评估面板
     if (viewMode === '2d') setTimeout(draw2D, 30); else setTimeout(buildPhone, 30);
-  });
+  }
+  panelToggle.addEventListener('click', () => setControlsHidden(!controlsHidden));
   // 顶部分区快捷条：鼠标按住拖动 / 滚轮横向滚动（桌面端没有触控板也能拖动）
   {
     let drag = null;
@@ -311,7 +322,8 @@ export function renderDesigner(container, state, model, hooks = {}) {
   const savedLeftW = Number(localStorage.getItem(DZ_LEFT_KEY));
   if (savedLeftW >= 220 && savedLeftW <= 460) dzRoot.style.setProperty('--dz-left-w', savedLeftW + 'px');
   const savedAssess = localStorage.getItem(DZ_ASSESS_KEY);
-  let assessCollapsed = savedAssess === '1' || (savedAssess == null && window.innerWidth < 1400);
+  // 评估面板同样默认折叠：没有记忆时一律收起
+  let assessCollapsed = savedAssess == null ? true : savedAssess === '1';
   if (localStorage.getItem('mm_dz_lock_left') === '1') dzRoot.classList.add('lock-left');
   const catSnapKey = `mm_cat_snaps_${model.id || 'new'}`;
   const catSnapshots = (() => {
@@ -381,19 +393,20 @@ export function renderDesigner(container, state, model, hooks = {}) {
     assessToggle.classList.toggle('primary', assessCollapsed);
   }
   applyAssessCollapsed();
+  applyControlsHidden();
   function setAssessCollapsed(v) {
     assessCollapsed = v;
     try { localStorage.setItem(DZ_ASSESS_KEY, v ? '1' : '0'); } catch (e) { /* 忽略 */ }
     applyAssessCollapsed();
     renderAssessment();
+    if (!v) setControlsHidden(true); // 打开评估面板时收起左栏（同时只开一个侧栏）
     if (!v && viewMode === '3d') setTimeout(() => buildPhone(), 30);
   }
   container.querySelector('#dz-assess-tab')?.addEventListener('click', () => setAssessCollapsed(false));
-  // 手机横屏：画布优先，控件栏默认收起为抽屉
-  if (window.matchMedia('(max-height: 480px) and (orientation: landscape)').matches && !dzRoot.classList.contains('controls-hidden')) {
-    dzRoot.classList.add('controls-hidden');
-    panelToggle.textContent = '展开控件';
-    panelToggle.classList.add('primary');
+  // 手机横屏：画布优先，控件栏强制收起为抽屉（覆盖记忆值）
+  if (window.matchMedia('(max-height: 480px) and (orientation: landscape)').matches && !controlsHidden) {
+    controlsHidden = true;
+    applyControlsHidden();
   }
   assessToggle.addEventListener('click', () => setAssessCollapsed(!assessCollapsed));
   // 左栏宽度拖拽（记忆到 localStorage，范围 220–460px）
